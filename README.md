@@ -203,19 +203,27 @@ Backend API: http://localhost:5000/api
 
 ## Deployment
 
+### Live URLs
+- **Frontend**: https://jsree.vercel.app
+- **Backend API**: https://jsree-backend-production.up.railway.app/api
+- **Database**: Supabase PostgreSQL (all 4 migrations 001-004 applied and verified)
+
 ### Vercel (Frontend)
 1. Push to GitHub
-2. Import project in Vercel
-3. Set root directory to `client`
-4. Build command: `npm run build`
-5. Output: `dist`
-6. Add env var: `VITE_API_URL` (your backend URL + /api)
+2. Import project in Vercel (root directory `client`, framework Vite, build `npm run build`, output `dist`)
+3. `client/vercel.json` handles SPA rewrites for all routes
+4. Add env var: `VITE_API_URL=https://jsree-backend-production.up.railway.app/api`
+5. Deploy with `vercel --prod --yes`
 
-### Backend
-Deploy to Vercel as serverless functions or to a VPS (Railway, Render, etc.)
+### Railway (Backend)
+The backend runs as a long-running Node/Express process (Tesseract.js OCR, sharp, multer, in-memory rate limiting require a persistent server).
+1. Push to GitHub; link project with `railway link --project jsree-backend`
+2. `server/railway.json` uses Nixpacks with Node (`engines.node >= 22` required for native WebSocket in supabase-js v2)
+3. Configure env vars (SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, JWT_SECRET, JWT_EXPIRES_IN, ADMIN_EMAIL, ADMIN_PASSWORD_HASH, ADMIN_UPI_ID, DATABASE_URL, CLIENT_URL, PORT, NODE_ENV=production)
+4. Deploy with `railway up --ci --service <service-id>`
 
 ### Database
-Use Supabase cloud (free tier available)
+Use Supabase cloud (free tier available); run `server/src/scripts/apply-migrations-003-004.mjs` to apply migrations 003+004.
 
 ## Build Commands
 
