@@ -231,7 +231,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
   const updateData = {
     verification_result: verificationResult,
     verified_at: verificationTime.toISOString(),
-    transaction_id: utr,
+    transaction_id: newStatus === 'approved' ? utr : null,
     status: newStatus,
   };
   if (newStatus === 'approved') updateData.approved_at = verificationTime.toISOString();
