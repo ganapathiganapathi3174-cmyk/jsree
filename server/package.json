@@ -4,6 +4,9 @@
   "description": "Referral + Top-up Membership Platform Backend",
   "main": "src/index.js",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
