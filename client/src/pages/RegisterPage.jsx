@@ -79,9 +79,7 @@ export default function RegisterPage() {
 
       const fd = new FormData();
       fd.append('screenshot', screenshot);
-      const uploadRes = await api.post(`/payments/${paymentId}/screenshot`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      const uploadRes = await api.post(`/payments/${paymentId}/screenshot`, fd);
 
       const verification = uploadRes.data.data?.verification;
       if (verification?.status === 'approved') {

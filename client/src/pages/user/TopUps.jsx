@@ -31,7 +31,7 @@ export default function TopUps() {
       const fd = new FormData();
       fd.append('screenshot', screenshot);
       fd.append('reference_id', refId);
-      await api.post(`/topups/${proofModal.id}/proof`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      await api.post(`/topups/${proofModal.id}/proof`, fd);
       toast.success('Proof submitted!');
       setProofModal(null); setScreenshot(null); setRefId('');
       load();
