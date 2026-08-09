@@ -1,0 +1,29 @@
+{
+  "name": "referral-platform-server",
+  "version": "1.0.0",
+  "description": "Referral + Top-up Membership Platform Backend",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "vercel-build": "echo 'No build needed'"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "express-validator": "^7.2.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.22.0",
+    "sharp": "^0.33.5",
+    "tesseract.js": "^5.1.1",
+    "uuid": "^10.0.0"
+  }
+}
