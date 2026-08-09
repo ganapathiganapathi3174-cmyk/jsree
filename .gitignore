@@ -13,3 +13,7 @@ uploads/*
 npm-debug.log*
 coverage/
 .vercel/
+
+.railway/
+.railway.local/
+
