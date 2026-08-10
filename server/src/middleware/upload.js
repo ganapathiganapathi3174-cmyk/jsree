@@ -24,6 +24,7 @@ const upload = multer({
 
 export const uploadScreenshot = upload.single('screenshot');
 export const uploadTopupProof = upload.single('screenshot');
+export const uploadAvatar = upload.single('avatar');
 
 export const handleUploadError = (err, req, res, next) => {
   if (err instanceof multer.MulterError) {

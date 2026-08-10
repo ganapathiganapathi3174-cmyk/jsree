@@ -76,7 +76,7 @@ export async function register(userData, ipAddress = null, userAgent = null) {
       status: 'pending',
       role: 'user'
     })
-    .select('id, full_name, email, mobile, referral_code, current_plan, status, role')
+    .select('id, full_name, email, mobile, referral_code, current_plan, status, role, avatar_url')
     .single();
 
   if (error) {
@@ -239,7 +239,7 @@ export async function logout(userId) {
 export async function getProfile(userId) {
   const { data: user, error } = await supabase
     .from('users')
-    .select('id, full_name, email, mobile, role, status, referral_code, current_plan, created_at')
+    .select('id, full_name, email, mobile, role, status, referral_code, current_plan, avatar_url, created_at')
     .eq('id', userId)
     .single();
 

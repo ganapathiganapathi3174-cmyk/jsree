@@ -25,7 +25,7 @@ export const authenticateToken = async (req, res, next) => {
 
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, full_name, email, mobile, role, status, referral_code, current_plan')
+      .select('id, full_name, email, mobile, role, status, referral_code, current_plan, avatar_url')
       .eq('id', decoded.userId)
       .single();
 
@@ -110,7 +110,7 @@ export const optionalAuth = async (req, res, next) => {
 
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, email, mobile, role, status, referral_code, current_plan')
+      .select('id, full_name, email, mobile, role, status, referral_code, current_plan, avatar_url')
       .eq('id', decoded.userId)
       .single();
 
@@ -140,7 +140,7 @@ export const extractUser = async (req, res, next) => {
 
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, email, mobile, role, status, referral_code, current_plan')
+      .select('id, full_name, email, mobile, role, status, referral_code, current_plan, avatar_url')
       .eq('id', decoded.userId)
       .single();
 
