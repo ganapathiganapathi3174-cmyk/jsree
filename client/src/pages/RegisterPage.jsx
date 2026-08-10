@@ -105,11 +105,11 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <Link to="/" className="text-primary-600 font-bold text-xl">ReferralHub</Link>
-          <h1 className="text-2xl font-bold text-gray-900 mt-4">Create Account</h1>
+          <Link to="/" className="text-2xl font-bold tracking-wide text-white">JSREE</Link>
+          <h1 className="text-2xl font-bold text-white mt-4">Create Account</h1>
           <p className="text-gray-600 mt-1">Step {step} of 3</p>
           <div className="flex items-center justify-center gap-2 mt-3">
             {[1, 2, 3].map(s => (

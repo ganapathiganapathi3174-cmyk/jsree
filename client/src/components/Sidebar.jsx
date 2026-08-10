@@ -57,14 +57,14 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden transition-opacity" onClick={onClose} />
       )}
 
-      <aside className={`fixed top-0 left-0 z-50 h-full w-64 ${dark ? 'bg-gray-800 border-r border-gray-700' : 'bg-white border-r border-gray-200'} transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed top-0 left-0 z-50 h-full w-64 ${dark ? 'bg-gray-800/95 border-r border-gray-700' : 'bg-white/95 backdrop-blur-xl border-r border-gray-200'} transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className={`flex items-center justify-between p-4 border-b ${dark ? 'border-gray-700' : 'border-gray-100'}`}>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg">
               <Shield size={18} className="text-white" />
             </div>
-            <span className={`font-bold ${dark ? 'text-white' : 'text-gray-900'}`}>
-              {isAdmin ? 'Admin Panel' : 'ReferralHub'}
+            <span className={`font-bold tracking-wide ${dark ? 'text-white' : 'text-gray-900'}`}>
+              {isAdmin ? 'JSREE Admin' : 'JSREE'}
             </span>
           </div>
           <button onClick={onClose} className={`lg:hidden p-1 rounded-lg ${dark ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}>

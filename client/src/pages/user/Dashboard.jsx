@@ -6,6 +6,7 @@ import api from '../../utils/api';
 import { PLAN_MAP } from '../../utils/constants';
 import StatusBadge from '../../components/StatusBadge';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import Avatar from '../../components/Avatar';
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
@@ -27,7 +28,13 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+      <div className="flex items-center gap-4">
+        <Avatar user={profile} size={56} className="ring-4 ring-white/20 shadow-xl" />
+        <div>
+          <h1 className="text-2xl font-bold text-white">Welcome back, {profile?.full_name?.split(' ')[0] || 'there'}</h1>
+          <p className="text-indigo-100/70 text-sm">JSREE Dashboard</p>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <div className="card">

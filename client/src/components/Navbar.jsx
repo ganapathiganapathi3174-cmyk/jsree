@@ -1,10 +1,12 @@
-import { Menu, User, ChevronDown, LogOut } from 'lucide-react';
+import { Menu, ChevronDown, LogOut, User as UserIcon } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from './ThemeToggle';
 import NotificationPanel from './NotificationPanel';
+import Avatar from './Avatar';
+import api from '../utils/api';
 
 export function logout() {
   localStorage.removeItem('token');
@@ -18,7 +20,19 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
   const location = useLocation();
   const { dark } = useTheme();
   const userStr = localStorage.getItem('user');
-  const user = userStr ? JSON.parse(userStr) : null;
+  const [user, setUser] = useState(userStr ? JSON.parse(userStr) : null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token || isAdmin) return;
+    api.get('/users/profile')
+      .then((r) => {
+        const fresh = r.data.data;
+        localStorage.setItem('user', JSON.stringify(fresh));
+        setUser(fresh);
+      })
+      .catch(() => {});
+  }, [isAdmin]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -68,14 +82,12 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
         <div className="flex items-center gap-2">
           {!isAdmin && <NotificationPanel />}
           <ThemeToggle />
-          <span className="hidden sm:block text-sm font-semibold text-indigo-600">
-            {isAdmin ? 'Admin Panel' : 'ReferralHub'}
+          <span className="hidden sm:block text-sm font-bold tracking-wide text-indigo-600 dark:text-indigo-400">
+            {isAdmin ? 'JSREE ADMIN' : 'JSREE'}
           </span>
           <div className="relative" ref={dropdownRef}>
-            <button onClick={() => setDropdownOpen(!dropdownOpen)} className={`flex items-center gap-2 p-2 rounded-lg transition-colors ${dark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${dark ? 'bg-indigo-900/50' : 'bg-indigo-100'}`}>
-                <User size={16} className="text-indigo-600" />
-              </div>
+            <button onClick={() => setDropdownOpen(!dropdownOpen)} className={`flex items-center gap-2 p-1.5 rounded-lg transition-colors ${dark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'}`}>
+              <Avatar user={user} size={36} />
               <div className="hidden sm:block text-left">
                 <p className={`text-sm font-medium ${dark ? 'text-white' : 'text-gray-700'}`}>
                   {user?.fullName || user?.name || 'User'}
@@ -91,7 +103,7 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
               <div className={`absolute right-0 top-full mt-2 w-48 rounded-xl shadow-lg py-1 z-50 ${dark ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}>
                 {!isAdmin && (
                   <button onClick={() => { setDropdownOpen(false); navigate('/dashboard/profile'); }} className={`w-full flex items-center gap-2 px-4 py-2 text-sm ${dark ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`}>
-                    <User size={16} /> Profile
+                    <UserIcon size={16} /> Profile
                   </button>
                 )}
                 <button onClick={handleLogout} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">

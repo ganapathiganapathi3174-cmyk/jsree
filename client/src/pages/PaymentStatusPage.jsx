@@ -79,15 +79,15 @@ export default function PaymentStatusPage() {
   if (loading) return <LoadingSpinner fullPage />;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <Link to="/" className="text-primary-600 font-bold text-xl">ReferralHub</Link>
-          <h1 className="text-2xl font-bold text-gray-900 mt-4">Account Activation</h1>
-          <p className="text-gray-600 mt-1">Track your registration payment status</p>
+          <Link to="/" className="text-2xl font-bold tracking-wide text-white">JSREE</Link>
+          <h1 className="text-2xl font-bold text-white mt-4">Account Activation</h1>
+          <p className="text-indigo-100/80 mt-1">Track your registration payment status</p>
         </div>
 
-        <div className="card">
+        <div className="card bg-white/90 backdrop-blur-xl rounded-xl border border-white/20 shadow-2xl p-6">
           {!token || !user ? (
             <div className="text-center py-8 space-y-4">
               <ShieldAlert className="h-12 w-12 text-gray-300 mx-auto" />
