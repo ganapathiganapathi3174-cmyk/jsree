@@ -14,7 +14,7 @@ export default function Layout({ children, isAdmin }) {
   }, [location.pathname]);
 
   return (
-    <div className={`flex h-screen ${dark ? 'bg-gray-900' : 'bg-gray-50'}`}>
+    <div className="flex h-screen bg-transparent">
       <Sidebar
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -26,7 +26,7 @@ export default function Layout({ children, isAdmin }) {
           onMenuToggle={() => setSidebarOpen((prev) => !prev)}
           isAdmin={isAdmin}
         />
-        <main className={`flex-1 overflow-y-auto p-4 sm:p-6 ${dark ? 'bg-gray-900' : 'bg-gray-50'}`}>
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 bg-transparent">
           {children}
         </main>
       </div>

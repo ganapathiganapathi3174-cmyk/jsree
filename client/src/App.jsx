@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
+import FallingStarsBackground from './components/FallingStarsBackground';
 import LandingPage from './pages/LandingPage';
 import RegisterPage from './pages/RegisterPage';
 import LoginPage from './pages/LoginPage';
@@ -34,7 +35,9 @@ import AdminSuspiciousActivity from './pages/admin/SuspiciousActivity';
 export default function App() {
   return (
     <ThemeProvider>
-      <Routes>
+      <FallingStarsBackground />
+      <div className="relative z-10">
+        <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/login" element={<LoginPage />} />
@@ -66,7 +69,8 @@ export default function App() {
         <Route path="/admin/suspicious-activity" element={<ProtectedRoute adminOnly><Layout isAdmin><AdminSuspiciousActivity /></Layout></ProtectedRoute>} />
 
         <Route path="*" element={<NotFound />} />
-      </Routes>
+        </Routes>
+      </div>
     </ThemeProvider>
   );
 }
