@@ -5,7 +5,7 @@ import { checkAndDeactivateReferrer } from './referralService.js';
 import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
-import { runOCR, extractPaymentData, matchAmount, matchUPI, normalizeUTR } from './ocrService.js';
+import { runOCR, extractPaymentData, matchAmount, matchUPI, normalizeUTR, runAmountRecoveryOCR } from './ocrService.js';
 
 const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
 const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
@@ -159,12 +159,13 @@ export async function verifyPayment(paymentId, imageBuffer) {
   let ocrText = '';
   let ocrConfidence = 0;
   let extractedAmounts = [];
+  let recoveredFromBands = false;
   let extractedUPIs = [];
   let extractedUTRs = [];
   let extractedDates = [];
+  let buffer = imageBuffer;
 
   try {
-    let buffer = imageBuffer;
     if (!buffer && payment.screenshot_url) {
       const resp = await fetch(payment.screenshot_url);
       if (!resp.ok) throw { message: 'Failed to fetch screenshot', code: 'SCREENSHOT_FETCH_FAILED' };
@@ -186,7 +187,23 @@ export async function verifyPayment(paymentId, imageBuffer) {
     throw { message: 'OCR could not read the screenshot', code: 'OCR_UNREADABLE' };
   }
 
-  const amountMatch = matchAmount(extractedAmounts, payment.expected_amount);
+  let amountMatch = matchAmount(extractedAmounts, payment.expected_amount);
+  if (!amountMatch) {
+    // Full-page OCR may have dropped a large-font amount line (common on
+    // UPI receipts). Purely a recovery pass: the recovered tokens still go
+    // through the exact same matchAmount() comparison below, and UPI / UTR
+    // / date / duplicate-UTR rules are unchanged, so this cannot create a
+    // false approval — it only prevents a false AMOUNT_MISMATCH.
+    try {
+      const recovered = await runAmountRecoveryOCR(buffer);
+      const merged = [...new Set([...extractedAmounts, ...recovered])];
+      if (matchAmount(merged, payment.expected_amount)) {
+        amountMatch = true;
+        recoveredFromBands = true;
+        extractedAmounts = merged;
+      }
+    } catch (e) { /* recovery is best-effort; keep original result */ }
+  }
   const upiMatch = matchUPI(extractedUPIs, RECEIVER_UPI);
   const utr = extractedUTRs.length > 0 ? normalizeUTR(extractedUTRs[0]) : null;
   const date = extractedDates[0] || null;
@@ -194,6 +211,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
 
   const verificationResult = {
     ocrConfidence,
+    recoveredFromBands,
     extractedAmounts,
     extractedUPIs,
     extractedUTRs,

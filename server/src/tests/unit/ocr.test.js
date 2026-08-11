@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import sharp from 'sharp';
 import {
   normalizeAmount,
   normalizeUPI,
@@ -11,6 +12,8 @@ import {
   matchAmount,
   matchUPI,
   isWithinTimeWindow,
+  runOCR,
+  runAmountRecoveryOCR,
 } from '../../services/ocrService.js';
 
 describe('OCR Service - Amount Extraction', () => {
@@ -210,4 +213,75 @@ describe('OCR Service - Time Window', () => {
   it('returns false for null date', () => {
     expect(isWithinTimeWindow(null, new Date(), 30)).toBe(false);
   });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Regression: ₹120 false AMOUNT_MISMATCH.
+// Full-page Tesseract segmentation drops large-font amount lines
+// on UPI receipts (amount rendered ~90px tall). The recovery band
+// pass must recover the dropped amount so matchAmount() passes,
+// while still NOT treating unrelated phone/bank/year digits as the
+// amount. This guards against the exact production bug where a
+// ₹120 screenshot was rejected as AMOUNT_MISMATCH.
+// ─────────────────────────────────────────────────────────────
+async function makeGpayStyleReceipt(amountText) {
+  const width = 967, height = 1627;
+  const lines = [
+    { text: 'To Jayaraj', x: 388, y: 190, fontSize: 40, bold: true },
+    { text: '+91 xxxxxx 4780', x: 340, y: 250, fontSize: 30, bold: false },
+    { text: amountText, x: 355, y: 400, fontSize: 90, bold: true },
+    { text: 'Completed', x: 390, y: 610, fontSize: 32, bold: true },
+    { text: '8 Oct 2026, 4:40 pm', x: 330, y: 710, fontSize: 30, bold: false },
+    { text: 'Canara Bank 8619', x: 190, y: 830, fontSize: 28, bold: false },
+    { text: 'UPI transaction ID', x: 174, y: 950, fontSize: 28, bold: false },
+    { text: 'X12345', x: 174, y: 1000, fontSize: 30, bold: true },
+    { text: 'jayarajj126-3@okicici', x: 174, y: 1120, fontSize: 28, bold: false },
+  ];
+  let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="white"/>`;
+  for (const l of lines) svg += `<text x="${l.x}" y="${l.y}" font-family="Arial" font-size="${l.fontSize}" font-weight="${l.bold ? 'bold' : 'normal'}" fill="black">${l.text}</text>`;
+  svg += '</svg>';
+  return await sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+describe('Regression: large-font amount recovery (false AMOUNT_MISMATCH)', () => {
+  const timeout = 120000;
+
+  it('recovers a dropped ₹120 amount and matches while rejecting 500/1000', async () => {
+    const img = await makeGpayStyleReceipt('120');
+    const main = await runOCR(img);
+    const mainAmounts = extractAmounts(main.text);
+    // The large-font amount line is commonly DROPPED by full-page OCR;
+    // without recovery the plain fallback picks unrelated digits only.
+    expect(mainAmounts).not.toContain(120);
+
+    const recovered = await runAmountRecoveryOCR(img);
+    const merged = [...new Set([...mainAmounts, ...recovered])];
+    expect(merged).toContain(120);
+    expect(matchAmount(merged, 120)).toBe(true);
+    // Must not create false matches for other plan amounts.
+    expect(matchAmount(merged, 500)).toBe(false);
+    expect(matchAmount(merged, 1000)).toBe(false);
+  }, timeout);
+
+  for (const amount of ['500', '1000']) {
+    it(`recovers a dropped ₹${amount} amount and matches exactly`, async () => {
+      const img = await makeGpayStyleReceipt(amount);
+      const main = await runOCR(img);
+      const mainAmounts = extractAmounts(main.text);
+      expect(mainAmounts).not.toContain(parseInt(amount));
+
+      const recovered = await runAmountRecoveryOCR(img);
+      const merged = [...new Set([...mainAmounts, ...recovered])];
+      expect(merged).toContain(parseInt(amount));
+      expect(matchAmount(merged, parseInt(amount))).toBe(true);
+    }, timeout);
+  }
+
+  it('mismatched screenshot (paid 120, plan 500) still fails the exact comparison', async () => {
+    const img = await makeGpayStyleReceipt('120');
+    const recovered = await runAmountRecoveryOCR(img);
+    const mainAmounts = extractAmounts((await runOCR(img)).text);
+    const merged = [...new Set([...mainAmounts, ...recovered])];
+    expect(matchAmount(merged, 500)).toBe(false);
+  }, timeout);
 });

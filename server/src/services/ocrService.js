@@ -124,6 +124,39 @@ export async function runOCR(imageBuffer) {
   return { text: result.data.text || '', confidence: result.data.confidence || 0 };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Amount-recovery OCR pass.
+//
+// Full-page Tesseract segmentation can silently drop large-font
+// amount lines (common on UPI payment receipts, e.g. Google Pay),
+// which produced false AMOUNT_MISMATCH rejections even though the
+// screenshot clearly shows the correct amount.
+//
+// This pass re-runs OCR over overlapping horizontal strips — which
+// reliably reads the dropped amount text — and returns ONLY the
+// extra amount tokens. It deliberately does not return UPI/UTR/date
+// data so the rest of the verification pipeline is untouched.
+// ─────────────────────────────────────────────────────────────
+export async function runAmountRecoveryOCR(imageBuffer) {
+  const { default: Tesseract } = await import('tesseract.js');
+  const processed = await preprocessImage(imageBuffer);
+  const meta = await sharp(processed).metadata();
+  const W = meta.width, H = meta.height;
+  const STRIP_H = 220;
+  const OVERLAP = 110;
+  const recovered = [];
+  for (let y = 0; y < H; y += (STRIP_H - OVERLAP)) {
+    const h = Math.min(STRIP_H, H - y);
+    const strip = await sharp(processed)
+      .extract({ left: 0, top: y, width: W, height: h })
+      .png()
+      .toBuffer();
+    const r = await Tesseract.recognize(strip, 'eng', {});
+    if (r.data.text) recovered.push(r.data.text);
+  }
+  return extractAmounts(recovered.join('\n'));
+}
+
 export function extractPaymentData(ocrText) {
   const amounts = extractAmounts(ocrText);
   const upis = extractUPIs(ocrText);
