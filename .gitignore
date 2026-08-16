@@ -17,3 +17,5 @@ coverage/
 .railway/
 .railway.local/
 
+.vercel
+.env*
