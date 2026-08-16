@@ -88,7 +88,7 @@ export default function PaymentStatusPage() {
         </div>
 
         <div className="card bg-white/90 backdrop-blur-xl rounded-xl border border-white/20 shadow-2xl p-6">
-          {!token || !user ? (
+          {!token && !loginPayment ? (
             <div className="text-center py-8 space-y-4">
               <ShieldAlert className="h-12 w-12 text-gray-300 mx-auto" />
               <p className="text-gray-600">Sign in to check your payment status.</p>
@@ -122,6 +122,24 @@ export default function PaymentStatusPage() {
                     <button onClick={() => setSelected(activePayment)} className="btn-secondary flex items-center gap-2 text-sm mt-2">
                       <Eye className="h-4 w-4" /> View Screenshot
                     </button>
+                  )}
+                </div>
+              )}
+
+              {!activePayment && loginPayment && !token && (
+                <div className="rounded-xl border border-gray-200 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">₹{loginPayment.expectedAmount ?? 'N/A'}</span>
+                    <StatusBadge status={loginPayment.paymentStatus || 'pending'} />
+                  </div>
+                  {loginPayment.selectedPlan && (
+                    <p className="text-sm text-gray-600">Plan: ₹{loginPayment.selectedPlan}</p>
+                  )}
+                  {loginPayment.submittedAt && (
+                    <p className="text-sm text-gray-600">Submitted: {new Date(loginPayment.submittedAt).toLocaleString()}</p>
+                  )}
+                  {loginPayment.rejectionReason && (
+                    <p className="text-sm text-red-600">Reason: {loginPayment.rejectionReason}</p>
                   )}
                 </div>
               )}
