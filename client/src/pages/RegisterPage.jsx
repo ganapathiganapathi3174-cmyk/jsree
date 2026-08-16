@@ -83,6 +83,12 @@ export default function RegisterPage() {
 
       const verification = uploadRes.data.data?.verification;
       if (verification?.status === 'approved') {
+        try {
+          const profRes = await api.get('/users/profile');
+          localStorage.setItem('user', JSON.stringify(profRes.data.data));
+        } catch (err) {
+          localStorage.setItem('user', JSON.stringify(regRes.data.data.user));
+        }
         toast.success('Registration and payment approved!');
         navigate('/dashboard');
       } else if (verification?.status === 'rejected') {
