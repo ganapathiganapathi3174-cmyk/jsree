@@ -103,11 +103,15 @@ async function generateTestScreenshot() {
   const width = 900, height = 500;
   const now = new Date();
   const testDateTime = new Date(now.getTime() + 15 * 60 * 1000);
-  const dd = String(testDateTime.getUTCDate()).padStart(2, '0');
-  const mm = String(testDateTime.getUTCMonth() + 1).padStart(2, '0');
-  const yyyy = testDateTime.getUTCFullYear();
-  const hh = String(testDateTime.getUTCHours()).padStart(2, '0');
-  const mi = String(testDateTime.getUTCMinutes()).padStart(2, '0');
+  // Real UPI screenshots show IST (Asia/Kolkata, UTC+05:30) wall-clock time,
+  // so produce the screenshot clock text in IST, not raw UTC.
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const ist = new Date(testDateTime.getTime() + IST_OFFSET_MS);
+  const dd = String(ist.getUTCDate()).padStart(2, '0');
+  const mm = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = ist.getUTCFullYear();
+  const hh = String(ist.getUTCHours()).padStart(2, '0');
+  const mi = String(ist.getUTCMinutes()).padStart(2, '0');
   const recentDate = `${dd}/${mm}/${yyyy}`;
   const recentTime = `${hh}:${mi}`;
   const lines = [

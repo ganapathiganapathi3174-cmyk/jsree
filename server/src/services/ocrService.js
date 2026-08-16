@@ -27,6 +27,9 @@ export function normalizeUTR(utr) {
   return utr.replace(/\s+/g, '').trim();
 }
 
+export const IST_TIMEZONE = 'Asia/Kolkata';
+export const IST_UTC_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
 export function parsePaymentDate(dateStr) {
   if (!dateStr) return null;
   const cleaned = dateStr.replace(/[.\-]/g, '/').trim();
@@ -49,10 +52,19 @@ export function parsePaymentDate(dateStr) {
     if (ampm === 'AM' && hour === 12) hour = 0;
   }
 
-  // Use UTC to avoid timezone issues - all date comparisons should be in UTC
-  const d = new Date(Date.UTC(year, month, day, hour, minute, second));
+  // The UPI screenshot timestamp is an India/IST wall-clock reading.
+  // Treat the parsed components as Asia/Kolkata (UTC+05:30) and convert to
+  // the correct absolute UTC instant; never compare IST wall-clock vs UTC.
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  if (day < 1 || day > 31 || month < 0 || month > 11) return null;
+  // Build the intended absolute instant by interpreting the wall clock as IST.
+  const asUtc = Date.UTC(year, month, day, hour, minute, second);
+  const d = new Date(asUtc - IST_UTC_OFFSET_MS);
   if (isNaN(d.getTime())) return null;
-  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month || d.getUTCDate() !== day) return null;
+  // Structural guard: the UTC wall-clock of the intended instant must round-trip
+  // to the same year/month when shifted back by +05:30.
+  const utcRoundTrip = new Date(d.getTime() + IST_UTC_OFFSET_MS);
+  if (utcRoundTrip.getUTCFullYear() !== year || utcRoundTrip.getUTCMonth() !== month || utcRoundTrip.getUTCDate() !== day) return null;
   return d;
 }
 
@@ -219,6 +231,6 @@ export function matchUPI(extractedUPIs, receiverUPI) {
 export function isWithinTimeWindow(date, now, windowMinutes) {
   if (!date) return false;
   const diff = now.getTime() - date.getTime();
-  if (diff < 0) return false;
-  return diff <= windowMinutes * 60 * 1000;
+  const bound = windowMinutes * 60 * 1000;
+  return diff >= -bound && diff <= bound;
 }

@@ -133,27 +133,28 @@ describe('OCR Service - Date Extraction', () => {
   it('extracts DD/MM/YYYY format', () => {
     const result = extractDates('Date: 15/06/2025');
     expect(result.length).toBeGreaterThan(0);
-    expect(result[0].getDate()).toBe(15);
-    expect(result[0].getMonth()).toBe(5);
-    expect(result[0].getFullYear()).toBe(2025);
+    // 15/06/2025 00:00 IST == 2025-06-14T18:30:00Z (read as UTC component-wise).
+    expect(result[0].getUTCFullYear()).toBe(2025);
+    expect(result[0].getUTCMonth()).toBe(5);
+    expect(result[0].toISOString()).toBe('2025-06-14T18:30:00.000Z');
   });
 
   it('extracts DD-MM-YYYY format', () => {
     const result = extractDates('Date: 15-06-2025');
     expect(result.length).toBeGreaterThan(0);
-    expect(result[0].getDate()).toBe(15);
+    expect(result[0].toISOString()).toBe('2025-06-14T18:30:00.000Z');
   });
 
   it('extracts DD.MM.YYYY format', () => {
     const result = extractDates('Date: 15.06.2025');
     expect(result.length).toBeGreaterThan(0);
-    expect(result[0].getDate()).toBe(15);
+    expect(result[0].toISOString()).toBe('2025-06-14T18:30:00.000Z');
   });
 
   it('handles 2-digit year', () => {
     const result = extractDates('Date: 15/06/25');
     expect(result.length).toBeGreaterThan(0);
-    expect(result[0].getFullYear()).toBe(2025);
+    expect(result[0].getUTCFullYear()).toBe(2025);
   });
 
   it('returns empty for no dates', () => {
@@ -164,8 +165,7 @@ describe('OCR Service - Date Extraction', () => {
   it('parses Indian DD/MM/YYYY correctly (not MM/DD/YYYY)', () => {
     const result = parsePaymentDate('25/12/2025');
     expect(result).not.toBeNull();
-    expect(result.getDate()).toBe(25);
-    expect(result.getMonth()).toBe(11);
+    expect(result.toISOString()).toBe('2025-12-24T18:30:00.000Z');
   });
 });
 
@@ -204,9 +204,15 @@ describe('OCR Service - Time Window', () => {
     expect(isWithinTimeWindow(old, now, 30)).toBe(false);
   });
 
-  it('returns false for future date', () => {
+  it('returns true for future date within window', () => {
     const now = new Date();
     const future = new Date(now.getTime() + 5 * 60 * 1000);
+    expect(isWithinTimeWindow(future, now, 30)).toBe(true);
+  });
+
+  it('returns false for future date beyond +30 min', () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 31 * 60 * 1000);
     expect(isWithinTimeWindow(future, now, 30)).toBe(false);
   });
 

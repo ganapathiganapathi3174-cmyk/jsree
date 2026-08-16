@@ -35,14 +35,17 @@ function makeScreenshot(amount, upi, utr, dateStr) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-// Current date within ±30 min window, UTC format to match server parse.
+// Current date within ±30 min window. Real UPI screenshots show IST wall-clock
+// (Asia/Kolkata, UTC+05:30), so encode the instant as its IST clock text.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const now = new Date();
 const t = new Date(now.getTime() - 5 * 60 * 1000);
-const dd = String(t.getUTCDate()).padStart(2, '0');
-const mm = String(t.getUTCMonth() + 1).padStart(2, '0');
-const yyyy = t.getUTCFullYear();
-const hh = String(t.getUTCHours()).padStart(2, '0');
-const mi = String(t.getUTCMinutes()).padStart(2, '0');
+const ist = new Date(t.getTime() + IST_OFFSET_MS);
+const dd = String(ist.getUTCDate()).padStart(2, '0');
+const mm = String(ist.getUTCMonth() + 1).padStart(2, '0');
+const yyyy = ist.getUTCFullYear();
+const hh = String(ist.getUTCHours()).padStart(2, '0');
+const mi = String(ist.getUTCMinutes()).padStart(2, '0');
 const recentDate = `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
 
 async function register() {

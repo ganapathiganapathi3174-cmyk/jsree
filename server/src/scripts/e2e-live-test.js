@@ -111,14 +111,16 @@ async function main() {
 
   const testUTR = `E2E_${Date.now()}_001`;
   const testAmount = 120;
-  // Use UTC time to match server's new Date() which is in UTC
-  const now = new Date();
-  const testDateTime = new Date(now.getTime() + 15 * 60 * 1000);
-  const dd = String(testDateTime.getUTCDate()).padStart(2, '0');
-  const mm = String(testDateTime.getUTCMonth() + 1).padStart(2, '0');
-  const yyyy = testDateTime.getUTCFullYear();
-  const hh = String(testDateTime.getUTCHours()).padStart(2, '0');
-  const mi = String(testDateTime.getUTCMinutes()).padStart(2, '0');
+  // Real UPI screenshots show IST (Asia/Kolkata, UTC+5:30) wall-clock time.
+  // Build the IST wall-clock string that the screenshot will display.
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const testDateTime = new Date(Date.now() + 15 * 60 * 1000);
+  const ist = new Date(testDateTime.getTime() + IST_OFFSET_MS);
+  const dd = String(ist.getUTCDate()).padStart(2, '0');
+  const mm = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = ist.getUTCFullYear();
+  const hh = String(ist.getUTCHours()).padStart(2, '0');
+  const mi = String(ist.getUTCMinutes()).padStart(2, '0');
   const testDateStr = `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
 
   const buffer = await createRealScreenshot(testAmount, RECEIVER_UPI, testUTR, testDateStr);

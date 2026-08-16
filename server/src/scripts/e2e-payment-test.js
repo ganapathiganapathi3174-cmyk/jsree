@@ -7,14 +7,17 @@ dotenv.config();
 
 const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
 const WINDOW_MIN = 30;
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
-// Format a Date as UTC "DD/MM/YYYY HH:MM" so server-side parsePaymentDate (UTC) reads it correctly.
-function fmtUTC(d) {
-  const dd = String(d.getUTCDate()).padStart(2, '0');
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const yyyy = d.getUTCFullYear();
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+// Format a Date as the IST (Asia/Kolkata) wall-clock "DD/MM/YYYY HH:MM" that a
+// real UPI screenshot would show for that instant. Screenshot clock text = IST.
+function fmtIST(d) {
+  const ist = new Date(d.getTime() + IST_OFFSET_MS);
+  const dd = String(ist.getUTCDate()).padStart(2, '0');
+  const mm = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = ist.getUTCFullYear();
+  const hh = String(ist.getUTCHours()).padStart(2, '0');
+  const mi = String(ist.getUTCMinutes()).padStart(2, '0');
   return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
 }
 
@@ -45,7 +48,7 @@ async function runTest(name, screenshotAmount, expectedAmount, upi, utr, date, e
   const _ref = new Date();
   const referenceTime = new Date(_ref.getTime() - (_ref.getSeconds() * 1000 + _ref.getMilliseconds()));
   // date may be an offset function (relative to referenceTime) or a raw string (invalid-case input).
-  const dateStr = typeof date === 'function' ? fmtUTC(date(referenceTime)) : date;
+  const dateStr = typeof date === 'function' ? fmtIST(date(referenceTime)) : date;
   try {
     const buffer = await createTestScreenshot(screenshotAmount, upi, utr, dateStr);
     const ocr = await runOCR(buffer);

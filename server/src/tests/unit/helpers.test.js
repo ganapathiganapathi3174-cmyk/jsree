@@ -87,9 +87,15 @@ describe('isWithinTimeWindow', () => {
     assert.equal(isWithinTimeWindow(old, now, 30), false);
   });
 
-  it('should return false for future timestamps', () => {
+  it('should return true for future timestamps within +30 min', () => {
     const now = new Date();
     const future = new Date(now.getTime() + 5 * 60 * 1000);
+    assert.equal(isWithinTimeWindow(future, now, 30), true);
+  });
+
+  it('should return false for future timestamps beyond +30 min', () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 31 * 60 * 1000);
     assert.equal(isWithinTimeWindow(future, now, 30), false);
   });
 });

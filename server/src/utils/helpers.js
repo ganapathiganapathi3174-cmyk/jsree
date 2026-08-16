@@ -69,7 +69,6 @@ export function isWithinTimeWindow(date1, date2, windowMinutes = 30) {
   const d1 = new Date(date1);
   const d2 = new Date(date2);
   const diffMs = d2 - d1;
-  if (diffMs < 0) return false;
-  const diffMinutes = diffMs / (1000 * 60);
-  return diffMinutes <= windowMinutes;
+  const bound = windowMinutes * 60 * 1000;
+  return diffMs >= -bound && diffMs <= bound;
 }
