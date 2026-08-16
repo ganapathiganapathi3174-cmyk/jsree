@@ -9,12 +9,16 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 export default function Referrals() {
   const [code, setCode] = useState('');
   const [referrals, setReferrals] = useState([]);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       api.get('/referrals/my-code').then(r => setCode(r.data.data?.referralCode || r.data.data?.referral_code || '')),
-      api.get('/referrals/my-referrals').then(r => setReferrals(r.data.data?.referrals || r.data.data || []))
+      api.get('/referrals/my-referrals').then(r => {
+        setReferrals(r.data.data?.referrals || r.data.data || []);
+        setStats(r.data.data?.stats || null);
+      })
     ]).catch(() => toast.error('Failed to load referral data')).finally(() => setLoading(false));
   }, []);
 
@@ -26,6 +30,7 @@ export default function Referrals() {
 
   const active = referrals.filter(r => r.status === 'active').length;
   const inactive = referrals.filter(r => r.status !== 'active').length;
+  const canReferMore = stats?.canReferMore ?? active < 2;
 
   return (
     <div className="space-y-6">
@@ -33,7 +38,7 @@ export default function Referrals() {
 
       <div className="card">
         <h3 className="font-semibold mb-3">Your Referral Code</h3>
-        <div className="flex items-center gap-3 bg-gray-50 rounded-xl p-4">
+        <div className={canReferMore ? "flex items-center gap-3 bg-gray-50 rounded-xl p-4" : "flex items-center gap-3 bg-gray-100 rounded-xl p-4 opacity-70"}>
           <span className="font-mono text-xl font-bold flex-1">{code}</span>
           <button onClick={copyCode} className="btn-primary flex items-center gap-1"><Copy className="h-4 w-4" /> Copy</button>
         </div>
@@ -41,6 +46,12 @@ export default function Referrals() {
           <input className="input-field flex-1 text-sm" readOnly value={link} />
           <button onClick={copyLink} className="btn-secondary flex items-center gap-1"><Share2 className="h-4 w-4" /> Share</button>
         </div>
+      </div>
+
+      <div className={`rounded-xl p-4 text-sm ${canReferMore ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-amber-50 border border-amber-200 text-amber-800'}`}>
+        {canReferMore
+          ? `You can refer up to 2 active members. Slots left: ${2 - active}.`
+          : 'Referral limit reached (2 active members). You can no longer earn from new referrals.'}
       </div>
 
       <div className="grid grid-cols-3 gap-4">

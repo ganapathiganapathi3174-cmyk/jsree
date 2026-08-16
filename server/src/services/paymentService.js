@@ -5,10 +5,29 @@ import { checkAndDeactivateReferrer } from './referralService.js';
 import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
-import { runOCR, extractPaymentData, matchAmount, matchUPI, normalizeUTR, runAmountRecoveryOCR } from './ocrService.js';
+import { runOCR, extractPaymentData, matchAmount, matchUPI, runAmountRecoveryOCR } from './ocrService.js';
 
 const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
 const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
+
+// ─────────────────────────────────────────────────────────────
+// Final payment verification decision engine.
+//
+// Approval requires ALL THREE checks to succeed:
+//   1. Admin UPI matches the payee detected in the screenshot.
+//   2. Extracted amount equals the amount selected by the user.
+//   3. Payment date/time is present and within the allowed window.
+//
+// UTR / transaction ID intentionally has ZERO influence on the
+// decision — it is only captured for historical records/display.
+// ─────────────────────────────────────────────────────────────
+export function decidePaymentVerification({ upiMatch, amountMatch, dateValid }) {
+  const approved = upiMatch === true && amountMatch === true && dateValid === true;
+  if (approved) return { decision: 'approved', reason: null };
+  if (amountMatch !== true) return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
+  if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
+  return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
+}
 
 // ─────────────────────────────────────────────────────────────
 // Atomic approval of an initial registration payment.
@@ -191,9 +210,9 @@ export async function verifyPayment(paymentId, imageBuffer) {
   if (!amountMatch) {
     // Full-page OCR may have dropped a large-font amount line (common on
     // UPI receipts). Purely a recovery pass: the recovered tokens still go
-    // through the exact same matchAmount() comparison below, and UPI / UTR
-    // / date / duplicate-UTR rules are unchanged, so this cannot create a
-    // false approval — it only prevents a false AMOUNT_MISMATCH.
+    // through the exact same matchAmount() comparison below, and UPI / date
+    // rules are unchanged, so this cannot create a false approval — it only
+    // prevents a false AMOUNT_MISMATCH.
     try {
       const recovered = await runAmountRecoveryOCR(buffer);
       const merged = [...new Set([...extractedAmounts, ...recovered])];
@@ -205,9 +224,16 @@ export async function verifyPayment(paymentId, imageBuffer) {
     } catch (e) { /* recovery is best-effort; keep original result */ }
   }
   const upiMatch = matchUPI(extractedUPIs, RECEIVER_UPI);
-  const utr = extractedUTRs.length > 0 ? normalizeUTR(extractedUTRs[0]) : null;
+  const utr = extractedUTRs.length > 0 ? extractedUTRs[0]?.replace(/\s+/g, '').trim() || null : null;
   const date = extractedDates[0] || null;
+  // Use UTC for consistent timezone handling (Asia/Kolkata = UTC+5:30)
   const verificationTime = new Date();
+  const dateValid = date
+    ? (verificationTime.getTime() - date.getTime()) >= -30 * 60 * 1000
+      && (verificationTime.getTime() - date.getTime()) <= 30 * 60 * 1000
+    : false;
+
+  const { decision, reason } = decidePaymentVerification({ upiMatch, amountMatch, dateValid });
 
   const verificationResult = {
     ocrConfidence,
@@ -219,33 +245,12 @@ export async function verifyPayment(paymentId, imageBuffer) {
     amountMatch,
     upiMatch,
     utr: utr || null,
-    dateValid: date ? (verificationTime.getTime() - date.getTime()) < 30 * 24 * 60 * 60 * 1000 : false,
-    decision: null,
-    reason: null,
+    dateValid,
+    decision,
+    reason,
   };
 
-  if (!utr) {
-    verificationResult.decision = 'rejected';
-    verificationResult.reason = 'UTR_NOT_FOUND';
-  } else if (!amountMatch) {
-    verificationResult.decision = 'rejected';
-    verificationResult.reason = 'AMOUNT_MISMATCH';
-  } else if (!upiMatch) {
-    verificationResult.decision = 'rejected';
-    verificationResult.reason = 'UPI_MISMATCH';
-  } else {
-    const { data: existingPayment } = await supabase.from('payments')
-      .select('id, user_id, status').eq('transaction_id', utr).neq('id', paymentId).single();
-    if (existingPayment) {
-      verificationResult.decision = 'rejected';
-      verificationResult.reason = 'DUPLICATE_UTR';
-    } else {
-      verificationResult.decision = 'approved';
-      verificationResult.reason = null;
-    }
-  }
-
-  const newStatus = verificationResult.decision === 'approved' ? 'approved' : 'rejected';
+  const newStatus = decision === 'approved' ? 'approved' : 'rejected';
   const updateData = {
     verification_result: verificationResult,
     verified_at: verificationTime.toISOString(),
@@ -258,7 +263,14 @@ export async function verifyPayment(paymentId, imageBuffer) {
     updateData.rejection_reason = verificationResult.reason;
   }
 
-  const { error: updateError } = await supabase.from('payments').update(updateData).eq('id', paymentId).eq('status', 'pending');
+  let { error: updateError } = await supabase.from('payments').update(updateData).eq('id', paymentId).eq('status', 'pending');
+  // The unique index on transaction_id is only for data integrity/history and
+  // must NEVER influence the decision. If storing a duplicate UTR collides
+  // with the index, drop the UTR for the record and keep the decision intact.
+  if (updateError && updateError.code === '23505') {
+    delete updateData.transaction_id;
+    ({ error: updateError } = await supabase.from('payments').update(updateData).eq('id', paymentId).eq('status', 'pending'));
+  }
   if (updateError) throw { message: 'Failed to update payment status', code: 'DATABASE_UPDATE_FAILED' };
 
   const { data: updatedPayment } = await supabase.from('payments').select('*').eq('id', paymentId).single();
@@ -272,7 +284,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
     } catch (approvalErr) {
       // Atomic approval failed — roll back payment to pending so no partial activation.
       await supabase.from('payments')
-        .update({ status: 'pending', approved_at: null, transaction_id: null })
+        .update({ status: 'pending', approved_at: null })
         .eq('id', paymentId);
       throw approvalErr;
     }

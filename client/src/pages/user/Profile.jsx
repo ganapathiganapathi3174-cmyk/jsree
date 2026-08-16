@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, Mail, Phone, Hash, CreditCard, Calendar, Camera, X, Upload } from 'lucide-react';
+import { User, Mail, Phone, Hash, CreditCard, Calendar, Camera, X, Upload, Pencil, Save, Loader } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import { PLAN_MAP } from '../../utils/constants';
@@ -16,6 +16,10 @@ export default function Profile() {
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editMobile, setEditMobile] = useState('');
   const fileRef = useRef(null);
 
   const load = () => {
@@ -64,6 +68,27 @@ export default function Profile() {
 
   if (loading) return <LoadingSpinner fullPage />;
   if (!profile) return <div className="p-6 text-center text-gray-500">Failed to load profile</div>;
+
+  const startEdit = () => {
+    setEditName(profile.full_name || '');
+    setEditMobile(profile.mobile || '');
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    if (!editName.trim()) { toast.error('Name is required'); return; }
+    if (!/^[0-9+]{10,15}$/.test(editMobile.trim())) { toast.error('Invalid mobile number'); return; }
+    setSavingEdit(true);
+    try {
+      const { data } = await api.put('/users/profile', { name: editName.trim(), mobile: editMobile.trim() });
+      toast.success('Profile updated');
+      setEditing(false);
+      setProfile(data.data);
+      localStorage.setItem('user', JSON.stringify(data.data));
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update profile');
+    } finally { setSavingEdit(false); }
+  };
 
   const fields = [
     { icon: User, label: 'Full Name', value: profile.full_name },
@@ -144,11 +169,39 @@ export default function Profile() {
           )}
         </div>
 
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-900">Account Details</h3>
+          {!editing ? (
+            <button onClick={startEdit} className="btn-secondary text-sm flex items-center gap-1.5">
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </button>
+          ) : (
+            <div className="flex gap-2">
+              <button onClick={saveEdit} disabled={savingEdit} className="btn-primary text-sm flex items-center gap-1.5">
+                {savingEdit ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+              </button>
+              <button onClick={() => setEditing(false)} disabled={savingEdit} className="btn-secondary text-sm flex items-center gap-1.5">
+                <X className="h-3.5 w-3.5" /> Cancel
+              </button>
+            </div>
+          )}
+        </div>
+
         <div className="space-y-4">
           {fields.map((f, i) => (
             <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
               <f.icon className="h-5 w-5 text-gray-400 flex-shrink-0" />
-              <div className="flex-1"><p className="text-sm text-gray-500">{f.label}</p><p className="font-medium text-gray-900">{f.value}</p></div>
+              <div className="flex-1"><p className="text-sm text-gray-500">{f.label}</p>
+                {editing && (f.label === 'Full Name' || f.label === 'Mobile') ? (
+                  f.label === 'Full Name' ? (
+                    <input value={editName} onChange={e => setEditName(e.target.value)} className="input-field mt-1 text-sm" placeholder="Full name" />
+                  ) : (
+                    <input value={editMobile} onChange={e => setEditMobile(e.target.value)} className="input-field mt-1 text-sm" placeholder="Mobile number" />
+                  )
+                ) : (
+                  <p className="font-medium text-gray-900">{f.value}</p>
+                )}
+              </div>
             </div>
           ))}
         </div>

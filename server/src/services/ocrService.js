@@ -30,13 +30,29 @@ export function normalizeUTR(utr) {
 export function parsePaymentDate(dateStr) {
   if (!dateStr) return null;
   const cleaned = dateStr.replace(/[.\-]/g, '/').trim();
-  const match = cleaned.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-  if (!match) return null;
-  let [, day, month, year] = match;
+  const dateMatch = cleaned.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!dateMatch) return null;
+  let [, day, month, year] = dateMatch;
   if (year.length === 2) year = (parseInt(year) > 50 ? '19' : '20') + year;
-  const d = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+  day = parseInt(day);
+  month = parseInt(month) - 1;
+  year = parseInt(year);
+
+  let hour = 0, minute = 0, second = 0;
+  const timeMatch = cleaned.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
+  if (timeMatch) {
+    hour = parseInt(timeMatch[1]);
+    minute = parseInt(timeMatch[2]);
+    if (timeMatch[3]) second = parseInt(timeMatch[3]);
+    const ampm = timeMatch[4]?.toUpperCase();
+    if (ampm === 'PM' && hour !== 12) hour += 12;
+    if (ampm === 'AM' && hour === 12) hour = 0;
+  }
+
+  // Use UTC to avoid timezone issues - all date comparisons should be in UTC
+  const d = new Date(Date.UTC(year, month, day, hour, minute, second));
   if (isNaN(d.getTime())) return null;
-  if (d.getFullYear() !== parseInt(year) || d.getMonth() !== parseInt(month) - 1 || d.getDate() !== parseInt(day)) return null;
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month || d.getUTCDate() !== day) return null;
   return d;
 }
 
@@ -110,7 +126,17 @@ export function extractDates(text) {
   for (const re of patterns) {
     let m;
     while ((m = re.exec(text)) !== null) {
-      const d = parsePaymentDate(`${m[1]}/${m[2]}/${m[3]}`);
+      // For first pattern: m[1]=day, m[2]=month, m[3]=year, m[4]=time (optional)
+      // For second pattern: m[1]=day, m[2]=month name, m[3]=year
+      let dateStr;
+      if (m[4] !== undefined) {
+        // First pattern with optional time
+        dateStr = `${m[1]}/${m[2]}/${m[3]} ${m[4] || ''}`.trim();
+      } else {
+        // Second pattern (month name)
+        dateStr = `${m[1]}/${m[2]}/${m[3]}`;
+      }
+      const d = parsePaymentDate(dateStr);
       if (d) dates.push(d);
     }
   }
