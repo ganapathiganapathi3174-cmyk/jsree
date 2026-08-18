@@ -5,29 +5,13 @@ import { checkAndDeactivateReferrer } from './referralService.js';
 import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
-import { runOCR, extractPaymentData, matchAmount, matchUPI, runAmountRecoveryOCR } from './ocrService.js';
+import { runScreenshotVerification, decidePaymentVerification } from './verificationService.js';
+
+// Re-exported for callers/tests that import the decision engine here.
+export { decidePaymentVerification };
 
 const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
 const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
-
-// ─────────────────────────────────────────────────────────────
-// Final payment verification decision engine.
-//
-// Approval requires ALL THREE checks to succeed:
-//   1. Admin UPI matches the payee detected in the screenshot.
-//   2. Extracted amount equals the amount selected by the user.
-//   3. Payment date/time is present and within the allowed window.
-//
-// UTR / transaction ID intentionally has ZERO influence on the
-// decision — it is only captured for historical records/display.
-// ─────────────────────────────────────────────────────────────
-export function decidePaymentVerification({ upiMatch, amountMatch, dateValid }) {
-  const approved = upiMatch === true && amountMatch === true && dateValid === true;
-  if (approved) return { decision: 'approved', reason: null };
-  if (amountMatch !== true) return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
-  if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
-  return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
-}
 
 // ─────────────────────────────────────────────────────────────
 // Atomic approval of an initial registration payment.
@@ -175,80 +159,13 @@ export async function verifyPayment(paymentId, imageBuffer) {
   if (!payment.screenshot_url && !imageBuffer) throw { message: 'No screenshot uploaded', code: 'NO_SCREENSHOT' };
   if (payment.status !== 'pending') throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
 
-  let ocrText = '';
-  let ocrConfidence = 0;
-  let extractedAmounts = [];
-  let recoveredFromBands = false;
-  let extractedUPIs = [];
-  let extractedUTRs = [];
-  let extractedDates = [];
-  let buffer = imageBuffer;
-
-  try {
-    if (!buffer && payment.screenshot_url) {
-      const resp = await fetch(payment.screenshot_url);
-      if (!resp.ok) throw { message: 'Failed to fetch screenshot', code: 'SCREENSHOT_FETCH_FAILED' };
-      buffer = Buffer.from(await resp.arrayBuffer());
-    }
-    const ocr = await runOCR(buffer);
-    ocrText = ocr.text;
-    ocrConfidence = ocr.confidence;
-    const extracted = extractPaymentData(ocrText);
-    extractedAmounts = extracted.amounts;
-    extractedUPIs = extracted.upis;
-    extractedUTRs = extracted.utrs;
-    extractedDates = extracted.dates;
-  } catch (ocrErr) {
-    throw { message: 'OCR processing failed', code: 'OCR_FAILED', details: ocrErr.message };
-  }
-
-  if (!ocrText || ocrText.trim().length < 5) {
-    throw { message: 'OCR could not read the screenshot', code: 'OCR_UNREADABLE' };
-  }
-
-  let amountMatch = matchAmount(extractedAmounts, payment.expected_amount);
-  if (!amountMatch) {
-    // Full-page OCR may have dropped a large-font amount line (common on
-    // UPI receipts). Purely a recovery pass: the recovered tokens still go
-    // through the exact same matchAmount() comparison below, and UPI / date
-    // rules are unchanged, so this cannot create a false approval — it only
-    // prevents a false AMOUNT_MISMATCH.
-    try {
-      const recovered = await runAmountRecoveryOCR(buffer);
-      const merged = [...new Set([...extractedAmounts, ...recovered])];
-      if (matchAmount(merged, payment.expected_amount)) {
-        amountMatch = true;
-        recoveredFromBands = true;
-        extractedAmounts = merged;
-      }
-    } catch (e) { /* recovery is best-effort; keep original result */ }
-  }
-  const upiMatch = matchUPI(extractedUPIs, RECEIVER_UPI);
-  const utr = extractedUTRs.length > 0 ? extractedUTRs[0]?.replace(/\s+/g, '').trim() || null : null;
-  const date = extractedDates[0] || null;
-  // Use UTC for consistent timezone handling (Asia/Kolkata = UTC+5:30)
-  const verificationTime = new Date();
-  const dateValid = date
-    ? (verificationTime.getTime() - date.getTime()) >= -30 * 60 * 1000
-      && (verificationTime.getTime() - date.getTime()) <= 30 * 60 * 1000
-    : false;
-
-  const { decision, reason } = decidePaymentVerification({ upiMatch, amountMatch, dateValid });
-
-  const verificationResult = {
-    ocrConfidence,
-    recoveredFromBands,
-    extractedAmounts,
-    extractedUPIs,
-    extractedUTRs,
-    extractedDates: extractedDates.map(d => d.toISOString()),
-    amountMatch,
-    upiMatch,
-    utr: utr || null,
-    dateValid,
-    decision,
-    reason,
-  };
+  const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
+    imageBuffer: imageBuffer || null,
+    screenshotUrl: payment.screenshot_url || null,
+    expectedAmount: payment.expected_amount,
+    receiverUpi: RECEIVER_UPI,
+  });
+  const { decision, reason } = verificationResult;
 
   const newStatus = decision === 'approved' ? 'approved' : 'rejected';
   const updateData = {
@@ -302,10 +219,10 @@ export async function verifyPayment(paymentId, imageBuffer) {
   await logAction(payment.user_id, 'system', 'verify_payment', paymentId, 'payment', {
     decision: verificationResult.decision,
     reason: verificationResult.reason,
-    amountMatch,
-    upiMatch,
+    amountMatch: verificationResult.amountMatch,
+    upiMatch: verificationResult.upiMatch,
     utr,
-    ocrConfidence,
+    ocrConfidence: verificationResult.ocrConfidence,
     elapsedMs: elapsed,
   });
 

@@ -28,9 +28,13 @@ export async function submitProof(req, res) {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'Proof file is required', code: 'NO_FILE' });
     const result = await topupService.submitTopupProof(req.params.topupId, req.file, req.user.id);
-    res.json({ success: true, message: result.message });
+    res.json({ success: true, message: result.message, data: { topupId: result.topupId, credited: result.credited || false } });
   } catch (error) {
-    const status = error.code === 'TOPUP_NOT_FOUND' ? 404 : error.code === 'UNAUTHORIZED' ? 403 : error.code === 'TOPUP_NOT_SUBMITTABLE' ? 400 : 500;
+    const status = error.code === 'TOPUP_NOT_FOUND' ? 404
+      : error.code === 'UNAUTHORIZED' ? 403
+      : error.code === 'TOPUP_NOT_SUBMITTABLE' ? 400
+      : error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE' ? 400
+      : 500;
     res.status(status).json({ success: false, message: error.message || 'Failed to submit proof', code: error.code || 'SUBMIT_FAILED' });
   }
 }

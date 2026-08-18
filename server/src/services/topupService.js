@@ -2,6 +2,11 @@ import { supabase } from '../db/supabase.js';
 import { generateUniqueFilename } from '../utils/helpers.js';
 import { logAction } from './auditService.js';
 import { checkAndDeactivateReferrer } from './referralService.js';
+import walletService from './walletService.js';
+import { runScreenshotVerification } from './verificationService.js';
+
+const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
+const SUBMITTABLE_STATUSES = ['created', 'payment_pending'];
 
 export async function createTopup(senderId, receiverId, amount) {
   const planAmounts = { 120: 120, 500: 500, 1000: 1000 };
@@ -25,7 +30,7 @@ export async function submitTopupProof(topupId, file, userId) {
   const { data: topup, error: fetchError } = await supabase.from('topups').select('*').eq('id', topupId).single();
   if (fetchError || !topup) throw { message: 'Topup not found', code: 'TOPUP_NOT_FOUND' };
   if (topup.sender_id !== userId) throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
-  if (topup.status !== 'created' && topup.status !== 'payment_pending') throw { message: 'Topup is not in a submittable status', code: 'TOPUP_NOT_SUBMITTABLE' };
+  if (!SUBMITTABLE_STATUSES.includes(topup.status)) throw { message: 'Topup is not in a submittable status', code: 'TOPUP_NOT_SUBMITTABLE' };
 
   const filename = generateUniqueFilename(file.originalname);
   const filePath = `topups/${topupId}/${filename}`;
@@ -34,14 +39,116 @@ export async function submitTopupProof(topupId, file, userId) {
   if (uploadError) throw { message: 'Failed to upload proof', code: 'UPLOAD_FAILED' };
 
   const { data: urlData } = supabase.storage.from('payments').getPublicUrl(filePath);
+  const screenshotUrl = urlData.publicUrl;
 
-  const { error: updateError } = await supabase.from('topups').update({
-    screenshot_url: urlData.publicUrl, status: 'proof_submitted'
-  }).eq('id', topupId);
-  if (updateError) throw { message: 'Failed to update topup', code: 'UPDATE_FAILED' };
+  const { error: saveError } = await supabase.from('topups').update({ screenshot_url: screenshotUrl }).eq('id', topupId);
+  if (saveError) throw { message: 'Failed to update topup', code: 'UPDATE_FAILED' };
 
-  await logAction(userId, 'user', 'submit_topup_proof', topupId, 'topup', { filename });
-  return { message: 'Proof submitted successfully', topupId };
+  // Same OCR verification engine as registration payments.
+  // Final rule: approved = upiMatch && amountMatch && dateValid.
+  // UTR is ONLY stored for history — it has zero influence and is never required.
+  let outcome;
+  try {
+    const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
+      imageBuffer: file.buffer,
+      expectedAmount: topup.amount,
+      receiverUpi: RECEIVER_UPI,
+    });
+    outcome = await applyTopupVerification(topup, verificationResult, verificationTime);
+
+    await logAction(userId, 'user', 'submit_topup_proof', topupId, 'topup', {
+      filename,
+      decision: verificationResult.decision,
+      reason: verificationResult.reason,
+      amountMatch: verificationResult.amountMatch,
+      upiMatch: verificationResult.upiMatch,
+      utr,
+      credited: outcome.credited || false,
+    });
+  } catch (error) {
+    // If the topup cannot be auto-verified (OCR failure) it must STAY
+    // submittable so the user can retry — never lock it into a terminal state.
+    if (error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE') {
+      await logAction(userId, 'user', 'submit_topup_proof', topupId, 'topup', { filename, error: error.code });
+      throw error;
+    }
+    throw error;
+  }
+
+  return {
+    message: outcome.credited
+      ? 'Topup approved and amount credited to your balance'
+      : 'Topup rejected',
+    topupId,
+    credited: outcome.credited || false,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Applies the OCR verification decision to a top-up record.
+//
+// Idempotency for the balance credit is enforced by the top-up RECORD
+// STATUS (an atomic guarded UPDATE), NOT by UTR:
+//   - The top-up transitions submittable -> completed in a single
+//     WHERE status IN (...) UPDATE. Only the caller that flips the
+//     status proceeds to credit the wallet. Concurrent double-submits
+//     get 0 rows and never re-credit.
+//   - creditTopupBalanceOnce checks for an existing wallet_transaction
+//     with reference_id = topup.id as an additional guard.
+// ─────────────────────────────────────────────────────────────
+export async function applyTopupVerification(topup, verificationResult, verificationTime) {
+  const { decision, reason } = verificationResult;
+
+  if (decision === 'approved') {
+    const { data: updated, error } = await supabase
+      .from('topups')
+      .update({
+        status: 'completed',
+        completed_at: verificationTime.toISOString(),
+        verified_at: verificationTime.toISOString(),
+        verification_result: verificationResult,
+      })
+      .eq('id', topup.id)
+      .in('status', SUBMITTABLE_STATUSES)
+      .select('id, status');
+    if (error) throw { message: 'Failed to complete topup', code: 'COMPLETE_FAILED' };
+
+    if (!updated || updated.length === 0) {
+      // Already transitioned by another request — do NOT credit again.
+      return { credited: false, alreadyProcessed: true };
+    }
+
+    const credited = await creditTopupBalanceOnce(topup);
+    return { credited, alreadyProcessed: false };
+  }
+
+  const { error } = await supabase
+    .from('topups')
+    .update({
+      status: 'rejected',
+      rejection_reason: reason,
+      verified_at: verificationTime.toISOString(),
+      verification_result: verificationResult,
+    })
+    .eq('id', topup.id)
+    .in('status', SUBMITTABLE_STATUSES);
+  if (error) throw { message: 'Failed to reject topup', code: 'REJECT_FAILED' };
+
+  return { credited: false, alreadyProcessed: false };
+}
+
+async function creditTopupBalanceOnce(topup) {
+  const { data: existing, error: checkError } = await supabase
+    .from('wallet_transactions')
+    .select('id')
+    .eq('reference_id', topup.id)
+    .eq('reference_type', 'topup')
+    .limit(1);
+  if (checkError) throw { message: 'Failed to check existing balance credit', code: 'CREDIT_CHECK_FAILED' };
+  if (existing && existing.length > 0) return false;
+
+  await walletService.credit(topup.sender_id, topup.amount, 'Top-up balance credit', topup.id, 'topup');
+  return true;
 }
 
 export async function verifyTopup(topupId, adminId, approved, reason) {
