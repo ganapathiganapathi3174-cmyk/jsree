@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { User, Mail, Phone, Lock, ArrowRight, ArrowLeft, Upload, CreditCard, CheckCircle, Copy } from 'lucide-react';
+import { User, Mail, Phone, Lock, ArrowRight, ArrowLeft, CreditCard, CheckCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
 import { PLANS, ADMIN_UPI } from '../utils/constants';
+import QRPaymentSection from '../components/QRPaymentSection';
 
 export default function RegisterPage() {
   const [searchParams] = useSearchParams();
@@ -15,8 +16,6 @@ export default function RegisterPage() {
     referral_code: searchParams.get('ref') || '',
     plan: parseInt(searchParams.get('plan')) || null
   });
-  const [screenshot, setScreenshot] = useState(null);
-  const [preview, setPreview] = useState(null);
 
   const set = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
 
@@ -41,23 +40,8 @@ export default function RegisterPage() {
     return true;
   };
 
-  const validateStep3 = () => {
-    if (!screenshot) { toast.error('Please upload payment screenshot'); return false; }
-    return true;
-  };
-
-  const handleFile = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.type)) { toast.error('Only JPG, PNG, WEBP allowed'); return; }
-    if (file.size > 5 * 1024 * 1024) { toast.error('Max file size is 5MB'); return; }
-    setScreenshot(file);
-    setPreview(URL.createObjectURL(file));
-  };
-
-  const handleSubmit = async () => {
-    if (!validateStep3()) return;
+  const handleSubmit = async (file = null) => {
+    if (!file) { toast.error('Please upload payment screenshot'); return; }
     setLoading(true);
     try {
       const regPayload = {
@@ -78,7 +62,7 @@ export default function RegisterPage() {
       const paymentId = payRes.data.data.id;
 
       const fd = new FormData();
-      fd.append('screenshot', screenshot);
+      fd.append('screenshot', file);
       const uploadRes = await api.post(`/payments/${paymentId}/screenshot`, fd);
 
       const verification = uploadRes.data.data?.verification;
@@ -103,11 +87,6 @@ export default function RegisterPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const copyUPI = () => {
-    navigator.clipboard.writeText(ADMIN_UPI);
-    toast.success('UPI ID copied!');
   };
 
   return (
@@ -178,29 +157,14 @@ export default function RegisterPage() {
           {step === 3 && (
             <div className="space-y-4">
               <h2 className="text-lg font-semibold mb-4">Complete Payment</h2>
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <p className="text-sm text-blue-800 font-medium mb-2">Payment Instructions</p>
-                <p className="text-sm text-blue-700">Send exactly <strong>₹{form.plan}</strong> to the UPI ID below:</p>
-                <div className="flex items-center gap-2 mt-2 bg-white rounded-lg p-3 border border-blue-200">
-                  <span className="font-mono font-bold text-gray-900 flex-1">{ADMIN_UPI}</span>
-                  <button onClick={copyUPI} className="text-primary-600 hover:text-primary-700"><Copy className="h-4 w-4" /></button>
-                </div>
-              </div>
-              <div>
-                <label className="label">Upload Payment Screenshot</label>
-                <label className="block border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer hover:border-primary-400 transition-colors">
-                  {preview ? (
-                    <img src={preview} alt="Screenshot" className="max-h-48 mx-auto rounded-lg" />
-                  ) : (
-                    <div><Upload className="h-10 w-10 text-gray-400 mx-auto mb-2" /><p className="text-sm text-gray-500">Click to upload JPG, PNG, WEBP (max 5MB)</p></div>
-                  )}
-                  <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" className="hidden" onChange={handleFile} />
-                </label>
-              </div>
-              <div className="flex gap-3 mt-4">
-                <button onClick={() => setStep(2)} className="btn-secondary flex-1 flex items-center justify-center gap-2"><ArrowLeft className="h-4 w-4" /> Back</button>
-                <button onClick={handleSubmit} disabled={loading} className="btn-primary flex-1 flex items-center justify-center gap-2">{loading ? 'Processing...' : 'Submit Registration'}</button>
-              </div>
+              <QRPaymentSection
+                amount={form.plan}
+                upiId={ADMIN_UPI}
+                verifyLabel="Submit Registration"
+                verifySubmitting={loading}
+                onVerify={handleSubmit}
+              />
+              <button onClick={() => setStep(2)} className="btn-secondary w-full flex items-center justify-center gap-2"><ArrowLeft className="h-4 w-4" /> Back</button>
             </div>
           )}
         </div>
