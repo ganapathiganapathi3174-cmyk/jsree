@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Copy, ScanLine, Smartphone, Upload, CheckCircle2, ShieldCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
-import UPIPaymentModal from './UPIPaymentModal';
+import QRCodeImage from './QRCodeImage';
 import { ADMIN_UPI } from '../utils/constants';
 import { buildUPIURI, PAYEE_NAME } from '../utils/upi';
 import { formatCurrency } from '../utils/helpers';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const MAX_SIZE = 5 * 1024 * 1024;
+const QR_SIZE = 240;
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
@@ -41,7 +42,6 @@ export default function QRPaymentSection({
   onVerify,
 }) {
   const isMobile = useIsMobile();
-  const [qrOpen, setQrOpen] = useState(false);
   const [screenshot, setScreenshot] = useState(null);
   const [preview, setPreview] = useState(null);
 
@@ -102,36 +102,46 @@ export default function QRPaymentSection({
           <span className="text-xs text-gray-500">Secure UPI Payment</span>
         </div>
 
-        <p className="text-sm text-gray-500">Amount to pay</p>
+        <p className="text-sm text-gray-500">Payment Amount</p>
         <p className="text-3xl font-bold text-gray-900">Pay {formatCurrency(amount || 0)}</p>
 
-        <div className="mt-3 flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2.5">
-          <span className="font-mono text-sm font-semibold text-gray-900 truncate flex-1">{upiId}</span>
-          <button type="button" onClick={copyUPI} className="text-primary-600 hover:text-primary-700" aria-label="Copy UPI ID">
-            <Copy className="h-4 w-4" />
-          </button>
+        <div className="mt-5 text-center">
+          <p className="flex items-center justify-center gap-2 font-semibold text-gray-900">
+            <ScanLine className="h-4 w-4 text-primary-600" /> Scan &amp; Pay
+          </p>
+          <p className="text-sm text-gray-600 mt-1">Scan this QR with any UPI app (GPay, PhonePe, Paytm &amp; more)</p>
+
+          <div className="mt-3 inline-block rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <QRCodeImage value={upiUri} size={QR_SIZE} className="w-full max-w-[240px] h-auto" />
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            Amount {formatCurrency(amount || 0)} is pre-filled. Verify the recipient before you pay.
+          </p>
+
+          {isMobile && (
+            <a
+              href={upiUri}
+              className="btn-secondary mt-3 w-full sm:w-auto py-2.5 px-6 text-base flex items-center justify-center gap-2"
+            >
+              <Smartphone className="h-4 w-4" /> Pay with UPI App
+            </a>
+          )}
+
+          <div className="mt-4 flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2.5 text-left">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-gray-500">UPI ID</p>
+              <p className="font-mono text-sm font-semibold text-gray-900 truncate">{upiId}</p>
+            </div>
+            <button type="button" onClick={copyUPI} className="text-primary-600 hover:text-primary-700 shrink-0" aria-label="Copy UPI ID">
+              <Copy className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-        <p className="mt-1 text-xs text-gray-500">Recipient: {recipientName} ({upiId})</p>
 
-        <button
-          type="button"
-          onClick={() => setQrOpen(true)}
-          disabled={disabled || !validAmount}
-          className="btn-primary mt-4 w-full py-3 text-base flex items-center justify-center gap-2"
-        >
-          <ScanLine className="h-5 w-5" /> Scan &amp; Pay
-        </button>
-        <p className="text-sm text-gray-600 mt-2 text-center">
-          Scan this QR using any UPI app and complete the payment.
-        </p>
-
-        {isMobile && (
-          <a
-            href={upiUri}
-            className="btn-secondary mt-2 w-full py-2.5 text-base flex items-center justify-center gap-2"
-          >
-            <Smartphone className="h-4 w-4" /> Pay with UPI App
-          </a>
+        {!validAmount && (
+          <p className="mt-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center">
+            Select a valid payment amount to generate the QR.
+          </p>
         )}
       </div>
 
@@ -168,14 +178,6 @@ export default function QRPaymentSection({
           <ShieldCheck className="h-4 w-4" /> {verifySubmitting ? 'Verifying...' : verifyLabel}
         </button>
       </div>
-
-      <UPIPaymentModal
-        isOpen={qrOpen}
-        onClose={() => setQrOpen(false)}
-        amount={amount}
-        upiId={upiId}
-        recipientName={recipientName}
-      />
     </div>
   );
 }
