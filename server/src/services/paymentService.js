@@ -5,7 +5,7 @@ import { checkAndDeactivateReferrer } from './referralService.js';
 import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
-import { runScreenshotVerification, decidePaymentVerification } from './verificationService.js';
+import { runScreenshotVerification, decidePaymentVerification, reserveApprovedUtr, releaseApprovedUtr } from './verificationService.js';
 
 // Re-exported for callers/tests that import the decision engine here.
 export { decidePaymentVerification };
@@ -152,6 +152,36 @@ export async function uploadScreenshot(paymentId, file, userId) {
   return { screenshotUrl, paymentId };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Approved-UTR duplicate policy for registration payments.
+//
+// OCR gives { decision, utr }. UTR must NEVER influence the OCR decision —
+// it only gates APPROVAL against previously APPROVED UTRs. If the extracted
+// UTR was already reserved (payment or top-up), the payment is REJECTED with
+// DUPLICATE_UTR. Missing/random UTRs pass through untouched.
+//
+// Atomic + race-safe: reserveApprovedUtr uses INSERT ... ON CONFLICT (unique
+// index on approved_utrs.utr, migration 007) — never SELECT-then-INSERT.
+// Returns { newStatus, reason, reservedUtr }.
+// ─────────────────────────────────────────────────────────────
+export async function applyPaymentUtrPolicy(paymentId, { decision, utr }) {
+  let newStatus = decision === 'approved' ? 'approved' : 'rejected';
+  let reason = null;
+  let reservedUtr = null;
+
+  if (decision === 'approved' && utr) {
+    const reserve = await reserveApprovedUtr(utr, 'payment', paymentId);
+    if (reserve.duplicate) {
+      newStatus = 'rejected';
+      reason = 'DUPLICATE_UTR';
+    } else if (reserve.reserved) {
+      reservedUtr = reserve.utr;
+    }
+  }
+
+  return { newStatus, reason, reservedUtr };
+}
+
 export async function verifyPayment(paymentId, imageBuffer) {
   const t0 = Date.now();
   const { data: payment, error: fetchError } = await supabase.from('payments').select('*').eq('id', paymentId).single();
@@ -165,9 +195,13 @@ export async function verifyPayment(paymentId, imageBuffer) {
     expectedAmount: payment.expected_amount,
     receiverUpi: RECEIVER_UPI,
   });
-  const { decision, reason } = verificationResult;
+  const { decision } = verificationResult;
 
-  const newStatus = decision === 'approved' ? 'approved' : 'rejected';
+  // Approved-UTR duplicate gate. A UTR that was already APPROVED (for any
+  // payment or top-up) rejects this request with DUPLICATE_UTR — no user
+  // activation. Missing/random UTRs skip the check entirely.
+  const { newStatus, reason, reservedUtr } = await applyPaymentUtrPolicy(payment.id, { decision, utr });
+
   const updateData = {
     verification_result: verificationResult,
     verified_at: verificationTime.toISOString(),
@@ -177,21 +211,18 @@ export async function verifyPayment(paymentId, imageBuffer) {
   if (newStatus === 'approved') updateData.approved_at = verificationTime.toISOString();
   if (newStatus === 'rejected') {
     updateData.rejected_at = verificationTime.toISOString();
-    updateData.rejection_reason = verificationResult.reason;
+    updateData.rejection_reason = reason;
   }
 
   let { error: updateError } = await supabase.from('payments').update(updateData).eq('id', paymentId).eq('status', 'pending');
-  // The unique index on transaction_id is only for data integrity/history and
-  // must NEVER influence the decision. If storing a duplicate UTR collides
-  // with the index, drop the UTR for the record and keep the decision intact.
-  if (updateError && updateError.code === '23505') {
-    delete updateData.transaction_id;
-    ({ error: updateError } = await supabase.from('payments').update(updateData).eq('id', paymentId).eq('status', 'pending'));
+  if (updateError) {
+    if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
+    throw { message: 'Failed to update payment status', code: 'DATABASE_UPDATE_FAILED' };
   }
-  if (updateError) throw { message: 'Failed to update payment status', code: 'DATABASE_UPDATE_FAILED' };
 
   const { data: updatedPayment } = await supabase.from('payments').select('*').eq('id', paymentId).single();
   if (updatedPayment.status !== newStatus) {
+    if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
     throw { message: 'Concurrent modification detected', code: 'RACE_CONDITION' };
   }
 
@@ -199,18 +230,20 @@ export async function verifyPayment(paymentId, imageBuffer) {
     try {
       await completeApproval(payment, payment.user_id, 'system', 'verify_payment');
     } catch (approvalErr) {
-      // Atomic approval failed — roll back payment to pending so no partial activation.
+      // Atomic approval failed — roll back payment to pending so no partial
+      // activation, and release the UTR reservation so it can be retried.
       await supabase.from('payments')
         .update({ status: 'pending', approved_at: null })
         .eq('id', paymentId);
+      if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
       throw approvalErr;
     }
   } else if (newStatus === 'rejected') {
     try {
       await notificationService.createNotification(
         payment.user_id, 'payment_rejected', 'Payment Rejected',
-        `Your payment of ₹${payment.expected_amount} was rejected. Reason: ${verificationResult.reason}`,
-        { paymentId, amount: payment.expected_amount, reason: verificationResult.reason }
+        `Your payment of ₹${payment.expected_amount} was rejected. Reason: ${reason}`,
+        { paymentId, amount: payment.expected_amount, reason }
       );
     } catch (e) { /* non-blocking */ }
   }
@@ -218,7 +251,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
   const elapsed = Date.now() - t0;
   await logAction(payment.user_id, 'system', 'verify_payment', paymentId, 'payment', {
     decision: verificationResult.decision,
-    reason: verificationResult.reason,
+    reason,
     amountMatch: verificationResult.amountMatch,
     upiMatch: verificationResult.upiMatch,
     utr,
@@ -229,8 +262,8 @@ export async function verifyPayment(paymentId, imageBuffer) {
   return {
     paymentId,
     status: newStatus,
-    decision: verificationResult.decision,
-    reason: verificationResult.reason,
+    decision: newStatus === 'approved' ? 'approved' : 'rejected',
+    reason,
     verificationResult,
     elapsed,
   };
@@ -255,7 +288,21 @@ export async function approvePayment(paymentId, adminId) {
   if (fetchError || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
   if (payment.status !== 'pending') throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
 
-  return await completeApproval(payment, adminId, 'admin', 'approve_payment');
+  // Defensive approved-UTR gate for admin approvals that carry a UTR
+  // (normally only OCR auto-verify sets transaction_id, so this is a no-op).
+  let reservedUtr = null;
+  if (payment.transaction_id) {
+    const reserve = await reserveApprovedUtr(payment.transaction_id, 'payment', payment.id);
+    if (reserve.duplicate) throw { message: 'Duplicate UTR detected', code: 'DUPLICATE_UTR' };
+    if (reserve.reserved) reservedUtr = reserve.utr;
+  }
+
+  try {
+    return await completeApproval(payment, adminId, 'admin', 'approve_payment');
+  } catch (err) {
+    if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', payment.id);
+    throw err;
+  }
 }
 
 export async function rejectPayment(paymentId, adminId, reason) {

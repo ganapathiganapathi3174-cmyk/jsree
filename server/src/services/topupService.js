@@ -3,7 +3,7 @@ import { generateUniqueFilename } from '../utils/helpers.js';
 import { logAction } from './auditService.js';
 import { checkAndDeactivateReferrer } from './referralService.js';
 import walletService from './walletService.js';
-import { runScreenshotVerification } from './verificationService.js';
+import { runScreenshotVerification, reserveApprovedUtr } from './verificationService.js';
 
 const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
 const SUBMITTABLE_STATUSES = ['created', 'payment_pending'];
@@ -46,7 +46,9 @@ export async function submitTopupProof(topupId, file, userId) {
 
   // Same OCR verification engine as registration payments.
   // Final rule: approved = upiMatch && amountMatch && dateValid.
-  // UTR is ONLY stored for history — it has zero influence and is never required.
+  // UTR is NOT an input to that decision, but an extracted UTR that was
+  // already APPROVED elsewhere (payment or top-up) rejects with
+  // DUPLICATE_UTR (handled inside applyTopupVerification).
   let outcome;
   try {
     const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
@@ -78,9 +80,12 @@ export async function submitTopupProof(topupId, file, userId) {
   return {
     message: outcome.credited
       ? 'Topup approved and amount credited to your balance'
-      : 'Topup rejected',
+      : outcome.reason === 'DUPLICATE_UTR'
+        ? 'Topup rejected: duplicate UTR detected'
+        : 'Topup rejected',
     topupId,
     credited: outcome.credited || false,
+    reason: outcome.reason || null,
   };
 }
 
@@ -116,6 +121,29 @@ export async function applyTopupVerification(topup, verificationResult, verifica
     if (!updated || updated.length === 0) {
       // Already transitioned by another request — do NOT credit again.
       return { credited: false, alreadyProcessed: true };
+    }
+
+    // Approved-UTR duplicate gate (AFTER the atomic transition, so this
+    // caller owns the transition and the decision is decisive). A UTR that
+    // was already APPROVED for any payment/top-up rejects this top-up —
+    // the record is rolled to 'rejected' and the balance is NOT credited.
+    // Missing/random UTRs skip the check entirely.
+    const verificationUtr = verificationResult.utr || null;
+    if (verificationUtr) {
+      const reserve = await reserveApprovedUtr(verificationUtr, 'topup', topup.id);
+      if (reserve.duplicate) {
+        await supabase
+          .from('topups')
+          .update({
+            status: 'rejected',
+            rejection_reason: 'DUPLICATE_UTR',
+            verified_at: verificationTime.toISOString(),
+            verification_result: verificationResult,
+          })
+          .eq('id', topup.id)
+          .eq('status', 'completed');
+        return { credited: false, alreadyProcessed: false, reason: 'DUPLICATE_UTR' };
+      }
     }
 
     const credited = await creditTopupBalanceOnce(topup);

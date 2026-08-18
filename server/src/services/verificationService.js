@@ -1,4 +1,5 @@
 import { runOCR, extractPaymentData, matchAmount, matchUPI, runAmountRecoveryOCR, isWithinTimeWindow } from './ocrService.js';
+import { supabase } from '../db/supabase.js';
 
 // ─────────────────────────────────────────────────────────────
 // Shared screenshot verification engine (payments AND top-ups).
@@ -6,9 +7,15 @@ import { runOCR, extractPaymentData, matchAmount, matchUPI, runAmountRecoveryOCR
 // Final verification rule (both flows):
 //   approved = upiMatch === true && amountMatch === true && dateValid === true
 //
-// UTR / transaction ID intentionally has ZERO influence on the
-// decision — it is only captured for historical records/display.
-// Missing, unreadable, random or duplicate UTRs never affect approval.
+// UTR / transaction ID has ZERO influence on that OCR decision — it is
+// only captured for records/display. Missing, unreadable or random UTRs
+// never affect approval.
+//
+// SEPARATE approved-UTR duplicate rule (see approved_utrs below):
+//   If a UTR WAS extracted and it belongs to a PREVIOUSLY APPROVED
+//   payment/top-up, the flow is rejected with DUPLICATE_UTR (no user
+//   activation, no balance credit). Rejected/pending/failed/cancelled
+//   UTRs never block; missing UTRs skip the check entirely.
 // ─────────────────────────────────────────────────────────────
 export function decidePaymentVerification({ upiMatch, amountMatch, dateValid }) {
   const approved = upiMatch === true && amountMatch === true && dateValid === true;
@@ -102,4 +109,55 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     verificationTime,
     utr,
   };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Approved-UTR duplicate protection (shared by payments AND top-ups).
+//
+// Only PREVIOUSLY APPROVED records live in approved_utrs, so a UTR that
+// appears on a rejected/pending/failed/cancelled record can never block a
+// future approval. Missing/empty UTRs are skipped entirely.
+// ─────────────────────────────────────────────────────────────
+export function normalizeUtr(utr) {
+  if (!utr) return null;
+  const normalized = String(utr).replace(/\s+/g, '').trim().toUpperCase();
+  return normalized || null;
+}
+
+// Atomically records an approved UTR. Race-safe: the UNIQUE(utr) constraint
+// (migration 007) guarantees that only ONE caller can reserve a given UTR —
+// concurrent same-UTR submissions see a 23505 and are told "duplicate".
+// Never a SELECT-then-INSERT.
+//
+// Returns:
+//   { reserved: true,  duplicate: false, utr }  -> caller owns the UTR now
+//   { reserved: false, duplicate: true,  utr }  -> already APPROVED elsewhere
+//   { reserved: false, duplicate: false, utr: null } -> no UTR to reserve
+export async function reserveApprovedUtr(utr, referenceType, referenceId) {
+  const normalized = normalizeUtr(utr);
+  if (!normalized) return { reserved: false, duplicate: false, utr: null };
+
+  const { data, error } = await supabase
+    .from('approved_utrs')
+    .insert({ utr: normalized, reference_type: referenceType, reference_id: referenceId })
+    .select('utr')
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === '23505') return { reserved: false, duplicate: true, utr: normalized };
+    throw { message: 'Failed to record approved UTR', code: 'UTR_RESERVE_FAILED' };
+  }
+  return { reserved: true, duplicate: false, utr: normalized, id: data?.id || null };
+}
+
+// Removes a reservation made for a specific record (used to compensate when
+// approval fails AFTER the UTR was reserved, so the UTR can be retried).
+export async function releaseApprovedUtr(utr, referenceType, referenceId) {
+  const normalized = normalizeUtr(utr);
+  if (!normalized) return;
+  await supabase
+    .from('approved_utrs')
+    .delete()
+    .eq('utr', normalized)
+    .eq('reference_id', referenceId);
 }
