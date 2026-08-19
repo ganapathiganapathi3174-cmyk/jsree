@@ -17,6 +17,7 @@ export default function AdminUsers() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [pendingPlanChanges, setPendingPlanChanges] = useState({});
 
   const load = (p = 1) => {
     setLoading(true);
@@ -25,6 +26,11 @@ export default function AdminUsers() {
       setTotalPages(r.data.data?.totalPages || 1);
       setPage(p);
     }).catch(() => toast.error('Failed to load users')).finally(() => setLoading(false));
+    api.get('/admin/plan-change-requests').then(r => {
+      const map = {};
+      (r.data?.data || []).forEach(x => { if (x.status === 'pending') map[x.user_id] = x.requested_plan; });
+      setPendingPlanChanges(map);
+    }).catch(() => {});
   };
   useEffect(() => { load(); }, []);
 
@@ -38,7 +44,7 @@ export default function AdminUsers() {
         toast.success('User deactivated');
       } else if (action === 'delete') {
         await api.delete(`/admin/users/${userId}`);
-        toast.success('User deleted');
+        toast.success('User deleted successfully');
       }
       setConfirmAction(null); setDetailUser(null); load(page);
     } catch (err) { toast.error(err.response?.data?.message || 'Action failed'); }
@@ -51,7 +57,7 @@ export default function AdminUsers() {
       : 'Deactivate user?';
 
   const confirmMessage = confirmAction?.action === 'delete'
-    ? 'This will remove the user\'s account and all associated user data. This action cannot be undone.'
+    ? `User: ${confirmAction.user?.full_name || 'Unknown'}\nEmail: ${confirmAction.user?.email || '-'}\nCurrent Plan: ${PLAN_MAP[confirmAction.user?.current_plan]?.label || '-'}${confirmAction.user?.id && pendingPlanChanges[confirmAction.user.id] ? `\nPending Request: ${PLAN_MAP[pendingPlanChanges[confirmAction.user.id]]?.label || '-'}` : ''}\n\nThis will permanently remove this user's account and all user-owned data. This action cannot be undone.`
     : confirmAction?.action === 'activate'
       ? 'This user will regain access to their account and the platform.'
       : 'This user will lose access to their account until reactivated.';
@@ -85,6 +91,7 @@ export default function AdminUsers() {
                 <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Plan</th>
                 <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Referrals</th>
                 <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
+                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Plan Change</th>
                 <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
               </tr></thead>
               <tbody className="divide-y divide-gray-100">
@@ -96,11 +103,16 @@ export default function AdminUsers() {
                     <td className="px-4 py-3">{u.referral_count || 0}</td>
                     <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
                     <td className="px-4 py-3">
+                      {pendingPlanChanges[u.id]
+                        ? <span className="inline-flex items-center gap-1.5 text-xs rounded-full border border-warning-200 bg-warning-50 px-2.5 py-1"><span className="h-1.5 w-1.5 rounded-full bg-warning-500" /><span className="font-semibold text-warning-700">Plan Change Pending</span><span className="text-warning-600">Requested: {PLAN_MAP[pendingPlanChanges[u.id]]?.label}</span></span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
                         <button onClick={() => setDetailUser(u)} className="w-10 h-10 hover:bg-gray-100 rounded-xl border border-gray-200 text-gray-500 hover:text-primary-400 flex items-center justify-center" title="View details"><Eye className="h-4 w-4" /></button>
                         {u.status !== 'active' && <button onClick={() => setConfirmAction({ action: 'activate', id: u.id, label: 'activate this user' })} className="w-10 h-10 hover:bg-success-50 rounded-xl border border-gray-200 text-success-500 flex items-center justify-center" title="Activate user"><UserCheck className="h-4 w-4" /></button>}
                         {u.status === 'active' && <button onClick={() => setConfirmAction({ action: 'deactivate', id: u.id, label: 'deactivate this user' })} className="w-10 h-10 hover:bg-warning-50 rounded-xl border border-gray-200 text-warning-500 flex items-center justify-center" title="Deactivate user"><UserX className="h-4 w-4" /></button>}
-                        <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, label: 'Delete this user permanently?' })} className="w-10 h-10 hover:bg-error-50 rounded-xl border border-gray-200 text-error-500 flex items-center justify-center" title="Permanently delete this user and all their data"><Trash2 className="h-4 w-4" /></button>
+                        <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="w-10 h-10 hover:bg-error-50 rounded-xl border border-gray-200 text-error-500 flex items-center justify-center" title="Permanently delete this user and all their data"><Trash2 className="h-4 w-4" /></button>
                       </div>
                     </td>
                   </tr>
