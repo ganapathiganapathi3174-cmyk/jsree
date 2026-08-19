@@ -117,7 +117,23 @@ export async function updateUserStatus(userId, status, reason) {
   return { message: 'User status updated', userId, status };
 }
 
-export async function deleteUser(userId, softDelete = true) {
+function rpcErrorCode(message = '') {
+  if (message.includes('USER_NOT_FOUND')) return 'USER_NOT_FOUND';
+  if (message.includes('CANNOT_DELETE_ADMIN')) return 'CANNOT_DELETE_ADMIN';
+  if (message.includes('ADMIN_REQUIRED')) return 'ADMIN_REQUIRED';
+  return 'DELETE_FAILED';
+}
+
+async function removeStorageObjects(paths = []) {
+  if (!paths || paths.length === 0) return;
+  try {
+    await supabase.storage.from('payments').remove(paths);
+  } catch (err) {
+    console.error('Storage cleanup failed (non-blocking):', err.message);
+  }
+}
+
+export async function deleteUser(userId, softDelete = false, adminId = null) {
   const { data: user, error: fetchError } = await supabase.from('users').select('id, role').eq('id', userId).single();
   if (fetchError || !user) throw { message: 'User not found', code: 'USER_NOT_FOUND' };
   if (user.role === 'admin') throw { message: 'Cannot delete admin user', code: 'CANNOT_DELETE_ADMIN' };
@@ -125,34 +141,31 @@ export async function deleteUser(userId, softDelete = true) {
   if (softDelete) {
     const { error } = await supabase.from('users').update({ status: 'deleted' }).eq('id', userId);
     if (error) throw { message: 'Failed to delete user', code: 'DELETE_FAILED' };
-    await logAction(null, 'admin', 'soft_delete_user', userId, 'user', {});
+    await logAction(adminId, 'admin', 'soft_delete_user', userId, 'user', {});
     return { message: 'User soft deleted', userId };
   }
 
-  const relatedTables = [
-    { table: 'audit_logs', col: 'actor_id' },
-    { table: 'messages', col: 'sender_id' },
-    { table: 'conversations', col: 'user_id' },
-    { table: 'notifications', col: 'user_id' },
-    { table: 'wallet_transactions', col: 'user_id' },
-    { table: 'ip_logs', col: 'user_id' },
-    { table: 'suspicious_activity', col: 'user_id' },
-    { table: 'plan_change_requests', col: 'user_id' },
-    { table: 'topups', col: 'sender_id' },
-    { table: 'topups', col: 'receiver_id' },
-    { table: 'referrals', col: 'referrer_id' },
-    { table: 'referrals', col: 'referred_user_id' },
-    { table: 'payments', col: 'user_id' },
-  ];
+  // Atomic, transactional, FK-safe deletion via SECURITY DEFINER RPC.
+  const { data, error } = await supabase.rpc('admin_delete_user', {
+    p_user_id: userId,
+    p_admin_id: adminId
+  });
+  if (error) throw { message: 'Failed to delete user', code: rpcErrorCode(error.message) };
 
-  for (const { table, col } of relatedTables) {
-    await supabase.from(table).delete().eq(col, userId);
-  }
-
-  const { error } = await supabase.from('users').delete().eq('id', userId);
-  if (error) throw { message: 'Failed to delete user', code: 'DELETE_FAILED' };
-  await logAction(null, 'admin', 'hard_delete_user', userId, 'user', {});
+  await removeStorageObjects(data?.storagePaths);
   return { message: 'User permanently deleted', userId };
+}
+
+export async function deleteTopup(topupId, adminId) {
+  const { data, error } = await supabase.rpc('admin_delete_topup', {
+    p_topup_id: topupId,
+    p_admin_id: adminId
+  });
+  if (error) throw { message: 'Failed to delete topup', code: rpcErrorCode(error.message) };
+
+  await removeStorageObjects(data?.storagePaths);
+  if (data?.alreadyDeleted) return { message: 'Top-up already deleted', alreadyDeleted: true, topupId };
+  return { message: 'Top-up deleted successfully', topupId };
 }
 
 export async function getInactiveUsers() {

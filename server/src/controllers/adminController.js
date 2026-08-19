@@ -46,11 +46,11 @@ export async function updateUserStatus(req, res) {
 
 export async function deleteUser(req, res) {
   try {
-    const softDelete = req.query.soft !== 'false';
-    const result = await adminService.deleteUser(req.params.userId, softDelete);
+    const softDelete = req.query.soft === 'true';
+    const result = await adminService.deleteUser(req.params.userId, softDelete, req.user.id);
     res.json({ success: true, message: result.message });
   } catch (error) {
-    const s = error.code === 'USER_NOT_FOUND' ? 404 : error.code === 'CANNOT_DELETE_ADMIN' ? 403 : 500;
+    const s = error.code === 'USER_NOT_FOUND' ? 404 : error.code === 'CANNOT_DELETE_ADMIN' ? 403 : error.code === 'ADMIN_REQUIRED' ? 403 : 500;
     res.status(s).json({ success: false, message: error.message || 'Failed to delete user', code: error.code || 'DELETE_FAILED' });
   }
 }
@@ -117,14 +117,11 @@ export async function getTopups(req, res) {
 
 export async function deleteTopup(req, res) {
   try {
-    const { data: topup, error: fetchError } = await supabase.from('topups').select('id').eq('id', req.params.topupId).single();
-    if (fetchError || !topup) return res.status(404).json({ success: false, message: 'Topup not found', code: 'TOPUP_NOT_FOUND' });
-    const { error } = await supabase.from('topups').delete().eq('id', req.params.topupId);
-    if (error) throw { message: 'Failed to delete topup', code: 'DELETE_FAILED' };
-    await logAction(req.user.id, 'admin', 'delete_topup', req.params.topupId, 'topup', {});
-    res.json({ success: true, message: 'Topup deleted successfully' });
+    const result = await adminService.deleteTopup(req.params.topupId, req.user.id);
+    res.json({ success: true, message: result.message, data: result });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || 'Failed to delete topup', code: error.code || 'DELETE_FAILED' });
+    const s = error.code === 'ADMIN_REQUIRED' ? 403 : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed to delete topup', code: error.code || 'DELETE_FAILED' });
   }
 }
 
