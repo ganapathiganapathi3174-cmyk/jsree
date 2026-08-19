@@ -24,7 +24,10 @@ export default function ChangePlan() {
   };
   useEffect(() => { load(); }, []);
 
+  const hasPending = requests.some(r => r.status === 'pending');
+
   const handleSubmit = async () => {
+    if (hasPending) { toast.error('You already have a pending plan change request'); return; }
     if (!selectedPlan) { toast.error('Select a plan'); return; }
     if (selectedPlan === currentPlan) { toast.error('Select a different plan'); return; }
     setSubmitting(true);
@@ -47,6 +50,12 @@ export default function ChangePlan() {
       </div>
 
       <div className="card">
+        {hasPending && (
+          <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-700">
+            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-warning-500" />
+            <span>You already have a pending plan change request{requests.find(r => r.status === 'pending')?.requested_plan ? ` (Requested: ${PLAN_MAP[requests.find(r => r.status === 'pending').requested_plan]?.label || ''})` : ''}. Please wait for admin review.</span>
+          </div>
+        )}
         <p className="text-sm text-gray-600 mb-5">Current Plan: <strong className="text-gray-900">{PLAN_MAP[currentPlan]?.label || 'None'}</strong></p>
         <h3 className="font-semibold text-gray-900 mb-3">Select New Plan</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
@@ -57,9 +66,9 @@ export default function ChangePlan() {
             </button>
           ))}
         </div>
-        <textarea className="input-field mb-3" rows={3} placeholder="Reason for change (optional)" value={reason} onChange={e => setReason(e.target.value)} />
-        <button onClick={handleSubmit} disabled={submitting || !selectedPlan} className="btn-primary">
-          <RefreshCw className="h-4 w-4" /> {submitting ? 'Submitting...' : 'Submit Request'}
+        <textarea className="input-field mb-3" rows={3} placeholder="Reason for change (optional)" value={reason} onChange={e => setReason(e.target.value)} disabled={hasPending} />
+        <button onClick={handleSubmit} disabled={submitting || !selectedPlan || hasPending} className="btn-primary">
+          <RefreshCw className="h-4 w-4" /> {hasPending ? 'Pending Request' : submitting ? 'Submitting...' : 'Submit Request'}
         </button>
       </div>
 
