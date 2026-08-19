@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { supabase } from '../db/supabase.js';
 import { generateUniqueFilename, generateReferralCode } from '../utils/helpers.js';
 import { logAction } from './auditService.js';
@@ -6,12 +7,14 @@ import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
 import { runScreenshotVerification, decidePaymentVerification, reserveApprovedUtr, releaseApprovedUtr } from './verificationService.js';
+import { RECEIVER_UPI } from '../config/paymentConfig.js';
 
 // Re-exported for callers/tests that import the decision engine here.
 export { decidePaymentVerification };
 
 const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
-const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
+// Statuses an admin can act on (approve / reject / re-verify).
+const ACTABLE_STATUSES = ['pending', 'manual_review'];
 
 // ─────────────────────────────────────────────────────────────
 // Atomic approval of an initial registration payment.
@@ -33,32 +36,52 @@ async function rollbackApproval(paymentId, userId) {
 
 async function completeApproval(payment, actorId, actorType, logActionType) {
   // 1. Mark payment approved (guarded, race-safe). If it is already approved
-  //    (e.g. the OCR auto-verify path updated it first) we proceed.
+  //    (e.g. the OCR auto-verify path updated it first, or an admin retry
+  //    after a partial failure) we proceed without error.
   const { data: approvedRows, error: payErr } = await supabase.from('payments')
     .update({ status: 'approved', approved_at: new Date().toISOString() })
     .eq('id', payment.id)
-    .eq('status', 'pending')
+    .in('status', ACTABLE_STATUSES)
     .select('id, status');
   if (payErr) throw { message: 'Failed to approve payment', code: 'APPROVE_FAILED' };
   if (!approvedRows || approvedRows.length === 0) {
     const { data: cur } = await supabase.from('payments').select('id, status').eq('id', payment.id).single();
     if (!cur) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
-    if (cur.status !== 'approved') throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
+    if (cur.status !== 'approved') throw { message: 'Payment is not in an actionable status', code: 'PAYMENT_NOT_PENDING' };
   }
 
   // 2. Activate user account (dashboard/wallet/referral access).
+  //    Idempotent: if the account is already active (retry/duplicate admin
+  //    action) we must NOT roll back an otherwise-fine approval — the only
+  //    failure worth rolling back is a genuinely non-activatable account.
   const { data: userRows, error: userErr } = await supabase.from('users')
     .update({ status: 'active', current_plan: payment.selected_plan })
     .eq('id', payment.user_id)
     .eq('status', 'pending')
     .select('id, referred_by, referral_code');
-  if (userErr || !userRows || userRows.length === 0) {
+  if (userErr) {
     await rollbackApproval(payment.id, payment.user_id);
     throw { message: 'Failed to activate user account', code: 'ACTIVATE_FAILED' };
   }
+  let activeUser = userRows && userRows.length > 0 ? userRows[0] : null;
+  if (!activeUser) {
+    const { data: curUser } = await supabase.from('users')
+      .select('id, referred_by, referral_code, status')
+      .eq('id', payment.user_id)
+      .single();
+    if (!curUser) {
+      await rollbackApproval(payment.id, payment.user_id);
+      throw { message: 'Payment user not found', code: 'PAYMENT_USER_NOT_FOUND' };
+    }
+    if (curUser.status !== 'active') {
+      await rollbackApproval(payment.id, payment.user_id);
+      throw { message: 'Failed to activate user account', code: 'ACTIVATE_FAILED' };
+    }
+    activeUser = curUser;
+  }
 
   // 3. Ensure referral link/code exists (referral system enablement).
-  let referralCode = userRows[0].referral_code;
+  let referralCode = activeUser.referral_code;
   if (!referralCode) {
     referralCode = generateReferralCode();
     const { error: refErr } = await supabase.from('users')
@@ -83,7 +106,7 @@ async function completeApproval(payment, actorId, actorType, logActionType) {
   }
 
   // 5. Side effects — non-blocking (referrer deactivation, wallet bonus, tiers).
-  const referrerId = userRows[0].referred_by || null;
+  const referrerId = activeUser.referred_by || null;
   try {
     if (referrerId) {
       await checkAndDeactivateReferrer(referrerId).catch(() => {});
@@ -115,7 +138,7 @@ export async function createPayment(userId, planData) {
   const amount = PLAN_AMOUNTS[plan];
   if (!amount) throw { message: 'Invalid plan selected', code: 'INVALID_PLAN' };
 
-  const { data: existingPending } = await supabase.from('payments').select('id').eq('user_id', userId).eq('status', 'pending').single();
+  const { data: existingPending } = await supabase.from('payments').select('id').eq('user_id', userId).in('status', ['pending', 'manual_review']).single();
   if (existingPending) throw { message: 'You already have a pending payment', code: 'PENDING_EXISTS' };
 
   const { data: existingApproved } = await supabase.from('payments').select('id').eq('user_id', userId).eq('status', 'approved').single();
@@ -136,6 +159,24 @@ export async function uploadScreenshot(paymentId, file, userId) {
   if (payment.user_id !== userId) throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
   if (payment.status !== 'pending') throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
 
+  // Screenshot content hash — used to detect the SAME proof image being
+  // reused for multiple registrations (duplicate-proof rule). Only an
+  // APPROVED payment's hash blocks reuse; a rejected/pending screenshot
+  // can always be resubmitted.
+  const screenshotHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+  const { data: reuse } = await supabase.from('payments')
+    .select('id')
+    .eq('screenshot_hash', screenshotHash)
+    .eq('status', 'approved')
+    .neq('id', paymentId)
+    .limit(1);
+  if (reuse && reuse.length > 0) {
+    throw {
+      message: 'This screenshot was already used for an approved payment',
+      code: 'DUPLICATE_SCREENSHOT',
+    };
+  }
+
   const filename = generateUniqueFilename(file.originalname);
   const filePath = `payments/${paymentId}/${filename}`;
 
@@ -145,10 +186,13 @@ export async function uploadScreenshot(paymentId, file, userId) {
   const { data: urlData } = supabase.storage.from('payments').getPublicUrl(filePath);
   const screenshotUrl = urlData.publicUrl;
 
-  const { error: updateError } = await supabase.from('payments').update({ screenshot_url: screenshotUrl }).eq('id', paymentId);
+  const { error: updateError } = await supabase.from('payments').update({
+    screenshot_url: screenshotUrl,
+    screenshot_hash: screenshotHash,
+  }).eq('id', paymentId);
   if (updateError) throw { message: 'Failed to save screenshot', code: 'SAVE_FAILED' };
 
-  await logAction(userId, 'user', 'upload_screenshot', paymentId, 'payment', { filename });
+  await logAction(userId, 'user', 'upload_screenshot', paymentId, 'payment', { filename, screenshotHash });
   return { screenshotUrl, paymentId };
 }
 
@@ -165,10 +209,13 @@ export async function uploadScreenshot(paymentId, file, userId) {
 // Returns { newStatus, reason, reservedUtr }.
 // ─────────────────────────────────────────────────────────────
 export async function applyPaymentUtrPolicy(paymentId, { decision, utr }) {
-  let newStatus = decision === 'approved' ? 'approved' : 'rejected';
+  let newStatus = decision === 'approved' ? 'approved' : decision === 'manual_review' ? 'manual_review' : 'rejected';
   let reason = null;
   let reservedUtr = null;
 
+  // UTR reservation happens ONLY on auto-approve. manual_review payments are
+  // not approved yet — the UTR is captured but not reserved until admin
+  // approval decides the outcome.
   if (decision === 'approved' && utr) {
     const reserve = await reserveApprovedUtr(utr, 'payment', paymentId);
     if (reserve.duplicate) {
@@ -187,7 +234,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
   const { data: payment, error: fetchError } = await supabase.from('payments').select('*').eq('id', paymentId).single();
   if (fetchError || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
   if (!payment.screenshot_url && !imageBuffer) throw { message: 'No screenshot uploaded', code: 'NO_SCREENSHOT' };
-  if (payment.status !== 'pending') throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
+  if (!payment.status || !ACTABLE_STATUSES.includes(payment.status)) throw { message: 'Payment is not in a verifiable status', code: 'PAYMENT_NOT_PENDING' };
 
   const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
     imageBuffer: imageBuffer || null,
@@ -202,6 +249,17 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // activation. Missing/random UTRs skip the check entirely.
   const { newStatus, reason, reservedUtr } = await applyPaymentUtrPolicy(payment.id, { decision, utr });
 
+  let effectiveReason = reason;
+  if (!effectiveReason && newStatus === 'rejected') {
+    effectiveReason = verificationResult.reason || 'REJECTED';
+  }
+  if (effectiveReason === 'DUPLICATE_UTR') {
+    // Reflect the duplicate gate in the persisted structured result.
+    verificationResult.decision = 'rejected';
+    verificationResult.reason = 'DUPLICATE_UTR';
+    verificationResult.checks = { ...verificationResult.checks, duplicate: { passed: false, utr } };
+  }
+
   const updateData = {
     verification_result: verificationResult,
     verified_at: verificationTime.toISOString(),
@@ -211,10 +269,10 @@ export async function verifyPayment(paymentId, imageBuffer) {
   if (newStatus === 'approved') updateData.approved_at = verificationTime.toISOString();
   if (newStatus === 'rejected') {
     updateData.rejected_at = verificationTime.toISOString();
-    updateData.rejection_reason = reason;
+    updateData.rejection_reason = effectiveReason;
   }
 
-  let { error: updateError } = await supabase.from('payments').update(updateData).eq('id', paymentId).eq('status', 'pending');
+  const { error: updateError } = await supabase.from('payments').update(updateData).eq('id', paymentId).in('status', ACTABLE_STATUSES);
   if (updateError) {
     if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
     throw { message: 'Failed to update payment status', code: 'DATABASE_UPDATE_FAILED' };
@@ -242,16 +300,24 @@ export async function verifyPayment(paymentId, imageBuffer) {
     try {
       await notificationService.createNotification(
         payment.user_id, 'payment_rejected', 'Payment Rejected',
-        `Your payment of ₹${payment.expected_amount} was rejected. Reason: ${reason}`,
-        { paymentId, amount: payment.expected_amount, reason }
+        `Your payment of ₹${payment.expected_amount} was rejected. Reason: ${effectiveReason}`,
+        { paymentId, amount: payment.expected_amount, reason: effectiveReason }
+      );
+    } catch (e) { /* non-blocking */ }
+  } else if (newStatus === 'manual_review') {
+    try {
+      await notificationService.createNotification(
+        payment.user_id, 'payment_review', 'Payment Under Review',
+        `Your payment of ₹${payment.expected_amount} needs manual review. We will verify it shortly.`,
+        { paymentId, amount: payment.expected_amount, reason: effectiveReason || null }
       );
     } catch (e) { /* non-blocking */ }
   }
 
   const elapsed = Date.now() - t0;
   await logAction(payment.user_id, 'system', 'verify_payment', paymentId, 'payment', {
-    decision: verificationResult.decision,
-    reason,
+    decision: newStatus,
+    reason: effectiveReason,
     amountMatch: verificationResult.amountMatch,
     upiMatch: verificationResult.upiMatch,
     utr,
@@ -262,8 +328,8 @@ export async function verifyPayment(paymentId, imageBuffer) {
   return {
     paymentId,
     status: newStatus,
-    decision: newStatus === 'approved' ? 'approved' : 'rejected',
-    reason,
+    decision: newStatus,
+    reason: effectiveReason,
     verificationResult,
     elapsed,
   };
@@ -286,13 +352,15 @@ export async function getUserPayments(userId) {
 export async function approvePayment(paymentId, adminId) {
   const { data: payment, error: fetchError } = await supabase.from('payments').select('*').eq('id', paymentId).single();
   if (fetchError || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
-  if (payment.status !== 'pending') throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
+  if (!payment.status || !ACTABLE_STATUSES.includes(payment.status)) throw { message: 'Payment is not in an actionable status', code: 'PAYMENT_NOT_PENDING' };
 
   // Defensive approved-UTR gate for admin approvals that carry a UTR
   // (normally only OCR auto-verify sets transaction_id, so this is a no-op).
+  // A manual_review payment has its UTR captured but NOT reserved yet.
   let reservedUtr = null;
-  if (payment.transaction_id) {
-    const reserve = await reserveApprovedUtr(payment.transaction_id, 'payment', payment.id);
+  const utrToReserve = payment.transaction_id || (payment.verification_result?.utr) || null;
+  if (utrToReserve) {
+    const reserve = await reserveApprovedUtr(utrToReserve, 'payment', payment.id);
     if (reserve.duplicate) throw { message: 'Duplicate UTR detected', code: 'DUPLICATE_UTR' };
     if (reserve.reserved) reservedUtr = reserve.utr;
   }
@@ -308,7 +376,7 @@ export async function approvePayment(paymentId, adminId) {
 export async function rejectPayment(paymentId, adminId, reason) {
   const { data: payment, error: fetchError } = await supabase.from('payments').select('*').eq('id', paymentId).single();
   if (fetchError || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
-  if (payment.status !== 'pending') throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
+  if (!payment.status || !ACTABLE_STATUSES.includes(payment.status)) throw { message: 'Payment is not in an actionable status', code: 'PAYMENT_NOT_PENDING' };
 
   const { error } = await supabase.from('payments').update({ status: 'rejected', rejected_at: new Date().toISOString(), rejection_reason: reason }).eq('id', paymentId);
   if (error) throw { message: 'Failed to reject payment', code: 'REJECT_FAILED' };

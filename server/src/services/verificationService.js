@@ -1,4 +1,19 @@
-import { runOCR, extractPaymentData, matchAmount, matchUPI, runAmountRecoveryOCR, isWithinTimeWindow } from './ocrService.js';
+import {
+  runOCR,
+  extractPaymentData,
+  matchAmount,
+  matchUPI,
+  runAmountRecoveryOCR,
+  isWithinTimeWindow,
+  dateTimeEntryToDate,
+  isSameIstDay,
+} from './ocrService.js';
+import {
+  PAYMENT_TIME_WINDOW_MINUTES,
+  MIN_OCR_CONFIDENCE_APPROVE,
+  MIN_OCR_CONFIDENCE_MANUAL,
+  TIMEZONE,
+} from '../config/paymentConfig.js';
 import { supabase } from '../db/supabase.js';
 
 // ─────────────────────────────────────────────────────────────
@@ -6,10 +21,20 @@ import { supabase } from '../db/supabase.js';
 //
 // Final verification rule (both flows):
 //   approved = upiMatch === true && amountMatch === true && dateValid === true
+//              && ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE
 //
 // UTR / transaction ID has ZERO influence on that OCR decision — it is
 // only captured for records/display. Missing, unreadable or random UTRs
 // never affect approval.
+//
+// manual_review is a 4th decision (NOT an approval and NOT a rejection):
+// it is returned when every SECURITY gate (amount/UPI) passes but the
+// evidence is not clean enough to auto-approve — e.g. the date was read
+// without an exact time on the correct IST day, OCR confidence is below
+// the approve floor, or the receipt wording is ambiguous/failed. Admin
+// approval is required to finish it. Strong mismatches (amount/UPI,
+// confirmed duplicates) STILL reject immediately — manual_review never
+// bypasses an existing security gate.
 //
 // SEPARATE approved-UTR duplicate rule (see approved_utrs below):
 //   If a UTR WAS extracted and it belongs to a PREVIOUSLY APPROVED
@@ -17,11 +42,33 @@ import { supabase } from '../db/supabase.js';
 //   activation, no balance credit). Rejected/pending/failed/cancelled
 //   UTRs never block; missing UTRs skip the check entirely.
 // ─────────────────────────────────────────────────────────────
-export function decidePaymentVerification({ upiMatch, amountMatch, dateValid }) {
-  const approved = upiMatch === true && amountMatch === true && dateValid === true;
+export function decidePaymentVerification({ upiMatch, amountMatch, dateValid, dateAmbiguous, ocrConfidence }) {
+  const confident = ocrConfidence === undefined || ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE;
+  const approved = upiMatch === true && amountMatch === true && dateValid === true && confident;
   if (approved) return { decision: 'approved', reason: null };
+
+  // Strong mismatches always reject — never downgrade to manual review.
   if (amountMatch !== true) return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
   if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
+
+  // Security gates pass; the remaining question is evidence quality.
+  const evidenceEligible = dateValid === true || dateAmbiguous === true;
+  const confidenceManualOk = ocrConfidence === undefined || ocrConfidence >= MIN_OCR_CONFIDENCE_MANUAL;
+
+  if (dateValid === true) {
+    // All gates pass but OCR confidence is below the auto-approve floor.
+    // Above the manual floor -> admin review. Below it -> low-confidence
+    // rejection (keeps garbage screenshots out of the queue entirely).
+    if (confidenceManualOk && !confident) {
+      return { decision: 'manual_review', reason: 'LOW_OCR_CONFIDENCE' };
+    }
+    return { decision: 'rejected', reason: 'LOW_OCR_CONFIDENCE' };
+  }
+
+  if (evidenceEligible && confidenceManualOk) {
+    return { decision: 'manual_review', reason: dateAmbiguous ? 'DATE_AMBIGUOUS' : 'MANUAL_REVIEW' };
+  }
+
   return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
 }
 
@@ -30,9 +77,11 @@ export function decidePaymentVerification({ upiMatch, amountMatch, dateValid }) 
 //
 // Throws OCR_FAILED / OCR_UNREADABLE when the screenshot cannot be
 // processed (caller keeps the record in a retryable state). On success
-// returns { verificationResult, verificationTime, utr }.
+// returns { verificationResult, verificationTime, utr }. The result is
+// structured ({ decision, reason, checks, detected, ... }) for admin
+// debugging; decision/reason remain the primary contract.
 // ─────────────────────────────────────────────────────────────
-export async function runScreenshotVerification({ imageBuffer, screenshotUrl, expectedAmount, receiverUpi }) {
+export async function runScreenshotVerification({ imageBuffer, screenshotUrl, expectedAmount, receiverUpi, now }) {
   let buffer = imageBuffer;
   let ocrText = '';
   let ocrConfidence = 0;
@@ -41,6 +90,8 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   let extractedUPIs = [];
   let extractedUTRs = [];
   let extractedDates = [];
+  let extractedDateTimes = [];
+  let transactionStatus = null;
 
   try {
     if (!buffer && screenshotUrl) {
@@ -56,6 +107,8 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     extractedUPIs = extracted.upis;
     extractedUTRs = extracted.utrs;
     extractedDates = extracted.dates;
+    extractedDateTimes = extracted.dateTimes;
+    transactionStatus = extracted.transactionStatus;
   } catch (ocrErr) {
     throw { message: 'OCR processing failed', code: 'OCR_FAILED', details: ocrErr.message };
   }
@@ -84,12 +137,60 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
 
   const upiMatch = matchUPI(extractedUPIs, receiverUpi);
   const utr = extractedUTRs.length > 0 ? extractedUTRs[0]?.replace(/\s+/g, '').trim() || null : null;
-  const date = extractedDates[0] || null;
-  // Use UTC for consistent timezone handling (Asia/Kolkata = UTC+5:30)
-  const verificationTime = new Date();
-  const dateValid = isWithinTimeWindow(date, verificationTime, 30);
 
-  const { decision, reason } = decidePaymentVerification({ upiMatch, amountMatch, dateValid });
+  // Time-aware date resolution: prefer a receipt line that carries an exact
+  // time ("19/08/2026, 7:39 AM"); fall back to a date-only reading.
+  const timeEntry = extractedDateTimes.find(e => e.hasTime) || null;
+  const anyEntry = extractedDateTimes[0] || null;
+  const dateEntry = timeEntry || anyEntry;
+  const date = dateEntry ? dateTimeEntryToDate(dateEntry) : (extractedDates[0] || null);
+
+  // Deterministic clock for tests; production uses the real server clock.
+  const verificationTime = now instanceof Date ? now : new Date();
+  const windowMinutes = PAYMENT_TIME_WINDOW_MINUTES;
+  const dateValid = isWithinTimeWindow(date, verificationTime, windowMinutes);
+
+  // "Same correct IST day, no exact time on the receipt" — not enough to
+  // auto-approve, but enough to route to admin review instead of a hard
+  // INVALID_PAYMENT_DATE rejection (false-rejection source).
+  const dateAmbiguous = !dateValid && !!date && !(timeEntry || anyEntry)?.hasTime && isSameIstDay(date, verificationTime);
+
+  const { decision, reason } = decidePaymentVerification({
+    upiMatch, amountMatch, dateValid, dateAmbiguous, ocrConfidence,
+  });
+
+  // A receipt that explicitly says "Failed/Declined" can never auto-approve.
+  let effectiveDecision = decision;
+  let effectiveReason = reason;
+  if (transactionStatus?.status === 'failed' && decision === 'approved') {
+    effectiveDecision = 'manual_review';
+    effectiveReason = 'TRANSACTION_FAILED';
+  }
+
+  const detectedAmount = amountMatch ? expectedAmount : (extractedAmounts[0] ?? null);
+  const detectedUpi = extractedUPIs.length > 0 ? extractedUPIs.join(', ') : null;
+  const detectedDate = dateEntry ? dateEntry.raw : (date ? date.toISOString() : null);
+
+  const checks = {
+    amount: { passed: amountMatch, didMatch: amountMatch, expected: expectedAmount, detected: detectedAmount },
+    receiverUpi: { passed: upiMatch, expected: receiverUpi, detected: detectedUpi },
+    utr: { passed: !!utr, detected: utr, contextual: !!utr },
+    transactionDate: { passed: dateValid, detected: detectedDate, timezone: TIMEZONE },
+    transactionStatus: {
+      passed: transactionStatus ? transactionStatus.status !== 'failed' : true,
+      detected: transactionStatus ? transactionStatus.matched : null,
+    },
+    duplicate: { passed: true, utr: null },
+  };
+
+  const detected = {
+    amount: detectedAmount,
+    utr: utr || null,
+    upi: detectedUpi,
+    date: detectedDate,
+    dateTimeMs: date && (timeEntry || anyEntry)?.hasTime ? date.getTime() : null,
+    status: transactionStatus ? transactionStatus.matched : null,
+  };
 
   return {
     verificationResult: {
@@ -99,12 +200,17 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       extractedUPIs,
       extractedUTRs,
       extractedDates: extractedDates.map(d => d.toISOString()),
+      extractedDateTimes: extractedDateTimes.map(e => ({ ...e, raw: undefined })),
       amountMatch,
       upiMatch,
       utr: utr || null,
       dateValid,
-      decision,
-      reason,
+      dateAmbiguous,
+      transactionStatus,
+      decision: effectiveDecision,
+      reason: effectiveReason,
+      checks,
+      detected,
     },
     verificationTime,
     utr,

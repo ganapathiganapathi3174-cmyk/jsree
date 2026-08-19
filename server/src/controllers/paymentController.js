@@ -52,7 +52,8 @@ export async function uploadScreenshot(req, res) {
   } catch (error) {
     const status = error.code === 'PAYMENT_NOT_FOUND' ? 404 :
                    error.code === 'PAYMENT_NOT_PENDING' ? 400 :
-                   error.code === 'UNAUTHORIZED' ? 403 : 500;
+                   error.code === 'UNAUTHORIZED' ? 403 :
+                   error.code === 'DUPLICATE_SCREENSHOT' ? 409 : 500;
     res.status(status).json({
       success: false,
       message: error.message || 'Failed to upload screenshot',

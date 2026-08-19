@@ -24,6 +24,7 @@ export const STATUS_COLORS = {
   payment_pending: 'bg-yellow-100 text-yellow-800',
   proof_submitted: 'bg-purple-100 text-purple-800',
   verification_pending: 'bg-orange-100 text-orange-800',
+  manual_review: 'bg-amber-100 text-amber-800',
   disabled: 'bg-gray-100 text-gray-800'
 };
 

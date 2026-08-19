@@ -80,11 +80,14 @@ export async function submitTopupProof(topupId, file, userId) {
   return {
     message: outcome.credited
       ? 'Topup approved and amount credited to your balance'
-      : outcome.reason === 'DUPLICATE_UTR'
-        ? 'Topup rejected: duplicate UTR detected'
-        : 'Topup rejected',
+      : outcome.manualReview
+        ? 'Your topup proof is under manual review'
+        : outcome.reason === 'DUPLICATE_UTR'
+          ? 'Topup rejected: duplicate UTR detected'
+          : 'Topup rejected',
     topupId,
     credited: outcome.credited || false,
+    manualReview: outcome.manualReview || false,
     reason: outcome.reason || null,
   };
 }
@@ -103,6 +106,23 @@ export async function submitTopupProof(topupId, file, userId) {
 // ─────────────────────────────────────────────────────────────
 export async function applyTopupVerification(topup, verificationResult, verificationTime) {
   const { decision, reason } = verificationResult;
+
+  if (decision === 'manual_review') {
+    const { error } = await supabase
+      .from('topups')
+      .update({
+        status: 'manual_review',
+        verified_at: verificationTime.toISOString(),
+        verification_result: verificationResult,
+        rejection_reason: reason || null,
+      })
+      .eq('id', topup.id)
+      .in('status', SUBMITTABLE_STATUSES);
+    if (error) throw { message: 'Failed to flag topup for review', code: 'REVIEW_FAILED' };
+
+    // No balance credit, no terminal state — admin finishes the top-up.
+    return { credited: false, alreadyProcessed: false, manualReview: true, reason };
+  }
 
   if (decision === 'approved') {
     const { data: updated, error } = await supabase
@@ -182,7 +202,8 @@ async function creditTopupBalanceOnce(topup) {
 export async function verifyTopup(topupId, adminId, approved, reason) {
   const { data: topup, error: fetchError } = await supabase.from('topups').select('*').eq('id', topupId).single();
   if (fetchError || !topup) throw { message: 'Topup not found', code: 'TOPUP_NOT_FOUND' };
-  if (topup.status !== 'proof_submitted' && topup.status !== 'verification_pending') throw { message: 'Topup is not in a verifiable status', code: 'TOPUP_NOT_VERIFIABLE' };
+  const VERIFIABLE_STATUSES = ['proof_submitted', 'verification_pending', 'manual_review'];
+  if (!VERIFIABLE_STATUSES.includes(topup.status)) throw { message: 'Topup is not in a verifiable status', code: 'TOPUP_NOT_VERIFIABLE' };
 
   if (approved) {
     const { error } = await supabase.from('topups').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', topupId);

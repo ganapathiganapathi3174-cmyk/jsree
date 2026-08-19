@@ -1,4 +1,14 @@
 import sharp from 'sharp';
+import {
+  normalizeAmount as _normalizeAmount,
+  normalizeUpiId,
+  normalizeUtrValue,
+  buildIstDate,
+  monthNumber,
+} from '../utils/paymentNormalize.js';
+import { TIMEZONE as _TIMEZONE, IST_UTC_OFFSET_MS } from '../config/paymentConfig.js';
+
+export const IST_TIMEZONE = _TIMEZONE;
 
 export async function preprocessImage(buffer) {
   return sharp(buffer)
@@ -10,25 +20,21 @@ export async function preprocessImage(buffer) {
 }
 
 export function normalizeAmount(text) {
-  if (!text) return null;
-  const cleaned = text.replace(/[,\s]/g, '').trim();
-  const match = cleaned.match(/(\d+(?:\.\d{1,2})?)/);
-  if (!match) return null;
-  return parseFloat(match[1]);
+  return _normalizeAmount(text);
 }
 
 export function normalizeUPI(upi) {
-  if (!upi) return null;
-  return upi.replace(/\s+/g, '').toLowerCase().trim();
+  return normalizeUpiId(upi);
 }
 
+// Case-preserving, space-stripped (legacy OCR display form).
 export function normalizeUTR(utr) {
   if (!utr) return null;
   return utr.replace(/\s+/g, '').trim();
 }
 
-export const IST_TIMEZONE = 'Asia/Kolkata';
-export const IST_UTC_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+// Canonical UTR form used for dedup/duplicate comparisons.
+export const normalizeUTRValue = normalizeUtrValue;
 
 export function parsePaymentDate(dateStr) {
   if (!dateStr) return null;
@@ -58,9 +64,8 @@ export function parsePaymentDate(dateStr) {
   if (hour > 23 || minute > 59 || second > 59) return null;
   if (day < 1 || day > 31 || month < 0 || month > 11) return null;
   // Build the intended absolute instant by interpreting the wall clock as IST.
-  const asUtc = Date.UTC(year, month, day, hour, minute, second);
-  const d = new Date(asUtc - IST_UTC_OFFSET_MS);
-  if (isNaN(d.getTime())) return null;
+  const d = buildIstDate({ day, month: month + 1, year, hour, minute, second });
+  if (!d) return null;
   // Structural guard: the UTC wall-clock of the intended instant must round-trip
   // to the same year/month when shifted back by +05:30.
   const utcRoundTrip = new Date(d.getTime() + IST_UTC_OFFSET_MS);
@@ -110,22 +115,37 @@ export function extractUPIs(text) {
   return [...upis];
 }
 
+// ─────────────────────────────────────────────────────────────
+// UTR extraction.
+//
+// Label-anchored UTRs ("UTR:", "UPI transaction ID:") come FIRST and are
+// the most reliable. Bare 10-14 digit numbers (which on receipts can be
+// phone/bank numbers) are only used when no labelled UTR was found, and are
+// ordered by length so longer UTR-like values win over short phone digits.
+// Results use the canonical uppercase form (see normalizeUTRValue).
+// ─────────────────────────────────────────────────────────────
 export function extractUTRs(text) {
   const spaceNormalized = text.replace(/(\d)\s+(\d)/g, '$1$2');
-  const patterns = [
-    /(?:utr|txn|transaction|ref(?:erence)?|upi\s*ref)\s*(?:no|num|id|#)?\s*[:\-]?\s*([A-Za-z0-9_]{6,30})/gi,
-    /\b(\d{10,14})\b/g,
-    /\b([A-Za-z]{2,4}\d{8,12})\b/g,
-  ];
-  const utrs = [];
-  for (const re of patterns) {
-    let m;
-    while ((m = re.exec(spaceNormalized)) !== null) {
-      const v = normalizeUTR(m[1]);
-      if (v && v.length >= 6 && v.length <= 30) utrs.push(v);
-    }
+  const labeled = [];
+  const labeledRe = /(?:utr|txn|transaction|ref(?:erence)?|upi\s*ref|transaction\s*id)\s*(?:no|num|id|#)?\s*[:\-]?\s*([A-Za-z0-9_]{6,30})/gi;
+  let m;
+  while ((m = labeledRe.exec(spaceNormalized)) !== null) {
+    const v = normalizeUTR(m[1]).toUpperCase();
+    if (v && v.length >= 6 && v.length <= 30) labeled.push(v);
   }
-  return [...new Set(utrs)];
+
+  if (labeled.length > 0) return [...new Set(labeled)];
+
+  const bare = [];
+  const bareRe = /(?:\b(\d{10,14})\b|\b([A-Za-z]{2,4}\d{8,12})\b)/g;
+  let b;
+  while ((b = bareRe.exec(spaceNormalized)) !== null) {
+    const v = normalizeUTR(b[1] || b[2]).toUpperCase();
+    if (v && v.length >= 6 && v.length <= 30) bare.push(v);
+  }
+
+  bare.sort((a, b) => b.length - a.length);
+  return [...new Set(bare)];
 }
 
 export function extractDates(text) {
@@ -138,14 +158,17 @@ export function extractDates(text) {
   for (const re of patterns) {
     let m;
     while ((m = re.exec(text)) !== null) {
-      // For first pattern: m[1]=day, m[2]=month, m[3]=year, m[4]=time (optional)
+// For first pattern: m[1]=day, m[2]=month, m[3]=year, m[4]=time (optional)
       // For second pattern: m[1]=day, m[2]=month name, m[3]=year
       let dateStr;
+      const monthName = months[m[2].toLowerCase()];
       if (m[4] !== undefined) {
         // First pattern with optional time
         dateStr = `${m[1]}/${m[2]}/${m[3]} ${m[4] || ''}`.trim();
+      } else if (monthName !== undefined) {
+        // Second pattern (month name) -> normalize to numeric month
+        dateStr = `${m[1]}/${monthName + 1}/${m[3]}`;
       } else {
-        // Second pattern (month name)
         dateStr = `${m[1]}/${m[2]}/${m[3]}`;
       }
       const d = parsePaymentDate(dateStr);
@@ -153,6 +176,107 @@ export function extractDates(text) {
     }
   }
   return dates;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Line-aware date/time extraction.
+//
+// UPI receipts render the payment timestamp on its own line and commonly
+// use formats full-page regexes mishandle:
+//   "19/08/2026, 7:39 AM"     (comma before the time)
+//   "8 Oct 2026, 4:40 pm"     (month name + am/pm)
+// extractDateTimes() keeps the raw wall-clock entries (day/month/year/hour/
+// minute + hasTime flag) so the decision engine can distinguish "exact time
+// on the receipt" from "date only seen" instead of losing the time entirely.
+// ─────────────────────────────────────────────────────────────
+const TIME_SUFFIX = String.raw`\s*[,]?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?`;
+
+export function extractDateTimes(text) {
+  if (!text) return [];
+  const results = [];
+  const lines = String(text).split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    let m = line.match(new RegExp(String.raw`(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})\s*[\/\-\.]\s*(\d{2,4})` + TIME_SUFFIX, 'i'));
+    if (m && !/@/.test(line)) {
+      results.push({
+        raw: line,
+        day: parseInt(m[1], 10), month: parseInt(m[2], 10), year: parseInt(m[3], 10),
+        hour: m[4] !== undefined ? parseInt(m[4], 10) : null,
+        minute: m[5] !== undefined ? parseInt(m[5], 10) : null,
+        second: m[6] !== undefined ? parseInt(m[6], 10) : null,
+        ampm: m[7] || null,
+        hasTime: m[4] !== undefined,
+      });
+      continue;
+    }
+
+    m = line.match(new RegExp(String.raw`(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{2,4})` + TIME_SUFFIX, 'i'));
+    if (m) {
+      const month = monthNumber(m[2]);
+      results.push({
+        raw: line,
+        day: parseInt(m[1], 10), month, year: parseInt(m[3], 10),
+        hour: m[4] !== undefined ? parseInt(m[4], 10) : null,
+        minute: m[5] !== undefined ? parseInt(m[5], 10) : null,
+        second: m[6] !== undefined ? parseInt(m[6], 10) : null,
+        ampm: m[7] || null,
+        hasTime: m[4] !== undefined,
+      });
+    }
+  }
+  return results;
+}
+
+// Convert an extractDateTimes() entry to an absolute Date (IST wall clock).
+// Returns null for invalid entries.
+export function dateTimeEntryToDate(entry) {
+  if (!entry || !entry.day || !entry.month || !entry.year) return null;
+  if (entry.hasTime) {
+    let hour = entry.hour;
+    let minute = entry.minute;
+    const second = entry.second || 0;
+    const ampm = entry.ampm ? String(entry.ampm).toUpperCase() : null;
+    if (ampm === 'PM' && hour !== 12) hour += 12;
+    if (ampm === 'AM' && hour === 12) hour = 0;
+    if (minute === null || hour === null) return null;
+    return buildIstDate({ day: entry.day, month: entry.month, year: entry.year, hour, minute, second });
+  }
+  return buildIstDate({ day: entry.day, month: entry.month, year: entry.year });
+}
+
+// Whether two instants fall on the same IST calendar day.
+export function isSameIstDay(dateA, dateB) {
+  if (!dateA || !dateB) return false;
+  const a = new Date(dateA.getTime() + IST_UTC_OFFSET_MS);
+  const b = new Date(dateB.getTime() + IST_UTC_OFFSET_MS);
+  return (
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Transaction-status text detection.
+//
+// Conservative: returns 'success' / 'failed' / null. Only explicit
+// receipt wording counts ("Completed", "Failed", "Declined"). Ambiguous
+// or unrelated words are treated as unknown so we never block a genuine
+// approval on OCR noise — a detected failure routes to manual review.
+// ─────────────────────────────────────────────────────────────
+export function extractTransactionStatus(text) {
+  if (!text) return null;
+  const lower = String(text).toLowerCase();
+  const successRe = /\b(completed|success(?:ful|fully)?|paid|money\s*sent)\b/;
+  const failedRe = /\b(failed|declined|reversed|unsuccessful|not\s*completed|cancelled)\b/;
+  const success = lower.match(successRe);
+  const failed = lower.match(failedRe);
+  if (failed) return { status: 'failed', matched: failed[0] };
+  if (success) return { status: 'success', matched: success[0] };
+  return null;
 }
 
 export async function runOCR(imageBuffer) {
@@ -200,7 +324,9 @@ export function extractPaymentData(ocrText) {
   const upis = extractUPIs(ocrText);
   const utrs = extractUTRs(ocrText);
   const dates = extractDates(ocrText);
-  return { amounts, upis, utrs, dates, rawText: ocrText };
+  const dateTimes = extractDateTimes(ocrText);
+  const transactionStatus = extractTransactionStatus(ocrText);
+  return { amounts, upis, utrs, dates, dateTimes, transactionStatus, rawText: ocrText };
 }
 
 export function matchAmount(extractedAmounts, expectedAmount) {
@@ -234,3 +360,5 @@ export function isWithinTimeWindow(date, now, windowMinutes) {
   const bound = windowMinutes * 60 * 1000;
   return diff >= -bound && diff <= bound;
 }
+
+export { IST_UTC_OFFSET_MS, IST_TIMEZONE as TIMEZONE };
