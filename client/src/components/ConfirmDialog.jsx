@@ -26,25 +26,26 @@ export default function ConfirmDialog({
   };
 
   const variantClasses = {
-    danger: 'bg-red-600 hover:bg-red-700 focus:ring-red-500',
-    success: 'bg-green-600 hover:bg-green-700 focus:ring-green-500',
+    danger: 'bg-error-600 hover:bg-error-700 focus-visible:ring-error-500',
+    success: 'bg-success-600 hover:bg-success-700 focus-visible:ring-success-500',
+    warning: 'bg-warning-600 hover:bg-warning-700 focus-visible:ring-warning-500',
   };
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="sm">
-      <p className="text-gray-600 mb-6">{message}</p>
+      <p className="text-gray-600 text-sm leading-relaxed mb-6">{message}</p>
       <div className="flex items-center gap-3 justify-end">
         <button
           onClick={handleClose}
           disabled={loading}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Cancel
         </button>
         <button
           onClick={handleConfirm}
           disabled={loading}
-          className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors disabled:opacity-50 ${
+          className={`px-4 py-2 text-sm font-medium text-white rounded-lg shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
             variantClasses[confirmVariant] || variantClasses.danger
           }`}
         >

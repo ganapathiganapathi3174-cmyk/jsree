@@ -25,23 +25,23 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <Link to="/" className="flex items-center gap-2 text-indigo-200 hover:text-white mb-8"><ArrowLeft className="h-4 w-4" /> Back to Home</Link>
+        <Link to="/" className="inline-flex items-center gap-2 text-gray-500 hover:text-gray-700 mb-8 text-sm font-medium"><ArrowLeft className="h-4 w-4" /> Back to Home</Link>
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-2xl"><Shield className="h-8 w-8 text-white" /></div>
-          <h1 className="text-2xl font-bold text-white">JSREE Admin Portal</h1>
-          <p className="text-indigo-200/70 mt-1">Secure admin access</p>
+          <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm"><Shield className="h-8 w-8 text-white" /></div>
+          <h1 className="text-2xl font-bold text-gray-900">JSREE Admin Portal</h1>
+          <p className="text-gray-500 mt-1">Secure admin access</p>
         </div>
-        <div className="card bg-gray-900/80 backdrop-blur-xl rounded-xl p-8 border border-white/10 shadow-2xl">
+        <div className="card p-8">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="label text-gray-300">Email</label>
-              <div className="relative"><Mail className="absolute left-3 top-3 h-4 w-4 text-gray-500" /><input className="input-field pl-10 bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:ring-primary-500" type="email" placeholder="admin@example.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
+              <label className="label">Email</label>
+              <div className="relative"><Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" type="email" placeholder="admin@example.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
             </div>
             <div>
-              <label className="label text-gray-300">Password</label>
-              <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-gray-500" /><input className="input-field pl-10 bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:ring-primary-500" type="password" placeholder="Admin password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
+              <label className="label">Password</label>
+              <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" type="password" placeholder="Admin password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
             </div>
             <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Signing in...' : 'Admin Sign In'}</button>
           </form>

@@ -61,17 +61,17 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
   const breadcrumbs = getBreadcrumbs();
 
   return (
-    <header className={`${dark ? 'bg-gray-800 border-b border-gray-700' : 'bg-white border-b border-gray-200'} sticky top-0 z-30`}>
-      <div className="flex items-center justify-between px-4 py-3">
+    <header className="bg-white border-b border-gray-200 sticky top-0 z-30">
+      <div className="flex items-center justify-between px-4 sm:px-6 h-16">
         <div className="flex items-center gap-3">
-          <button onClick={onMenuToggle} className={`lg:hidden p-2 rounded-lg ${dark ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
+          <button onClick={onMenuToggle} className="lg:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100" aria-label="Toggle menu">
             <Menu size={20} />
           </button>
           <div className="hidden sm:flex items-center gap-2 text-sm">
             {breadcrumbs.map((crumb, i) => (
               <span key={i} className="flex items-center gap-2">
-                {i > 0 && <span className={dark ? 'text-gray-600' : 'text-gray-300'}>/</span>}
-                <span className={crumb.isLast ? (dark ? 'text-white font-medium' : 'text-gray-900 font-medium') : (dark ? 'text-gray-400' : 'text-gray-500')}>
+                {i > 0 && <span className="text-gray-300">/</span>}
+                <span className={crumb.isLast ? 'text-gray-900 font-semibold' : 'text-gray-500'}>
                   {crumb.label}
                 </span>
               </span>
@@ -82,31 +82,40 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
         <div className="flex items-center gap-2">
           {!isAdmin && <NotificationPanel />}
           <ThemeToggle />
-          <span className="hidden sm:block text-sm font-bold tracking-wide text-indigo-600 dark:text-indigo-400">
+          <span className="hidden sm:block text-sm font-bold tracking-wide text-primary-600">
             {isAdmin ? 'JSREE ADMIN' : 'JSREE'}
           </span>
           <div className="relative" ref={dropdownRef}>
-            <button onClick={() => setDropdownOpen(!dropdownOpen)} className={`flex items-center gap-2 p-1.5 rounded-lg transition-colors ${dark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'}`}>
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="flex items-center gap-2 p-1.5 rounded-lg transition-colors hover:bg-gray-50"
+            >
               <Avatar user={user} size={36} />
               <div className="hidden sm:block text-left">
-                <p className={`text-sm font-medium ${dark ? 'text-white' : 'text-gray-700'}`}>
+                <p className="text-sm font-medium text-gray-700 leading-tight">
                   {user?.fullName || user?.name || 'User'}
                 </p>
-                <p className={`text-xs capitalize ${dark ? 'text-gray-400' : 'text-gray-500'}`}>
+                <p className="text-xs capitalize text-gray-400 leading-tight">
                   {user?.role || 'user'}
                 </p>
               </div>
-              <ChevronDown size={16} className={`hidden sm:block ${dark ? 'text-gray-500' : 'text-gray-400'}`} />
+              <ChevronDown size={16} className="hidden sm:block text-gray-400" />
             </button>
 
             {dropdownOpen && (
-              <div className={`absolute right-0 top-full mt-2 w-48 rounded-xl shadow-lg py-1 z-50 ${dark ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}>
+              <div className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-lg shadow-slate-200/60 border border-gray-200 py-1 z-50 bg-white">
                 {!isAdmin && (
-                  <button onClick={() => { setDropdownOpen(false); navigate('/dashboard/profile'); }} className={`w-full flex items-center gap-2 px-4 py-2 text-sm ${dark ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`}>
+                  <button
+                    onClick={() => { setDropdownOpen(false); navigate('/dashboard/profile'); }}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
                     <UserIcon size={16} /> Profile
                   </button>
                 )}
-                <button onClick={handleLogout} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-error-600 hover:bg-error-50"
+                >
                   <LogOut size={16} /> Logout
                 </button>
               </div>

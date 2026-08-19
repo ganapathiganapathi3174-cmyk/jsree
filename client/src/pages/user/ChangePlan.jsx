@@ -41,32 +41,35 @@ export default function ChangePlan() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Change Plan</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Change Plan</h1>
+        <p className="text-sm text-gray-500 mt-1">Request a move to a different membership plan</p>
+      </div>
 
       <div className="card">
-        <p className="text-sm text-gray-600 mb-4">Current Plan: <strong>{PLAN_MAP[currentPlan]?.label || 'None'}</strong></p>
-        <h3 className="font-semibold mb-3">Select New Plan</h3>
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        <p className="text-sm text-gray-600 mb-5">Current Plan: <strong className="text-gray-900">{PLAN_MAP[currentPlan]?.label || 'None'}</strong></p>
+        <h3 className="font-semibold text-gray-900 mb-3">Select New Plan</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           {PLANS.map(p => (
             <button key={p.id} onClick={() => setSelectedPlan(p.id)} disabled={p.id === currentPlan} className={`p-4 rounded-xl border-2 text-center transition-all ${p.id === currentPlan ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed' : selectedPlan === p.id ? 'border-primary-600 bg-primary-50' : 'border-gray-200 hover:border-gray-300'}`}>
-              <span className="font-bold text-lg">{p.label}</span>
+              <span className="font-bold text-lg text-gray-900">{p.label}</span>
               <p className="text-xs text-gray-500 mt-1">{p.name}</p>
             </button>
           ))}
         </div>
         <textarea className="input-field mb-3" rows={3} placeholder="Reason for change (optional)" value={reason} onChange={e => setReason(e.target.value)} />
-        <button onClick={handleSubmit} disabled={submitting || !selectedPlan} className="btn-primary flex items-center gap-2">
+        <button onClick={handleSubmit} disabled={submitting || !selectedPlan} className="btn-primary">
           <RefreshCw className="h-4 w-4" /> {submitting ? 'Submitting...' : 'Submit Request'}
         </button>
       </div>
 
       {requests.length > 0 && (
         <div className="card">
-          <h3 className="font-semibold mb-3">Request History</h3>
+          <h3 className="font-semibold text-gray-900 mb-3">Request History</h3>
           <div className="space-y-3">
             {requests.map(r => (
-              <div key={r.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                <div><p className="text-sm">{PLAN_MAP[r.current_plan]?.label} → {PLAN_MAP[r.requested_plan]?.label}</p><p className="text-xs text-gray-500">{new Date(r.created_at).toLocaleDateString()}</p></div>
+              <div key={r.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                <div><p className="text-sm text-gray-900">{PLAN_MAP[r.current_plan]?.label} <span className="text-gray-400">→</span> {PLAN_MAP[r.requested_plan]?.label}</p><p className="text-xs text-gray-500">{new Date(r.created_at).toLocaleDateString()}</p></div>
                 <StatusBadge status={r.status} />
               </div>
             ))}

@@ -18,7 +18,7 @@ export default function Avatar({ user, size = 40, className = '' }) {
         src={avatarUrl}
         alt={name}
         style={{ width: size, height: size }}
-        className={`rounded-full object-cover ring-2 ring-white/20 ${className}`}
+        className={`rounded-full object-cover ring-2 ring-gray-100 ${className}`}
         referrerPolicy="no-referrer"
       />
     );
@@ -27,7 +27,7 @@ export default function Avatar({ user, size = 40, className = '' }) {
   return (
     <div
       style={{ width: size, height: size }}
-      className={`rounded-full flex items-center justify-center font-semibold bg-gradient-to-br from-indigo-500 to-purple-600 text-white ring-2 ring-white/20 ${sizeClass} ${className}`}
+      className={`rounded-full flex items-center justify-center font-semibold bg-gradient-to-br from-primary-600 to-primary-700 text-white ring-2 ring-gray-100 ${sizeClass} ${className}`}
     >
       {initials}
     </div>

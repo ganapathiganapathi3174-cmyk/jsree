@@ -3,131 +3,54 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    color-scheme: light;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
   body {
     @apply antialiased;
-    background: transparent;
+    background-color: #F6F8FC;
+    color: #0F172A;
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   }
-  .card {
-    background: rgba(255, 255, 255, 0.92);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    @apply rounded-xl border border-gray-200/80 shadow-lg p-6;
+  ::selection {
+    background-color: rgba(37, 99, 235, 0.18);
   }
-  .dark .card {
-    background: rgba(17, 24, 39, 0.88);
-    border-color: rgba(75, 85, 99, 0.4);
-  }
-  .stat-card {
-    background: rgba(255, 255, 255, 0.92);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    @apply rounded-xl border border-gray-200/80 shadow-lg p-5;
-  }
-  .dark .stat-card {
-    background: rgba(17, 24, 39, 0.88);
-    border-color: rgba(75, 85, 99, 0.4);
-  }
-}
-  .jsree-sky {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-  background: linear-gradient(180deg, #050816 0%, #0b1026 55%, #101a3a 100%);
-}
-.dark .jsree-sky {
-  background: linear-gradient(180deg, #03030f 0%, #070b20 55%, #0b1430 100%);
-}
-.jsree-sky-glow {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(600px 300px at 20% 10%, rgba(99, 102, 241, 0.10), transparent 70%),
-    radial-gradient(500px 260px at 80% 20%, rgba(168, 85, 247, 0.08), transparent 70%);
-  animation: jsree-glow-pulse 14s ease-in-out infinite;
-}
-@keyframes jsree-glow-pulse {
-  0%, 100% { opacity: 0.55; }
-  50% { opacity: 1; }
-}
-.jsree-sky-stars {
-  position: absolute;
-  inset: 0;
-}
-.jsree-star {
-  position: absolute;
-  border-radius: 9999px;
-  background: #eef2ff;
-  box-shadow: 0 0 6px 1px rgba(199, 210, 254, 0.65);
-  animation-name: jsree-twinkle;
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: infinite;
-}
-@keyframes jsree-twinkle {
-  0%, 100% { opacity: 0.25; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.25); }
-}
-.jsree-shooting-star {
-  position: absolute;
-  width: 90px;
-  height: 2px;
-  border-radius: 9999px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(224, 231, 255, 0.95));
-  transform: rotate(-35deg);
-  transform-origin: right center;
-  animation-name: jsree-shoot;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
-}
-@keyframes jsree-shoot {
-  0% { transform: translate3d(0, 0, 0) rotate(-35deg) scaleX(0); opacity: 0; }
-  6% { opacity: 1; }
-  22% { transform: translate3d(-42vw, 28vw, 0) rotate(-35deg) scaleX(1); opacity: 0; }
-  100% { transform: translate3d(-42vw, 28vw, 0) rotate(-35deg) scaleX(1); opacity: 0; }
-}
-.jsree-reduced .jsree-star,
-.jsree-reduced .jsree-shooting-star {
-  animation: none !important;
-}
-.jsree-reduced .jsree-star {
-  opacity: 0.45;
-}
-.jsree-reduced .jsree-shooting-star {
-  display: none;
-}
-.jsree-sky-vignette {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(120% 90% at 50% 10%, transparent 55%, rgba(0, 0, 0, 0.45) 100%);
-}
-@media (prefers-reduced-motion: reduce) {
-  .jsree-sky-glow { animation: none; }
 }
 
 @layer components {
   .btn-primary {
-    @apply bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors duration-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-primary-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors duration-200 hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-secondary {
-    @apply bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors duration-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-white text-gray-700 border border-gray-300 px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors duration-200 hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-danger {
-    @apply bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors duration-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-error-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors duration-200 hover:bg-error-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-error-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-success {
-    @apply bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors duration-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-success-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors duration-200 hover:bg-success-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-success-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6;
-  }
-  .input-field {
-    @apply w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all duration-200;
-  }
-  .label {
-    @apply block text-sm font-medium text-gray-700 mb-1;
+    @apply bg-white rounded-xl border border-gray-200 shadow-card p-6;
   }
   .stat-card {
-    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-5;
+    @apply bg-white rounded-xl border border-gray-200 shadow-card p-5;
+  }
+  .input-field {
+    @apply w-full px-4 py-2.5 border border-gray-300 bg-white rounded-lg text-sm text-gray-900 placeholder-gray-400 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500;
+  }
+  .label {
+    @apply block text-sm font-medium text-gray-600 mb-1.5;
+  }
+  .table-shell {
+    @apply bg-white rounded-xl border border-gray-200 shadow-card;
+  }
+  .page-subheading {
+    @apply text-lg font-semibold text-gray-900;
   }
 }

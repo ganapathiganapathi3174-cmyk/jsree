@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useTheme } from '../../contexts/ThemeContext';
 import api from '../../utils/api';
 import { AlertTriangle, CheckCircle, RefreshCw, Shield } from 'lucide-react';
 
 export default function SuspiciousActivity() {
-  const { dark } = useTheme();
   const [activities, setActivities] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1 });
   const [loading, setLoading] = useState(true);
@@ -34,55 +32,63 @@ export default function SuspiciousActivity() {
   };
 
   const getSeverityColor = (severity) => {
-    const colors = { low: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400', medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400', high: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400', critical: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' };
+    const colors = {
+      low: 'bg-info-50 text-info-700 border border-info-200',
+      medium: 'bg-warning-50 text-warning-700 border border-warning-200',
+      high: 'bg-orange-50 text-orange-700 border border-orange-200',
+      critical: 'bg-error-50 text-error-700 border border-error-200',
+    };
     return colors[severity] || colors.low;
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <AlertTriangle className={`w-8 h-8 ${dark ? 'text-orange-400' : 'text-orange-600'}`} />
-          <h1 className={`text-2xl font-bold ${dark ? 'text-white' : 'text-gray-900'}`}>Suspicious Activity</h1>
+          <div className="w-10 h-10 rounded-lg bg-warning-50 text-warning-600 flex items-center justify-center"><AlertTriangle className="h-5 w-5" /></div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Suspicious Activity</h1>
+            <p className="text-sm text-gray-500 mt-0.5">Flags raised by the security system</p>
+          </div>
         </div>
         <div className="flex gap-2">
           {['unresolved', 'all', 'resolved'].map(f => (
-            <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded-lg text-sm capitalize ${filter === f ? 'bg-indigo-600 text-white' : dark ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}`}>{f}</button>
+            <button key={f} onClick={() => setFilter(f)} className={`px-3.5 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors border ${filter === f ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>{f}</button>
           ))}
         </div>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12"><RefreshCw className={`w-6 h-6 animate-spin ${dark ? 'text-gray-400' : 'text-gray-500'}`} /></div>
+        <div className="flex justify-center py-12"><RefreshCw className="w-6 h-6 animate-spin text-gray-500" /></div>
       ) : activities.length === 0 ? (
-        <div className={`text-center py-12 ${dark ? 'text-gray-400' : 'text-gray-500'}`}>
-          <Shield className="w-12 h-12 mx-auto mb-3 opacity-50" />
+        <div className="table-shell text-center py-12 text-gray-500">
+          <Shield className="w-12 h-12 mx-auto mb-3 opacity-50 text-gray-300" />
           <p>No suspicious activities detected</p>
         </div>
       ) : (
         <div className="space-y-3">
           {activities.map(a => (
-            <div key={a.id} className={`rounded-xl border p-4 ${dark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} ${a.resolved ? 'opacity-60' : ''}`}>
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-3">
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${getSeverityColor(a.severity)}`}>{a.severity.toUpperCase()}</span>
-                  <div>
-                    <p className={`font-medium ${dark ? 'text-white' : 'text-gray-900'}`}>{a.activity_type.replace(/_/g, ' ').toUpperCase()}</p>
-                    <p className={`text-sm mt-0.5 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>
+            <div key={a.id} className={`stat-card p-4 ${a.resolved ? 'opacity-60' : ''}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3 min-w-0">
+                  <span className={`px-2 py-1 rounded text-xs font-semibold ${getSeverityColor(a.severity)}`}>{a.severity.toUpperCase()}</span>
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-900">{a.activity_type.replace(/_/g, ' ').toUpperCase()}</p>
+                    <p className="text-sm mt-0.5 text-gray-600">
                       IP: {a.ip_address} | {a.users?.email || 'N/A'}
                     </p>
                     {a.details && Object.keys(a.details).length > 0 && (
-                      <p className={`text-xs mt-1 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
+                      <p className="text-xs mt-1 text-gray-400 break-all">
                         {JSON.stringify(a.details)}
                       </p>
                     )}
-                    <p className={`text-xs mt-1 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    <p className="text-xs mt-1 text-gray-400">
                       {new Date(a.created_at).toLocaleString('en-IN')}
                     </p>
                   </div>
                 </div>
                 {!a.resolved && (
-                  <button onClick={() => resolveActivity(a.id)} className="flex items-center gap-1 px-3 py-1.5 text-sm text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg">
+                  <button onClick={() => resolveActivity(a.id)} className="flex items-center gap-1 px-3 py-1.5 text-sm text-success-600 hover:bg-success-50 rounded-lg border border-gray-200 whitespace-nowrap">
                     <CheckCircle size={14} /> Resolve
                   </button>
                 )}
@@ -94,7 +100,7 @@ export default function SuspiciousActivity() {
 
       {pagination.totalPages > 1 && (
         <div className="text-center">
-          <button onClick={() => fetchActivities(pagination.page + 1)} className="text-sm text-indigo-500 hover:text-indigo-600">Load more</button>
+          <button onClick={() => fetchActivities(pagination.page + 1)} className="text-sm text-primary-600 hover:text-primary-700 font-medium">Load more</button>
         </div>
       )}
     </div>

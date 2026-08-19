@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, LogIn } from 'lucide-react';
+import { Mail, Lock, LogIn, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
 
@@ -30,14 +30,19 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Link to="/" className="text-2xl font-bold tracking-wide text-white">JSREE</Link>
-          <h1 className="text-2xl font-bold text-white mt-4">Welcome Back</h1>
-          <p className="text-indigo-100/80 mt-1">Sign in to your account</p>
+          <div className="flex items-center justify-center gap-2 mb-6">
+            <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center shadow-sm">
+              <Shield className="h-5 w-5 text-white" />
+            </div>
+            <span className="text-2xl font-bold tracking-tight text-gray-900">JSREE</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Welcome Back</h1>
+          <p className="text-gray-500 mt-1">Sign in to your account</p>
         </div>
-        <div className="card bg-white/90 backdrop-blur-xl rounded-xl border border-white/20 shadow-2xl p-8">
+        <div className="card p-8">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="label">Email</label>
@@ -47,12 +52,12 @@ export default function LoginPage() {
               <label className="label">Password</label>
               <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" type="password" placeholder="Your password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
             </div>
-            <button type="submit" disabled={loading} className="btn-primary w-full flex items-center justify-center gap-2">
+            <button type="submit" disabled={loading} className="btn-primary w-full">
               {loading ? 'Signing in...' : <><LogIn className="h-4 w-4" /> Sign In</>}
             </button>
           </form>
           <p className="text-center text-sm text-gray-600 mt-4">Don't have an account? <Link to="/register" className="text-primary-600 font-medium">Register</Link></p>
-          <p className="text-center text-sm text-gray-600 mt-2"><Link to="/admin/login" className="text-gray-500 hover:text-gray-700">Admin Login</Link></p>
+          <p className="text-center text-sm text-gray-500 mt-2"><Link to="/admin/login" className="hover:text-gray-700">Admin Login</Link></p>
         </div>
       </div>
     </div>

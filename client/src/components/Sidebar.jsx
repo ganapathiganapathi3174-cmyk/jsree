@@ -1,5 +1,4 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { useTheme } from '../contexts/ThemeContext';
 import {
   LayoutDashboard, User, CreditCard, ArrowUpDown, Users, RefreshCw,
   MessageSquare, History, Shield, LogOut, X, UserX, FileText,
@@ -36,7 +35,6 @@ const adminLinks = [
 
 export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
   const navigate = useNavigate();
-  const { dark } = useTheme();
   const links = isAdmin ? adminLinks : userLinks;
 
   const handleLogout = () => {
@@ -54,25 +52,41 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
   return (
     <>
       {isOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden transition-opacity" onClick={onClose} />
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 lg:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
       )}
 
-      <aside className={`fixed top-0 left-0 z-50 h-full w-64 ${dark ? 'bg-gray-800/95 border-r border-gray-700' : 'bg-white/95 backdrop-blur-xl border-r border-gray-200'} transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className={`flex items-center justify-between p-4 border-b ${dark ? 'border-gray-700' : 'border-gray-100'}`}>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg">
+      <aside
+        className={`fixed top-0 left-0 z-50 h-full w-64 bg-white border-r border-gray-200 flex flex-col transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+        aria-label={isAdmin ? 'Admin navigation' : 'Account navigation'}
+      >
+        <div className="flex items-center justify-between px-5 h-16 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center shadow-sm">
               <Shield size={18} className="text-white" />
             </div>
-            <span className={`font-bold tracking-wide ${dark ? 'text-white' : 'text-gray-900'}`}>
-              {isAdmin ? 'JSREE Admin' : 'JSREE'}
-            </span>
+            <div className="leading-tight">
+              <span className="block font-bold tracking-tight text-gray-900 leading-none">
+                {isAdmin ? 'JSREE Admin' : 'JSREE'}
+              </span>
+              <span className="block text-[11px] text-gray-400 mt-0.5">Membership Portal</span>
+            </div>
           </div>
-          <button onClick={onClose} className={`lg:hidden p-1 rounded-lg ${dark ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}>
+          <button
+            onClick={onClose}
+            className="lg:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
+            aria-label="Close menu"
+          >
             <X size={20} />
           </button>
         </div>
 
-        <nav className="p-3 space-y-1 overflow-y-auto h-[calc(100%-140px)]">
+        <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
           {links.map((link) => (
             <NavLink
               key={link.to}
@@ -81,18 +95,21 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
               onClick={onClose}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive(link.to)
-                  ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
-                  : dark ? 'text-gray-400 hover:bg-gray-700 hover:text-white' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  ? 'bg-primary-50 text-primary-700'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
               }`}
             >
-              <link.icon size={18} />
+              <link.icon size={18} className={isActive(link.to) ? 'text-primary-600' : 'text-gray-400'} />
               <span>{link.label}</span>
             </NavLink>
           ))}
         </nav>
 
-        <div className={`absolute bottom-0 left-0 right-0 p-3 border-t ${dark ? 'border-gray-700 bg-gray-800' : 'border-gray-100 bg-white'}`}>
-          <button onClick={handleLogout} className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+        <div className="p-3 border-t border-gray-100 shrink-0">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-error-50 hover:text-error-600 transition-colors"
+          >
             <LogOut size={18} />
             <span>Logout</span>
           </button>

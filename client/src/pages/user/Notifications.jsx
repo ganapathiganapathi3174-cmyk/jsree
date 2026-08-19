@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useTheme } from '../../contexts/ThemeContext';
 import api from '../../utils/api';
 import { Bell, CheckCheck, Trash2, RefreshCw } from 'lucide-react';
 
 export default function Notifications() {
-  const { dark } = useTheme();
   const [notifications, setNotifications] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1 });
   const [loading, setLoading] = useState(true);
@@ -45,41 +43,42 @@ export default function Notifications() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Bell className={`w-8 h-8 ${dark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-          <h1 className={`text-2xl font-bold ${dark ? 'text-white' : 'text-gray-900'}`}>Notifications</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Notifications</h1>
+          <p className="text-sm text-gray-500 mt-1">Updates on your account activity</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setUnreadOnly(!unreadOnly)} className={`px-3 py-1.5 rounded-lg text-sm ${unreadOnly ? 'bg-indigo-600 text-white' : dark ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}`}>
+          <button onClick={() => setUnreadOnly(!unreadOnly)} className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors border ${unreadOnly ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
             {unreadOnly ? 'Unread Only' : 'All'}
           </button>
-          <button onClick={markAllRead} className="flex items-center gap-1 px-3 py-1.5 text-sm text-indigo-500 hover:text-indigo-600">
-            <CheckCheck size={16} /> Mark all read
-          </button>
+          <button onClick={markAllRead} className="btn-secondary py-1.5 text-sm"><CheckCheck size={16} /> Mark all read</button>
         </div>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12"><RefreshCw className={`w-6 h-6 animate-spin ${dark ? 'text-gray-400' : 'text-gray-500'}`} /></div>
+        <div className="flex justify-center py-12"><RefreshCw className="w-6 h-6 animate-spin text-gray-500" /></div>
       ) : notifications.length === 0 ? (
-        <div className={`text-center py-12 ${dark ? 'text-gray-400' : 'text-gray-500'}`}>
-          <Bell className="w-12 h-12 mx-auto mb-3 opacity-50" />
+        <div className="table-shell text-center py-12 text-gray-500">
+          <Bell className="w-12 h-12 mx-auto mb-3 opacity-50 text-gray-300" />
           <p>No notifications</p>
         </div>
       ) : (
-        <div className={`rounded-xl border divide-y ${dark ? 'bg-gray-800 border-gray-700 divide-gray-700' : 'bg-white border-gray-200 divide-gray-100'}`}>
+        <div className="table-shell overflow-hidden divide-y divide-gray-100">
           {notifications.map(n => (
-            <div key={n.id} className={`p-4 flex items-start gap-3 ${!n.read ? (dark ? 'bg-gray-750' : 'bg-indigo-50/50') : ''}`}>
+            <div key={n.id} className={`p-4 flex items-start gap-3 ${!n.read ? 'bg-primary-50/40' : ''}`}>
               <span className="text-xl mt-0.5">{getIcon(n.type)}</span>
               <div className="flex-1 min-w-0">
-                <p className={`font-medium ${dark ? 'text-white' : 'text-gray-900'}`}>{n.title}</p>
-                <p className={`text-sm mt-0.5 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>{n.message}</p>
-                <p className={`text-xs mt-1 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>{new Date(n.created_at).toLocaleString('en-IN')}</p>
+                <p className="font-medium text-gray-900">{n.title}</p>
+                <p className="text-sm mt-0.5 text-gray-600">{n.message}</p>
+                <p className="text-xs mt-1 text-gray-400">{new Date(n.created_at).toLocaleString('en-IN')}</p>
               </div>
-              <div className="flex items-center gap-1">
-                {!n.read && <button onClick={() => markRead(n.id)} className="text-xs text-indigo-500 hover:underline">Mark read</button>}
-                <button onClick={() => deleteNotif(n.id)} className={`p-1 rounded ${dark ? 'hover:bg-gray-700 text-gray-500' : 'hover:bg-gray-100 text-gray-400'}`}><Trash2 size={14} /></button>
+              <div className="flex items-center gap-2">
+                {!n.read && <>
+                  <button onClick={() => markRead(n.id)} className="text-xs text-primary-600 hover:underline font-medium">Mark read</button>
+                  <span className="w-2 h-2 bg-primary-600 rounded-full" />
+                </>}
+                <button onClick={() => deleteNotif(n.id)} className="p-1 rounded text-gray-400 hover:bg-gray-100" aria-label="Delete notification"><Trash2 size={14} /></button>
               </div>
             </div>
           ))}
@@ -88,7 +87,7 @@ export default function Notifications() {
 
       {pagination.totalPages > 1 && (
         <div className="text-center">
-          <button onClick={() => fetchNotifications(pagination.page + 1)} className="text-sm text-indigo-500 hover:text-indigo-600">Load more</button>
+          <button onClick={() => fetchNotifications(pagination.page + 1)} className="text-sm font-medium text-primary-600 hover:text-primary-700">Load more</button>
         </div>
       )}
     </div>

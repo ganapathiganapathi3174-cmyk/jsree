@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { User, Mail, Phone, Lock, ArrowRight, ArrowLeft, CreditCard, CheckCircle } from 'lucide-react';
+import { User, Mail, Phone, Lock, ArrowRight, ArrowLeft, CreditCard, CheckCircle, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
 import { PLANS, ADMIN_UPI } from '../utils/constants';
@@ -90,15 +90,20 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <Link to="/" className="text-2xl font-bold tracking-wide text-white">JSREE</Link>
-          <h1 className="text-2xl font-bold text-white mt-4">Create Account</h1>
-          <p className="text-gray-600 mt-1">Step {step} of 3</p>
+          <div className="flex items-center justify-center gap-2 mb-6">
+            <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center shadow-sm">
+              <Shield className="h-5 w-5 text-white" />
+            </div>
+            <span className="text-2xl font-bold tracking-tight text-gray-900">JSREE</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Create Account</h1>
+          <p className="text-gray-500 mt-1">Step {step} of 3</p>
           <div className="flex items-center justify-center gap-2 mt-3">
             {[1, 2, 3].map(s => (
-              <div key={s} className={`h-1.5 rounded-full ${s <= step ? 'bg-primary-600' : 'bg-gray-300'} ${s === 1 ? 'w-16' : 'w-8'}`} />
+              <div key={s} className={`h-1.5 rounded-full transition-colors ${s <= step ? 'bg-primary-600' : 'bg-gray-200'} ${s === 1 ? 'w-16' : 'w-8'}`} />
             ))}
           </div>
         </div>
@@ -106,7 +111,7 @@ export default function RegisterPage() {
         <div className="card">
           {step === 1 && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold mb-4">Personal Information</h2>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Personal Information</h2>
               <div>
                 <label className="label">Full Name</label>
                 <div className="relative"><User className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" placeholder="John Doe" value={form.name} onChange={e => set('name', e.target.value)} /></div>
@@ -129,16 +134,16 @@ export default function RegisterPage() {
               </div>
               <div>
                 <label className="label">Referral Code (optional)</label>
-                <input className="input-field" placeholder="Enter referral code" value={form.referral_code} onChange={e => set('referral_code', e.target.value.toUpperCase())} />
+                <input className="input-field uppercase" placeholder="Enter referral code" value={form.referral_code} onChange={e => set('referral_code', e.target.value.toUpperCase())} />
               </div>
-              <button onClick={() => { if (validateStep1()) setStep(2); }} className="btn-primary w-full flex items-center justify-center gap-2">Next <ArrowRight className="h-4 w-4" /></button>
+              <button onClick={() => { if (validateStep1()) setStep(2); }} className="btn-primary w-full">Next <ArrowRight className="h-4 w-4" /></button>
               <p className="text-center text-sm text-gray-600">Already have an account? <Link to="/login" className="text-primary-600 font-medium">Login</Link></p>
             </div>
           )}
 
           {step === 2 && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold mb-4">Select Plan</h2>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Plan</h2>
               <div className="space-y-3">
                 {PLANS.map(p => (
                   <button key={p.id} onClick={() => set('plan', p.id)} className={`w-full p-4 rounded-xl border-2 text-left flex items-center justify-between transition-all ${form.plan === p.id ? 'border-primary-600 bg-primary-50' : 'border-gray-200 hover:border-gray-300'}`}>
@@ -148,15 +153,15 @@ export default function RegisterPage() {
                 ))}
               </div>
               <div className="flex gap-3 mt-4">
-                <button onClick={() => setStep(1)} className="btn-secondary flex-1 flex items-center justify-center gap-2"><ArrowLeft className="h-4 w-4" /> Back</button>
-                <button onClick={() => { if (validateStep2()) setStep(3); }} className="btn-primary flex-1 flex items-center justify-center gap-2">Next <ArrowRight className="h-4 w-4" /></button>
+                <button onClick={() => setStep(1)} className="btn-secondary flex-1"><ArrowLeft className="h-4 w-4" /> Back</button>
+                <button onClick={() => { if (validateStep2()) setStep(3); }} className="btn-primary flex-1">Next <ArrowRight className="h-4 w-4" /></button>
               </div>
             </div>
           )}
 
           {step === 3 && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold mb-4">Complete Payment</h2>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Complete Payment</h2>
               <QRPaymentSection
                 amount={form.plan}
                 upiId={ADMIN_UPI}
@@ -164,7 +169,7 @@ export default function RegisterPage() {
                 verifySubmitting={loading}
                 onVerify={handleSubmit}
               />
-              <button onClick={() => setStep(2)} className="btn-secondary w-full flex items-center justify-center gap-2"><ArrowLeft className="h-4 w-4" /> Back</button>
+              <button onClick={() => setStep(2)} className="btn-secondary w-full"><ArrowLeft className="h-4 w-4" /> Back</button>
             </div>
           )}
         </div>

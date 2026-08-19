@@ -34,21 +34,24 @@ export default function Referrals() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">My Referrals</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">My Referrals</h1>
+        <p className="text-sm text-gray-500 mt-1">Share your code and earn rewards</p>
+      </div>
 
       <div className="card">
-        <h3 className="font-semibold mb-3">Your Referral Code</h3>
-        <div className={canReferMore ? "flex items-center gap-3 bg-gray-50 rounded-xl p-4" : "flex items-center gap-3 bg-gray-100 rounded-xl p-4 opacity-70"}>
-          <span className="font-mono text-xl font-bold flex-1">{code}</span>
-          <button onClick={copyCode} className="btn-primary flex items-center gap-1"><Copy className="h-4 w-4" /> Copy</button>
+        <h3 className="font-semibold text-gray-900 mb-3">Your Referral Code</h3>
+        <div className={`flex items-center gap-3 rounded-xl p-4 ${canReferMore ? 'bg-gray-50 border border-gray-200' : 'bg-gray-100 border border-gray-200 opacity-70'}`}>
+          <span className="font-mono text-xl font-bold text-gray-900 flex-1">{code}</span>
+          <button onClick={copyCode} className="btn-primary"><Copy className="h-4 w-4" /> Copy</button>
         </div>
         <div className="mt-3 flex items-center gap-2">
           <input className="input-field flex-1 text-sm" readOnly value={link} />
-          <button onClick={copyLink} className="btn-secondary flex items-center gap-1"><Share2 className="h-4 w-4" /> Share</button>
+          <button onClick={copyLink} className="btn-secondary"><Share2 className="h-4 w-4" /> Share</button>
         </div>
       </div>
 
-      <div className={`rounded-xl p-4 text-sm ${canReferMore ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-amber-50 border border-amber-200 text-amber-800'}`}>
+      <div className={`rounded-xl p-4 text-sm ${canReferMore ? 'bg-success-50 border border-success-200 text-success-700' : 'bg-warning-50 border border-warning-200 text-warning-700'}`}>
         {canReferMore
           ? `You can refer up to 2 active members. Slots left: ${2 - active}.`
           : 'Referral limit reached (2 active members). You can no longer earn from new referrals.'}
@@ -56,17 +59,19 @@ export default function Referrals() {
 
       <div className="grid grid-cols-3 gap-4">
         <div className="stat-card text-center"><p className="text-2xl font-bold text-gray-900">{referrals.length}</p><p className="text-sm text-gray-500">Total</p></div>
-        <div className="stat-card text-center"><p className="text-2xl font-bold text-green-600">{active}</p><p className="text-sm text-gray-500">Active</p></div>
+        <div className="stat-card text-center"><p className="text-2xl font-bold text-success-600">{active}</p><p className="text-sm text-gray-500">Active</p></div>
         <div className="stat-card text-center"><p className="text-2xl font-bold text-gray-400">{inactive}</p><p className="text-sm text-gray-500">Inactive</p></div>
       </div>
 
       {referrals.length === 0 ? (
-        <EmptyState icon={<Users className="h-12 w-12" />} title="No referrals yet" description="Share your code with friends to earn rewards." />
+        <div className="table-shell">
+          <EmptyState icon={<Users className="h-12 w-12" />} title="No referrals yet" description="Share your code with friends to earn rewards." />
+        </div>
       ) : (
         <div className="space-y-3">
           {referrals.map(r => (
             <div key={r.id} className="card flex items-center justify-between">
-              <div><p className="font-medium">{r.full_name || r.referred_name || r.id?.slice(0, 8)}</p><p className="text-sm text-gray-500">{r.email || ''}</p></div>
+              <div><p className="font-medium text-gray-900">{r.full_name || r.referred_name || r.id?.slice(0, 8)}</p><p className="text-sm text-gray-500">{r.email || ''}</p></div>
               <StatusBadge status={r.status} />
             </div>
           ))}

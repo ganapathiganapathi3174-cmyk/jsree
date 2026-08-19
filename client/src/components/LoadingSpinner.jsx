@@ -7,13 +7,13 @@ export default function LoadingSpinner({ size = 'md', fullPage = false }) {
 
   const spinner = (
     <div
-      className={`${sizeClasses[size] || sizeClasses.md} border-indigo-200 border-t-indigo-600 rounded-full animate-spin`}
+      className={`${sizeClasses[size] || sizeClasses.md} border-primary-100 border-t-primary-600 rounded-full animate-spin`}
     />
   );
 
   if (fullPage) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-white z-50">
+      <div className="fixed inset-0 flex items-center justify-center bg-surface z-50">
         {spinner}
       </div>
     );

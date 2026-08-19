@@ -28,22 +28,33 @@ export default function History() {
   if (filter !== 'all') items = items.filter(i => i.type.toLowerCase() === filter);
   items.sort((a, b) => new Date(b.date) - new Date(a.date));
 
+  const filterTabs = [
+    { key: 'all', label: 'All' },
+    { key: 'payment', label: 'Payments' },
+    { key: 'top-up', label: 'Top-Ups' },
+  ];
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">History</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">History</h1>
+        <p className="text-sm text-gray-500 mt-1">Your payments and top-ups</p>
+      </div>
       <div className="flex gap-2">
-        {['all', 'payment', 'top-up'].map(f => (
-          <button key={f} onClick={() => setFilter(f)} className={`px-4 py-2 rounded-lg text-sm font-medium capitalize ${filter === f ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-700'}`}>{f}</button>
+        {filterTabs.map(f => (
+          <button key={f.key} onClick={() => setFilter(f.key)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${filter === f.key ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>{f.label}</button>
         ))}
       </div>
       {items.length === 0 ? (
-        <EmptyState icon={<HistoryIcon className="h-12 w-12" />} title="No history" description="Your transactions will appear here." />
+        <div className="table-shell">
+          <EmptyState icon={<HistoryIcon className="h-12 w-12" />} title="No history" description="Your transactions will appear here." />
+        </div>
       ) : (
         <div className="space-y-3">
           {items.map(i => (
             <div key={`${i.type}-${i.id}`} className="card flex items-center justify-between">
-              <div><p className="font-medium">{i.type}</p><p className="text-sm text-gray-500">{new Date(i.date).toLocaleString()}</p></div>
-              <div className="text-right"><p className="font-semibold">₹{i.amount}</p><StatusBadge status={i.status} /></div>
+              <div><p className="font-medium text-gray-900">{i.type}</p><p className="text-sm text-gray-500">{new Date(i.date).toLocaleString()}</p></div>
+              <div className="text-right"><p className="font-semibold text-gray-900">₹{i.amount}</p><StatusBadge status={i.status} /></div>
             </div>
           ))}
         </div>

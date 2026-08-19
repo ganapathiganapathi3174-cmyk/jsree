@@ -11,21 +11,21 @@ export const PLAN_MAP = {
 };
 
 export const STATUS_COLORS = {
-  pending: 'bg-yellow-100 text-yellow-800',
-  processing: 'bg-blue-100 text-blue-800',
-  approved: 'bg-green-100 text-green-800',
-  active: 'bg-green-100 text-green-800',
-  completed: 'bg-green-100 text-green-800',
-  rejected: 'bg-red-100 text-red-800',
-  inactive: 'bg-gray-100 text-gray-800',
-  suspended: 'bg-orange-100 text-orange-800',
-  deleted: 'bg-red-100 text-red-800',
-  created: 'bg-blue-100 text-blue-800',
-  payment_pending: 'bg-yellow-100 text-yellow-800',
-  proof_submitted: 'bg-purple-100 text-purple-800',
-  verification_pending: 'bg-orange-100 text-orange-800',
-  manual_review: 'bg-amber-100 text-amber-800',
-  disabled: 'bg-gray-100 text-gray-800'
+  pending: { badge: 'bg-warning-50 text-warning-700 border border-warning-200', dot: 'bg-warning-600' },
+  manual_review: { badge: 'bg-warning-50 text-warning-700 border border-warning-200', dot: 'bg-warning-600' },
+  payment_pending: { badge: 'bg-warning-50 text-warning-700 border border-warning-200', dot: 'bg-warning-600' },
+  processing: { badge: 'bg-info-50 text-info-700 border border-info-200', dot: 'bg-info-600' },
+  created: { badge: 'bg-info-50 text-info-700 border border-info-200', dot: 'bg-info-600' },
+  verification_pending: { badge: 'bg-info-50 text-info-700 border border-info-200', dot: 'bg-info-600' },
+  proof_submitted: { badge: 'bg-info-50 text-info-700 border border-info-200', dot: 'bg-info-600' },
+  approved: { badge: 'bg-success-50 text-success-700 border border-success-200', dot: 'bg-success-600' },
+  active: { badge: 'bg-success-50 text-success-700 border border-success-200', dot: 'bg-success-600' },
+  completed: { badge: 'bg-success-50 text-success-700 border border-success-200', dot: 'bg-success-600' },
+  rejected: { badge: 'bg-error-50 text-error-700 border border-error-200', dot: 'bg-error-600' },
+  deleted: { badge: 'bg-error-50 text-error-700 border border-error-200', dot: 'bg-error-600' },
+  suspended: { badge: 'bg-orange-50 text-orange-700 border border-orange-200', dot: 'bg-orange-600' },
+  inactive: { badge: 'bg-gray-100 text-gray-600 border border-gray-200', dot: 'bg-gray-400' },
+  disabled: { badge: 'bg-gray-100 text-gray-600 border border-gray-200', dot: 'bg-gray-400' },
 };
 
 export const ADMIN_UPI = 'jayarajj126-3@okicici';

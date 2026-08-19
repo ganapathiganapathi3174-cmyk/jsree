@@ -104,11 +104,14 @@ export default function Profile() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold text-white">My Profile</h1>
-      <div className="card bg-white/90 backdrop-blur-xl rounded-xl border border-white/20 shadow-2xl p-6">
-        <div className="flex items-center gap-5 mb-6 pb-5 border-b border-gray-200/70">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">My Profile</h1>
+        <p className="text-sm text-gray-500 mt-1">Manage your personal information</p>
+      </div>
+      <div className="card p-6">
+        <div className="flex items-center gap-5 mb-6 pb-5 border-b border-gray-100">
           <div className="relative flex-shrink-0">
-            <div className="w-24 h-24 rounded-full overflow-hidden flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 ring-4 ring-white/30 shadow-xl">
+            <div className="w-24 h-24 rounded-full overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-600 to-primary-700 ring-4 ring-gray-100">
               {displayAvatar ? (
                 <img src={displayAvatar} alt={profile.full_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
@@ -117,7 +120,7 @@ export default function Profile() {
             </div>
             <button
               onClick={() => fileRef.current?.click()}
-              className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity"
+              className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-primary-600 text-white flex items-center justify-center shadow-md hover:bg-primary-700 transition-colors"
               title="Change photo"
             >
               <Camera className="h-4 w-4" />
@@ -131,19 +134,19 @@ export default function Profile() {
         </div>
 
         {preview && (
-          <div className="mb-6 bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+          <div className="mb-6 bg-primary-50 border border-primary-200 rounded-xl p-4">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 rounded-full overflow-hidden flex-shrink-0">
                 <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
               </div>
               <div className="flex-1">
                 <p className="text-sm font-medium text-gray-800 mb-2">Preview your new profile picture</p>
-                <div className="flex gap-2">
-                  <button onClick={upload} disabled={uploading} className="btn-primary text-sm flex items-center gap-1.5">
-                    <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading...' : 'Save Photo'}
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={upload} disabled={uploading} className="btn-primary text-sm">
+                    <Upload className="h-4 w-4" /> {uploading ? 'Uploading...' : 'Save Photo'}
                   </button>
-                  <button onClick={() => { setPreview(null); fileRef.current.value = ''; }} disabled={uploading} className="btn-secondary text-sm flex items-center gap-1.5">
-                    <X className="h-3.5 w-3.5" /> Cancel
+                  <button onClick={() => { setPreview(null); fileRef.current.value = ''; }} disabled={uploading} className="btn-secondary text-sm">
+                    <X className="h-4 w-4" /> Cancel
                   </button>
                 </div>
               </div>
@@ -159,11 +162,11 @@ export default function Profile() {
             className="hidden"
             onChange={handleFile}
           />
-          <button onClick={() => fileRef.current?.click()} className="btn-secondary text-sm flex items-center gap-1.5" disabled={uploading}>
+          <button onClick={() => fileRef.current?.click()} className="btn-secondary text-sm" disabled={uploading}>
             <Camera className="h-4 w-4" /> Change Photo
           </button>
           {profile.avatar_url && (
-            <button onClick={remove} disabled={removing} className="text-sm text-red-600 hover:text-red-700 font-medium flex items-center gap-1.5">
+            <button onClick={remove} disabled={removing} className="text-sm text-error-600 hover:text-error-700 font-medium flex items-center gap-1.5">
               <X className="h-4 w-4" /> {removing ? 'Removing...' : 'Remove Photo'}
             </button>
           )}
@@ -172,16 +175,16 @@ export default function Profile() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-gray-900">Account Details</h3>
           {!editing ? (
-            <button onClick={startEdit} className="btn-secondary text-sm flex items-center gap-1.5">
-              <Pencil className="h-3.5 w-3.5" /> Edit
+            <button onClick={startEdit} className="btn-secondary text-sm">
+              <Pencil className="h-4 w-4" /> Edit
             </button>
           ) : (
             <div className="flex gap-2">
-              <button onClick={saveEdit} disabled={savingEdit} className="btn-primary text-sm flex items-center gap-1.5">
-                {savingEdit ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+              <button onClick={saveEdit} disabled={savingEdit} className="btn-primary text-sm">
+                {savingEdit ? <Loader className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
               </button>
-              <button onClick={() => setEditing(false)} disabled={savingEdit} className="btn-secondary text-sm flex items-center gap-1.5">
-                <X className="h-3.5 w-3.5" /> Cancel
+              <button onClick={() => setEditing(false)} disabled={savingEdit} className="btn-secondary text-sm">
+                <X className="h-4 w-4" /> Cancel
               </button>
             </div>
           )}
@@ -191,7 +194,8 @@ export default function Profile() {
           {fields.map((f, i) => (
             <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
               <f.icon className="h-5 w-5 text-gray-400 flex-shrink-0" />
-              <div className="flex-1"><p className="text-sm text-gray-500">{f.label}</p>
+              <div className="flex-1">
+                <p className="text-sm text-gray-500">{f.label}</p>
                 {editing && (f.label === 'Full Name' || f.label === 'Mobile') ? (
                   f.label === 'Full Name' ? (
                     <input value={editName} onChange={e => setEditName(e.target.value)} className="input-field mt-1 text-sm" placeholder="Full name" />

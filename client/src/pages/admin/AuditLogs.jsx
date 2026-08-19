@@ -18,34 +18,48 @@ export default function AuditLogs() {
 
   if (loading) return <LoadingSpinner fullPage />;
 
+  const roleBadge = (role) => {
+    switch (role) {
+      case 'admin': return 'bg-primary-50 text-primary-700 border border-primary-200';
+      case 'system': return 'bg-gray-100 text-gray-600 border border-gray-200';
+      default: return 'bg-info-50 text-info-700 border border-info-200';
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Audit Logs</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Audit Logs</h1>
+        <p className="text-sm text-gray-500 mt-1">A record of actions across the platform</p>
+      </div>
       <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-md"><Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" placeholder="Filter by action..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} /></div>
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+          <input className="input-field pl-10" placeholder="Filter by action..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} />
+        </div>
         <button onClick={load} className="btn-secondary">Filter</button>
       </div>
 
       {logs.length === 0 ? (
         <EmptyState icon={<ScrollText className="h-12 w-12" />} title="No audit logs" description="System actions will appear here." />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50"><tr>
-              <th className="text-left p-3 font-medium text-gray-600">Time</th>
-              <th className="text-left p-3 font-medium text-gray-600">Actor</th>
-              <th className="text-left p-3 font-medium text-gray-600">Role</th>
-              <th className="text-left p-3 font-medium text-gray-600">Action</th>
-              <th className="text-left p-3 font-medium text-gray-600">Target</th>
+        <div className="table-shell overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
+            <thead className="bg-gray-50/60"><tr>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Time</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actor</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Role</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Action</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Target</th>
             </tr></thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y divide-gray-100">
               {logs.map(l => (
-                <tr key={l.id} className="hover:bg-gray-50">
-                  <td className="p-3 text-gray-500">{new Date(l.created_at).toLocaleString()}</td>
-                  <td className="p-3 text-xs font-mono">{l.actor_id?.slice(0, 8) || 'System'}</td>
-                  <td className="p-3"><span className={`px-2 py-0.5 rounded text-xs font-medium ${l.actor_role === 'admin' ? 'bg-purple-100 text-purple-700' : l.actor_role === 'system' ? 'bg-gray-100 text-gray-700' : 'bg-blue-100 text-blue-700'}`}>{l.actor_role}</span></td>
-                  <td className="p-3 font-medium">{l.action}</td>
-                  <td className="p-3 text-xs font-mono text-gray-500">{l.target_id?.slice(0, 8) || '-'}</td>
+                <tr key={l.id} className="hover:bg-gray-50/60 transition-colors">
+                  <td className="px-4 py-3 text-gray-500">{new Date(l.created_at).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-gray-600">{l.actor_id?.slice(0, 8) || 'System'}</td>
+                  <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-medium ${roleBadge(l.actor_role)}`}>{l.actor_role}</span></td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{l.action}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-gray-500">{l.target_id?.slice(0, 8) || '-'}</td>
                 </tr>
               ))}
             </tbody>

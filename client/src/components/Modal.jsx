@@ -29,21 +29,25 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
       onClick={(e) => {
         if (e.target === overlayRef.current) onClose();
       }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
     >
       <div
-        className={`bg-white rounded-xl shadow-2xl w-full ${sizeClasses[size] || sizeClasses.md} max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200`}
+        className={`bg-white rounded-2xl shadow-2xl shadow-slate-900/20 border border-gray-200 w-full ${sizeClasses[size] || sizeClasses.md} max-h-[90vh] overflow-y-auto`}
       >
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
+          <h2 className="text-base font-semibold text-gray-900">{title}</h2>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-500"
+            aria-label="Close dialog"
           >
-            <X size={20} className="text-gray-500" />
+            <X size={18} />
           </button>
         </div>
         <div className="p-6">{children}</div>

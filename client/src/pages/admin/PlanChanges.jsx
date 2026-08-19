@@ -32,33 +32,38 @@ export default function PlanChanges() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Plan Change Requests</h1>
-      {requests.length === 0 ? <p className="text-gray-500 text-center py-8">No pending requests</p> : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50"><tr>
-              <th className="text-left p-3 font-medium text-gray-600">User</th>
-              <th className="text-left p-3 font-medium text-gray-600">Current</th>
-              <th className="text-left p-3 font-medium text-gray-600">Requested</th>
-              <th className="text-left p-3 font-medium text-gray-600">Date</th>
-              <th className="text-left p-3 font-medium text-gray-600">Status</th>
-              <th className="text-left p-3 font-medium text-gray-600">Actions</th>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Plan Change Requests</h1>
+        <p className="text-sm text-gray-500 mt-1">Review requests to change membership plans</p>
+      </div>
+      {requests.length === 0 ? (
+        <div className="table-shell"><p className="text-gray-500 text-center py-12">No pending requests</p></div>
+      ) : (
+        <div className="table-shell overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
+            <thead className="bg-gray-50/60"><tr>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">User</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Current</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Requested</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Date</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
             </tr></thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y divide-gray-100">
               {requests.map(r => (
-                <tr key={r.id} className="hover:bg-gray-50">
-                  <td className="p-3"><p className="font-medium">{r.user?.full_name || r.user_name || r.user_email}</p></td>
-                  <td className="p-3">{PLAN_MAP[r.current_plan]?.label}</td>
-                  <td className="p-3">{PLAN_MAP[r.requested_plan]?.label}</td>
-                  <td className="p-3 text-gray-500">{new Date(r.created_at).toLocaleDateString()}</td>
-                  <td className="p-3"><StatusBadge status={r.status} /></td>
-                  <td className="p-3">
-                    <div className="flex items-center gap-2">
+                <tr key={r.id} className="hover:bg-gray-50/60 transition-colors">
+                  <td className="px-4 py-3 font-medium text-gray-900">{r.user?.full_name || r.user_name || r.user_email}</td>
+                  <td className="px-4 py-3">{PLAN_MAP[r.current_plan]?.label}</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{PLAN_MAP[r.requested_plan]?.label}</td>
+                  <td className="px-4 py-3 text-gray-500">{new Date(r.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5">
                       {r.status === 'pending' && <>
-                        <button onClick={() => handleApprove(r.id)} className="p-1 hover:bg-green-50 rounded"><CheckCircle className="h-4 w-4 text-green-600" /></button>
-                        <button onClick={() => handleReject(r.id)} className="p-1 hover:bg-red-50 rounded"><XCircle className="h-4 w-4 text-red-600" /></button>
+                        <button onClick={() => handleApprove(r.id)} className="p-2 hover:bg-success-50 rounded-lg border border-gray-200 text-success-600" title="Approve request"><CheckCircle className="h-4 w-4" /></button>
+                        <button onClick={() => handleReject(r.id)} className="p-2 hover:bg-error-50 rounded-lg border border-gray-200 text-error-600" title="Reject request"><XCircle className="h-4 w-4" /></button>
                       </>}
-                      <button onClick={() => setConfirmDelete(r)} className="p-1 hover:bg-red-50 rounded"><Trash2 className="h-4 w-4 text-gray-400" /></button>
+                      <button onClick={() => setConfirmDelete(r)} className="p-2 hover:bg-gray-100 rounded-lg border border-gray-200 text-gray-400 hover:text-gray-600" title="Delete request"><Trash2 className="h-4 w-4" /></button>
                     </div>
                   </td>
                 </tr>

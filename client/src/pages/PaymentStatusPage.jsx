@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { CreditCard, Eye, LogOut, Clock, XCircle, CheckCircle, ShieldAlert } from 'lucide-react';
+import { CreditCard, Eye, LogOut, Clock, XCircle, CheckCircle, ShieldAlert, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
 import StatusBadge from '../components/StatusBadge';
@@ -51,7 +51,7 @@ export default function PaymentStatusPage() {
         icon: <XCircle className="h-5 w-5" />,
         title: 'Payment was not approved',
         body: rejected.rejection_reason || 'Your payment could not be approved. Please contact support.',
-        tone: 'bg-red-50 border-red-200 text-red-800'
+        tone: 'bg-error-50 border-error-200 text-error-800'
       };
     }
     if (pending) {
@@ -59,7 +59,7 @@ export default function PaymentStatusPage() {
         icon: <Clock className="h-5 w-5" />,
         title: 'Payment under review',
         body: 'Your account is pending activation. You will be able to access the dashboard once your registration payment is approved.',
-        tone: 'bg-amber-50 border-amber-200 text-amber-800'
+        tone: 'bg-warning-50 border-warning-200 text-warning-800'
       };
     }
     if (loginPayment) {
@@ -70,7 +70,7 @@ export default function PaymentStatusPage() {
         body: rejectedLogin
           ? (loginPayment.rejectionReason || 'Your payment could not be approved. Please contact support.')
           : 'Your account is pending activation. You will be able to access the dashboard once your registration payment is approved.',
-        tone: rejectedLogin ? 'bg-red-50 border-red-200 text-red-800' : 'bg-amber-50 border-amber-200 text-amber-800'
+        tone: rejectedLogin ? 'bg-error-50 border-error-200 text-error-800' : 'bg-warning-50 border-warning-200 text-warning-800'
       };
     }
     return null;
@@ -79,15 +79,20 @@ export default function PaymentStatusPage() {
   if (loading) return <LoadingSpinner fullPage />;
 
   return (
-    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <Link to="/" className="text-2xl font-bold tracking-wide text-white">JSREE</Link>
-          <h1 className="text-2xl font-bold text-white mt-4">Account Activation</h1>
-          <p className="text-indigo-100/80 mt-1">Track your registration payment status</p>
+          <div className="flex items-center justify-center gap-2 mb-6">
+            <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center shadow-sm">
+              <Shield className="h-5 w-5 text-white" />
+            </div>
+            <span className="text-2xl font-bold tracking-tight text-gray-900">JSREE</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Account Activation</h1>
+          <p className="text-gray-500 mt-1">Track your registration payment status</p>
         </div>
 
-        <div className="card bg-white/90 backdrop-blur-xl rounded-xl border border-white/20 shadow-2xl p-6">
+        <div className="card p-6">
           {!token && !loginPayment ? (
             <div className="text-center py-8 space-y-4">
               <ShieldAlert className="h-12 w-12 text-gray-300 mx-auto" />
@@ -109,17 +114,17 @@ export default function PaymentStatusPage() {
               {activePayment && (
                 <div className="rounded-xl border border-gray-200 p-4 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold">₹{activePayment.expected_amount}</span>
+                    <span className="font-semibold text-gray-900">₹{activePayment.expected_amount}</span>
                     <StatusBadge status={activePayment.status} />
                   </div>
                   <p className="text-sm text-gray-600">
                     Plan: ₹{activePayment.selected_plan} | Submitted: {new Date(activePayment.submitted_at).toLocaleString()}
                   </p>
                   {activePayment.rejection_reason && (
-                    <p className="text-sm text-red-600">Reason: {activePayment.rejection_reason}</p>
+                    <p className="text-sm text-error-600">Reason: {activePayment.rejection_reason}</p>
                   )}
                   {activePayment.screenshot_url && (
-                    <button onClick={() => setSelected(activePayment)} className="btn-secondary flex items-center gap-2 text-sm mt-2">
+                    <button onClick={() => setSelected(activePayment)} className="btn-secondary text-sm mt-2">
                       <Eye className="h-4 w-4" /> View Screenshot
                     </button>
                   )}
@@ -129,7 +134,7 @@ export default function PaymentStatusPage() {
               {!activePayment && loginPayment && !token && (
                 <div className="rounded-xl border border-gray-200 p-4 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold">₹{loginPayment.expectedAmount ?? 'N/A'}</span>
+                    <span className="font-semibold text-gray-900">₹{loginPayment.expectedAmount ?? 'N/A'}</span>
                     <StatusBadge status={loginPayment.paymentStatus || 'pending'} />
                   </div>
                   {loginPayment.selectedPlan && (
@@ -139,20 +144,20 @@ export default function PaymentStatusPage() {
                     <p className="text-sm text-gray-600">Submitted: {new Date(loginPayment.submittedAt).toLocaleString()}</p>
                   )}
                   {loginPayment.rejectionReason && (
-                    <p className="text-sm text-red-600">Reason: {loginPayment.rejectionReason}</p>
+                    <p className="text-sm text-error-600">Reason: {loginPayment.rejectionReason}</p>
                   )}
                 </div>
               )}
 
               {!activePayment && !loginPayment && payments.length === 0 && (
                 <div className="text-center py-6">
-                  <CheckCircle className="h-10 w-10 text-green-500 mx-auto mb-2" />
+                  <CheckCircle className="h-10 w-10 text-success-600 mx-auto mb-2" />
                   <p className="text-gray-600 text-sm">No pending payment. If you recently registered, your payment will appear here.</p>
                 </div>
               )}
 
               <div className="border-t pt-4">
-                <button onClick={logout} className="btn-secondary w-full flex items-center justify-center gap-2 text-sm">
+                <button onClick={logout} className="btn-secondary w-full text-sm">
                   <LogOut className="h-4 w-4" /> Logout
                 </button>
                 <p className="text-center text-xs text-gray-500 mt-3">
@@ -165,7 +170,7 @@ export default function PaymentStatusPage() {
       </div>
 
       <Modal isOpen={!!selected} onClose={() => setSelected(null)} title="Payment Screenshot" size="lg">
-        {selected?.screenshot_url && <img src={selected.screenshot_url} alt="Payment" className="w-full rounded-lg" />}
+        {selected?.screenshot_url && <img src={selected.screenshot_url} alt="Payment" className="w-full rounded-lg border border-gray-200" />}
       </Modal>
     </div>
   );

@@ -78,12 +78,15 @@ export default function TopUps() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Top-Ups</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Top-Ups</h1>
+        <p className="text-sm text-gray-500 mt-1">Send and receive top-ups between members</p>
+      </div>
 
       <div className="card">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold text-gray-900">Top-Up Payment</h3>
-          <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-600">UPI</span>
+          <span className="rounded bg-primary-50 px-2 py-0.5 text-xs font-semibold text-primary-600 border border-primary-100">UPI</span>
         </div>
         <p className="text-sm text-gray-600 mb-4">Select the amount, pay the JSREE UPI, then upload your payment screenshot for verification.</p>
         {eligibleForProof.length > 0 && (
@@ -110,34 +113,36 @@ export default function TopUps() {
           onVerify={handleTopupVerify}
         />
         {eligibleForProof.length === 0 && (
-          <p className="mt-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <p className="mt-3 text-xs text-warning-700 bg-warning-50 border border-warning-200 rounded-lg px-3 py-2">
             No pending top-up on your account yet. Make the payment above using the QR, and attach your screenshot once a pending top-up exists in the list below.
           </p>
         )}
       </div>
 
       <div className="flex gap-2">
-        <button onClick={() => setTab('received')} className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'received' ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-700'}`}>Received ({received.length})</button>
-        <button onClick={() => setTab('sent')} className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'sent' ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-700'}`}>Sent ({sent.length})</button>
+        <button onClick={() => setTab('received')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${tab === 'received' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>Received ({received.length})</button>
+        <button onClick={() => setTab('sent')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${tab === 'sent' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>Sent ({sent.length})</button>
       </div>
 
       {list.length === 0 ? (
-        <EmptyState icon={<ArrowUpDown className="h-12 w-12" />} title="No top-ups" description={`No ${tab} top-ups found.`} />
+        <div className="table-shell">
+          <EmptyState icon={<ArrowUpDown className="h-12 w-12" />} title="No top-ups" description={`No ${tab} top-ups found.`} />
+        </div>
       ) : (
         <div className="space-y-3">
           {list.map(t => (
             <div key={t.id} className="card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <div className="flex items-center gap-2 mb-1"><span className="font-semibold">₹{t.amount}</span><StatusBadge status={t.status} /></div>
+                <div className="flex items-center gap-2 mb-1"><span className="font-semibold text-gray-900">₹{t.amount}</span><StatusBadge status={t.status} /></div>
                 <p className="text-sm text-gray-600">{tab === 'received' ? `From: ${t.sender_name || t.sender_id?.slice(0,8)}` : `To: ${t.receiver_name || t.receiver_id?.slice(0,8)}`}</p>
                 <p className="text-xs text-gray-500">{new Date(t.created_at).toLocaleString()}</p>
               </div>
               <div className="flex gap-2">
                 {tab === 'received' && t.status === 'payment_pending' && (
-                  <button onClick={() => setProofModal(t)} className="btn-primary text-sm flex items-center gap-1"><Upload className="h-3 w-3" /> Submit Proof</button>
+                  <button onClick={() => setProofModal(t)} className="btn-primary text-sm"><Upload className="h-4 w-4" /> Submit Proof</button>
                 )}
                 {t.screenshot_url && (
-                  <a href={t.screenshot_url} target="_blank" rel="noopener noreferrer" className="btn-secondary text-sm flex items-center gap-1"><Eye className="h-3 w-3" /> Screenshot</a>
+                  <a href={t.screenshot_url} target="_blank" rel="noopener noreferrer" className="btn-secondary text-sm"><Eye className="h-4 w-4" /> Screenshot</a>
                 )}
               </div>
             </div>

@@ -93,11 +93,11 @@ export default function QRPaymentSection({
         </div>
       )}
 
-      <div className="rounded-xl border border-primary-200 bg-white p-4 sm:p-6">
+      <div className="rounded-xl border border-primary-100 bg-white p-4 sm:p-6 shadow-card">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <span className="text-lg font-bold tracking-wide text-gray-900">JSREE</span>
-            <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-600">UPI</span>
+            <span className="rounded bg-primary-50 px-2 py-0.5 text-xs font-semibold text-primary-600">UPI</span>
           </div>
           <span className="text-xs text-gray-500">Secure UPI Payment</span>
         </div>
