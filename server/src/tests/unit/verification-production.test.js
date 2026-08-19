@@ -64,20 +64,20 @@ describe('Production verification decision engine (20-step spec mapping)', () =>
     expect(reason).toBe('DATE_AMBIGUOUS');
   });
 
-  it('strong mismatches STILL reject even when the date is merely ambiguous', () => {
+  it('UPI mismatch STILL rejects even when the date is merely ambiguous; amount is ignored', () => {
+    // Amount is deliberately NOT part of the decision anymore.
     const wrongAmount = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true, dateAmbiguous: true });
-    expect(wrongAmount.decision).toBe('rejected');
-    expect(wrongAmount.reason).toBe('AMOUNT_MISMATCH');
+    expect(wrongAmount.decision).toBe('approved');
 
     const wrongUpi = decidePaymentVerification({ upiMatch: false, amountMatch: true, dateValid: true, dateAmbiguous: true });
     expect(wrongUpi.decision).toBe('rejected');
     expect(wrongUpi.reason).toBe('UPI_MISMATCH');
   });
 
-  it('legacy 3-field decision mapping is unchanged (existing callers/tests)', () => {
+  it('decisions depend only on UPI + date (amount removed from the spec)', () => {
     expect(decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: true }).decision).toBe('approved');
-    expect(decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: false }).reason).toBe('INVALID_PAYMENT_DATE');
-    expect(decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true }).reason).toBe('AMOUNT_MISMATCH');
+    expect(decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true }).decision).toBe('approved');
+    expect(decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: false }).reason).toBe('INVALID_PAYMENT_DATE');
     expect(decidePaymentVerification({ upiMatch: false, amountMatch: true, dateValid: true }).reason).toBe('UPI_MISMATCH');
   });
 });
@@ -121,11 +121,11 @@ describe('runScreenshotVerification — real UPI receipt formats (false-rejectio
     expect(verificationResult.transactionStatus.status).toBe('failed');
   });
 
-  it('wrong amount keeps rejecting even with an otherwise-correct receipt', async () => {
+  it('wrong amount no longer blocks an otherwise-correct receipt -> APPROVED', async () => {
     runOCR.mockResolvedValue({ text: receipt(500, RECEIVER_UPI, 'Date: 16/08/2026, 1:00 PM'), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({ imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW() });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.amountMatch).toBe(false);
   });
 
   it('midnight IST boundary: 00:00 IST today is within the window at 00:10 IST', async () => {

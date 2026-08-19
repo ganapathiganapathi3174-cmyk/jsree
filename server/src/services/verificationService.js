@@ -20,19 +20,27 @@ import { supabase } from '../db/supabase.js';
 // Shared screenshot verification engine (payments AND top-ups).
 //
 // Final verification rule (both flows):
-//   approved = upiMatch === true && amountMatch === true && dateValid === true
+//   approved = upiMatch === true && dateValid === true
 //              && ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE
+//
+// Amount is intentionally NOT part of the approval decision. The payer may
+// send a different amount than the selected plan amount to the configured
+// UPI. Approval depends on the destination UPI, an authentic readable
+// screenshot, a valid transaction date, and the separate UTR uniqueness
+// gate. The extracted amount and expected_amount are still captured for
+// records, notifications and admin display only — they never approve or
+// reject a payment/top-up.
 //
 // UTR / transaction ID has ZERO influence on that OCR decision — it is
 // only captured for records/display. Missing, unreadable or random UTRs
 // never affect approval.
 //
 // manual_review is a 4th decision (NOT an approval and NOT a rejection):
-// it is returned when every SECURITY gate (amount/UPI) passes but the
+// it is returned when every SECURITY gate (UPI) passes but the
 // evidence is not clean enough to auto-approve — e.g. the date was read
 // without an exact time on the correct IST day, OCR confidence is below
 // the approve floor, or the receipt wording is ambiguous/failed. Admin
-// approval is required to finish it. Strong mismatches (amount/UPI,
+// approval is required to finish it. Strong mismatches (UPI,
 // confirmed duplicates) STILL reject immediately — manual_review never
 // bypasses an existing security gate.
 //
@@ -43,15 +51,18 @@ import { supabase } from '../db/supabase.js';
 //   UTRs never block; missing UTRs skip the check entirely.
 // ─────────────────────────────────────────────────────────────
 export function decidePaymentVerification({ upiMatch, amountMatch, dateValid, dateAmbiguous, ocrConfidence }) {
+  // Amount is deliberately NOT read here. amountMatch may be supplied by
+  // callers for record-keeping, but it must never tip a decision — a correct
+  // screenshot that shows a different amount than the selected plan is still
+  // approved as long as UPI, date and screenshot authenticity gates pass.
   const confident = ocrConfidence === undefined || ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE;
-  const approved = upiMatch === true && amountMatch === true && dateValid === true && confident;
+  const approved = upiMatch === true && dateValid === true && confident;
   if (approved) return { decision: 'approved', reason: null };
 
   // Strong mismatches always reject — never downgrade to manual review.
-  if (amountMatch !== true) return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
   if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
 
-  // Security gates pass; the remaining question is evidence quality.
+  // Security gate (UPI) passes; the remaining question is evidence quality.
   const evidenceEligible = dateValid === true || dateAmbiguous === true;
   const confidenceManualOk = ocrConfidence === undefined || ocrConfidence >= MIN_OCR_CONFIDENCE_MANUAL;
 
@@ -118,10 +129,10 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   }
 
   // Full-page OCR may have dropped a large-font amount line (common on UPI
-  // receipts). Purely a recovery pass: the recovered tokens still go through
-  // the exact same matchAmount() comparison below, and UPI / date rules are
-  // unchanged, so this cannot create a false approval — it only prevents a
-  // false AMOUNT_MISMATCH.
+  // receipts). Purely a recovery pass for the RECORD: the recovered tokens
+  // go into checks.amount / detected.amount for admin display. Amount never
+  // feeds the approval/rejection decision anymore, so failed recovery simply
+  // leaves the extracted-amount record empty — nothing to reject on.
   let amountMatch = matchAmount(extractedAmounts, expectedAmount);
   if (!amountMatch) {
     try {
@@ -156,7 +167,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   const dateAmbiguous = !dateValid && !!date && !(timeEntry || anyEntry)?.hasTime && isSameIstDay(date, verificationTime);
 
   const { decision, reason } = decidePaymentVerification({
-    upiMatch, amountMatch, dateValid, dateAmbiguous, ocrConfidence,
+    upiMatch, dateValid, dateAmbiguous, ocrConfidence,
   });
 
   // A receipt that explicitly says "Failed/Declined" can never auto-approve.
@@ -172,6 +183,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   const detectedDate = dateEntry ? dateEntry.raw : (date ? date.toISOString() : null);
 
   const checks = {
+    // Informational only — amount no longer influences the decision.
     amount: { passed: amountMatch, didMatch: amountMatch, expected: expectedAmount, detected: detectedAmount },
     receiverUpi: { passed: upiMatch, expected: receiverUpi, detected: detectedUpi },
     utr: { passed: !!utr, detected: utr, contextual: !!utr },

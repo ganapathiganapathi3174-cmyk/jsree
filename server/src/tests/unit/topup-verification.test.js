@@ -46,7 +46,8 @@ const time = new Date('2026-08-18T12:00:00.000Z');
 
 // ─────────────────────────────────────────────────────────────
 // TOP-UP DECISION MATRIX (same shared engine as registration payments)
-//   Final rule: approved = upiMatch && amountMatch && dateValid
+//   Final rule: approved = upiMatch && dateValid (+ OCR confidence gate)
+//   Amount is not part of the decision (amountMatch is ignored).
 //   UTR has ZERO influence; it is never an input.
 // ─────────────────────────────────────────────────────────────
 describe('Top-up verification decision engine', () => {
@@ -74,10 +75,10 @@ describe('Top-up verification decision engine', () => {
     expect(reason).toBe('UPI_MISMATCH');
   });
 
-  it('T5: wrong amount -> REJECTED (AMOUNT_MISMATCH)', () => {
+  it('T5: wrong amount -> APPROVED (amount removed from the decision)', () => {
     const { decision, reason } = sharedDecide({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('rejected');
-    expect(reason).toBe('AMOUNT_MISMATCH');
+    expect(decision).toBe('approved');
+    expect(reason).toBeNull();
   });
 
   it('T6: invalid date/time -> REJECTED (INVALID_PAYMENT_DATE)', () => {
@@ -112,17 +113,17 @@ describe('Top-up balance credit', () => {
     expect(updateCall[0].status).toBe('completed');
   });
 
-  it('rejected AMOUNT_MISMATCH -> status rejected, no credit', async () => {
+  it('rejected decision (e.g. UPI_MISMATCH) -> status rejected, no credit', async () => {
     chains.topups = makeTopupsChain();
 
-    const result = await applyTopupVerification(topup, { decision: 'rejected', reason: 'AMOUNT_MISMATCH' }, time);
+    const result = await applyTopupVerification(topup, { decision: 'rejected', reason: 'UPI_MISMATCH' }, time);
 
     expect(result.credited).toBe(false);
     expect(walletCredit).not.toHaveBeenCalled();
 
     const updatePayload = chains.topups.update.mock.calls[0][0];
     expect(updatePayload.status).toBe('rejected');
-    expect(updatePayload.rejection_reason).toBe('AMOUNT_MISMATCH');
+    expect(updatePayload.rejection_reason).toBe('UPI_MISMATCH');
   });
 
   it('rejected UPI_MISMATCH -> status rejected, no credit', async () => {

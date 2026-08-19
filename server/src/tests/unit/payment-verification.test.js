@@ -4,12 +4,15 @@ import { decidePaymentVerification } from '../../services/paymentService.js';
 // ─────────────────────────────────────────────────────────────
 // FINAL PAYMENT VERIFICATION RULE
 //
-// Approval requires ALL THREE conditions:
+// Approval requires:
 //   1. ADMIN UPI MATCH
-//   2. AMOUNT MATCH (user-selected plan amount)
-//   3. VALID PAYMENT DATE/TIME
+//   2. VALID PAYMENT DATE/TIME
+//   3. READABLE/AUTHENTIC SCREENSHOT (OCR confidence gate)
 //
-// UTR / transaction ID has ZERO influence on the decision.
+// Amount is intentionally NOT part of the decision — a correct receipt that
+// shows a different amount than the selected plan amount is STILL approved.
+// UTR has ZERO influence on the decision (UTR uniqueness is enforced by the
+// separate approve/duplicate gate, not by this engine).
 // ─────────────────────────────────────────────────────────────
 
 describe('Payment Verification Decision Engine', () => {
@@ -33,10 +36,10 @@ describe('Payment Verification Decision Engine', () => {
     expect(reason).toBeNull();
   });
 
-  it('TEST 4: correct UPI + WRONG amount + valid date/time -> REJECTED (AMOUNT_MISMATCH)', () => {
+  it('TEST 4: correct UPI + WRONG amount + valid date/time -> APPROVED (amount removed from decision)', () => {
     const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('rejected');
-    expect(reason).toBe('AMOUNT_MISMATCH');
+    expect(decision).toBe('approved');
+    expect(reason).toBeNull();
   });
 
   it('TEST 5: WRONG UPI + correct amount + valid date/time -> REJECTED (UPI_MISMATCH)', () => {
@@ -66,43 +69,63 @@ describe('Payment Verification Decision Engine', () => {
     expect(decision).toBe('approved');
   });
 
-  it('TEST 10: ₹120 screenshot -> expected ₹500 REJECTED', () => {
+  it('TEST 10: ₹120 screenshot -> expected ₹500 APPROVED (amount-independent)', () => {
     const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('rejected');
-    expect(reason).toBe('AMOUNT_MISMATCH');
+    expect(decision).toBe('approved');
+    expect(reason).toBeNull();
   });
 
-  it('TEST 11: ₹500 screenshot -> expected ₹1000 REJECTED', () => {
+  it('TEST 11: ₹500 screenshot -> expected ₹1000 APPROVED (amount-independent)', () => {
     const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('rejected');
-    expect(reason).toBe('AMOUNT_MISMATCH');
+    expect(decision).toBe('approved');
+    expect(reason).toBeNull();
   });
 
-  it('TEST 12: ₹1000 screenshot -> expected ₹120 REJECTED', () => {
+  it('TEST 12: ₹1000 screenshot -> expected ₹120 APPROVED (amount-independent)', () => {
     const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('rejected');
-    expect(reason).toBe('AMOUNT_MISMATCH');
+    expect(decision).toBe('approved');
+    expect(reason).toBeNull();
+  });
+});
+
+describe('Amount does NOT affect the approval/rejection decision', () => {
+  it('flipping amountMatch true<->false never changes the outcome', () => {
+    const cases = [
+      // upi, date -> decision
+      [true, true, 'approved'],
+      [false, true, 'rejected'],
+      [true, false, 'rejected'],
+      [false, false, 'rejected'],
+    ];
+    for (const [upiMatch, dateValid, expected] of cases) {
+      for (const amountMatch of [true, false]) {
+        const { decision } = decidePaymentVerification({ upiMatch, amountMatch, dateValid });
+        expect(decision, `upi=${upiMatch} amount=${amountMatch} date=${dateValid}`).toBe(expected);
+      }
+    }
+  });
+
+  it('a wrong amount never produces an AMOUNT_MISMATCH rejection', () => {
+    const r = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true, ocrConfidence: 90 });
+    expect(r.decision).toBe('approved');
+    expect(r.reason).not.toBe('AMOUNT_MISMATCH');
   });
 });
 
 describe('UTR has ZERO influence on the decision', () => {
   it('decision engine does not read UTR input at all', () => {
     // In every following case the UTR is irrelevant: only
-    // upiMatch / amountMatch / dateValid drive the decision.
+    // upiMatch / dateValid drive the decision (amount is ignored too).
     const cases = [
-      // upi, amount, date -> decision
-      [true, true, true, 'approved'],
-      [true, true, false, 'rejected'],
-      [true, false, true, 'rejected'],
-      [false, true, true, 'rejected'],
-      [false, false, true, 'rejected'],
-      [false, true, false, 'rejected'],
-      [true, false, false, 'rejected'],
-      [false, false, false, 'rejected'],
+      // upi, date -> decision
+      [true, true, 'approved'],
+      [true, false, 'rejected'],
+      [false, true, 'rejected'],
+      [false, false, 'rejected'],
     ];
-    for (const [upiMatch, amountMatch, dateValid, expected] of cases) {
-      const { decision } = decidePaymentVerification({ upiMatch, amountMatch, dateValid });
-      expect(decision, `upi=${upiMatch} amount=${amountMatch} date=${dateValid}`).toBe(expected);
+    for (const [upiMatch, dateValid, expected] of cases) {
+      const { decision } = decidePaymentVerification({ upiMatch, amountMatch: false, dateValid });
+      expect(decision, `upi=${upiMatch} date=${dateValid}`).toBe(expected);
     }
   });
 
