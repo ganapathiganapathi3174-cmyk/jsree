@@ -60,14 +60,14 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
       )}
 
       <aside
-        className={`fixed top-0 left-0 z-50 h-full w-64 bg-white border-r border-gray-200 flex flex-col transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto ${
+        className={`fixed top-0 left-0 z-50 h-full w-64 bg-white border-r border-gray-200/70 shadow-xl shadow-slate-900/10 lg:shadow-none flex flex-col transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         aria-label={isAdmin ? 'Admin navigation' : 'Account navigation'}
       >
         <div className="flex items-center justify-between px-5 h-16 border-b border-gray-100 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center shadow-sm">
+            <div className="w-9 h-9 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center shadow-md shadow-primary-600/25 ring-1 ring-primary-200/70">
               <Shield size={18} className="text-white" />
             </div>
             <div className="leading-tight">
@@ -79,26 +79,29 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
           </div>
           <button
             onClick={onClose}
-            className="lg:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
+            className="lg:hidden p-1.5 rounded-lg hover:bg-violet-50 text-gray-500"
             aria-label="Close menu"
           >
             <X size={20} />
           </button>
         </div>
 
-        <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {links.map((link) => (
             <NavLink
               key={link.to}
               to={link.to}
               end={link.to === '/dashboard' || link.to === '/admin'}
               onClick={onClose}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
                 isActive(link.to)
-                  ? 'bg-primary-50 text-primary-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  ? 'bg-primary-50 text-primary-700 shadow-sm ring-1 ring-primary-100'
+                  : 'text-gray-600 hover:bg-violet-50/60 hover:text-primary-700'
               }`}
             >
+              {isActive(link.to) && (
+                <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r-full bg-primary-600" />
+              )}
               <link.icon size={18} className={isActive(link.to) ? 'text-primary-600' : 'text-gray-400'} />
               <span>{link.label}</span>
             </NavLink>
@@ -108,7 +111,7 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
         <div className="p-3 border-t border-gray-100 shrink-0">
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-error-50 hover:text-error-600 transition-colors"
+            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-gray-600 hover:bg-error-50 hover:text-error-600 transition-colors"
           >
             <LogOut size={18} />
             <span>Logout</span>

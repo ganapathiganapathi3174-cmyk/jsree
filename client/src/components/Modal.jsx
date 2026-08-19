@@ -38,13 +38,13 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
       aria-label={title}
     >
       <div
-        className={`bg-white rounded-2xl shadow-2xl shadow-slate-900/20 border border-gray-200 w-full ${sizeClasses[size] || sizeClasses.md} max-h-[90vh] overflow-y-auto`}
+        className={`bg-white rounded-2xl shadow-elevation border border-violet-100/60 w-full ${sizeClasses[size] || sizeClasses.md} max-h-[90vh] overflow-y-auto`}
       >
         <div className="flex items-center justify-between px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-900">{title}</h2>
           <button
             onClick={onClose}
-            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-500"
+            className="p-1.5 hover:bg-violet-50 rounded-lg transition-colors text-gray-500"
             aria-label="Close dialog"
           >
             <X size={18} />

@@ -32,8 +32,8 @@ export default function LandingPage() {
         </h1>
         <p className="text-lg md:text-xl text-gray-600 mb-8 max-w-2xl mx-auto">Join our referral network, connect with others, and earn rewards. Simple, transparent, and rewarding.</p>
         <div className="flex flex-wrap items-center justify-center gap-4">
-          <Link to="/register" className="btn-primary text-lg px-8 py-3">Get Started <ArrowRight className="h-5 w-5" /></Link>
-          <Link to="/login" className="btn-secondary text-lg px-8 py-3">Login</Link>
+          <Link to="/register" className="btn-primary h-12 px-8 text-base">Get Started <ArrowRight className="h-5 w-5" /></Link>
+          <Link to="/login" className="btn-secondary h-12 px-8 text-base">Login</Link>
         </div>
       </section>
 
@@ -72,7 +72,7 @@ export default function LandingPage() {
                   </li>
                 ))}
               </ul>
-              <Link to={`/register?plan=${plan.id}`} className={`w-full text-center block py-3 rounded-lg font-medium transition-colors ${plan.popular ? 'btn-primary' : 'btn-secondary'}`}>
+              <Link to={`/register?plan=${plan.id}`} className={`w-full text-center block ${plan.popular ? 'btn-primary' : 'btn-secondary'}`}>
                 Get Started
               </Link>
             </div>

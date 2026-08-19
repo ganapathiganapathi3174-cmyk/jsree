@@ -24,31 +24,31 @@
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 bg-primary-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors duration-200 hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-primary-600 text-white h-10 px-5 rounded-xl text-sm font-semibold shadow-sm shadow-primary-600/20 transition-all duration-200 hover:bg-primary-700 hover:shadow-md hover:-translate-y-px active:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 bg-white text-gray-700 border border-gray-300 px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors duration-200 hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-white text-gray-700 border border-slate-200 h-10 px-5 rounded-xl text-sm font-medium shadow-sm transition-all duration-200 hover:border-primary-200 hover:bg-primary-50/50 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 bg-error-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors duration-200 hover:bg-error-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-error-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-error-600 text-white h-10 px-5 rounded-xl text-sm font-medium shadow-sm transition-all duration-200 hover:bg-error-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-error-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-success {
-    @apply inline-flex items-center justify-center gap-2 bg-success-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-colors duration-200 hover:bg-success-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-success-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-success-600 text-white h-10 px-5 rounded-xl text-sm font-medium shadow-sm transition-all duration-200 hover:bg-success-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-success-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .card {
-    @apply bg-white rounded-xl border border-gray-200 shadow-card p-6;
+    @apply bg-white rounded-2xl border border-violet-100/70 shadow-card p-6;
   }
   .stat-card {
-    @apply bg-white rounded-xl border border-gray-200 shadow-card p-5;
+    @apply bg-white rounded-2xl border border-violet-100/70 shadow-card p-5 transition-shadow duration-200 hover:shadow-card-hover;
   }
   .input-field {
-    @apply w-full px-4 py-2.5 border border-gray-300 bg-white rounded-lg text-sm text-gray-900 placeholder-gray-400 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500;
+    @apply w-full h-10 px-4 border border-slate-300 bg-white rounded-xl text-sm text-gray-900 placeholder-slate-400 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500;
   }
   .label {
-    @apply block text-sm font-medium text-gray-600 mb-1.5;
+    @apply block text-sm font-medium text-slate-600 mb-1.5;
   }
   .table-shell {
-    @apply bg-white rounded-xl border border-gray-200 shadow-card;
+    @apply bg-white rounded-2xl border border-gray-200/80 shadow-card;
   }
   .page-subheading {
     @apply text-lg font-semibold text-gray-900;

@@ -61,16 +61,16 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
   const breadcrumbs = getBreadcrumbs();
 
   return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-30">
+    <header className="bg-white/90 backdrop-blur-xl border-b border-gray-200/70 shadow-sm shadow-slate-900/5 sticky top-0 z-30">
       <div className="flex items-center justify-between px-4 sm:px-6 h-16">
         <div className="flex items-center gap-3">
-          <button onClick={onMenuToggle} className="lg:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100" aria-label="Toggle menu">
+          <button onClick={onMenuToggle} className="lg:hidden p-2 rounded-xl text-gray-600 hover:bg-violet-50 hover:text-primary-700 transition-colors" aria-label="Toggle menu">
             <Menu size={20} />
           </button>
           <div className="hidden sm:flex items-center gap-2 text-sm">
             {breadcrumbs.map((crumb, i) => (
               <span key={i} className="flex items-center gap-2">
-                {i > 0 && <span className="text-gray-300">/</span>}
+                {i > 0 && <span className="text-violet-200">/</span>}
                 <span className={crumb.isLast ? 'text-gray-900 font-semibold' : 'text-gray-500'}>
                   {crumb.label}
                 </span>
@@ -88,7 +88,7 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="flex items-center gap-2 p-1.5 rounded-lg transition-colors hover:bg-gray-50"
+              className="flex items-center gap-2 p-1.5 rounded-xl transition-colors hover:bg-violet-50/60"
             >
               <Avatar user={user} size={36} />
               <div className="hidden sm:block text-left">
@@ -103,11 +103,11 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
             </button>
 
             {dropdownOpen && (
-              <div className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-lg shadow-slate-200/60 border border-gray-200 py-1 z-50 bg-white">
+              <div className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-elevation border border-gray-200 py-1 z-50 bg-white">
                 {!isAdmin && (
                   <button
                     onClick={() => { setDropdownOpen(false); navigate('/dashboard/profile'); }}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-violet-50/60"
                   >
                     <UserIcon size={16} /> Profile
                   </button>
