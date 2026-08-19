@@ -81,17 +81,40 @@ export async function getAllUsers(filters = {}) {
 
 export async function getUserDetails(userId) {
   const { data: user, error } = await supabase.from('users')
-    .select('id, full_name, email, mobile, role, status, referral_code, referred_by, current_plan, inactive_reason, inactive_since, created_at')
+    .select('id, full_name, email, mobile, role, status, referral_code, referred_by, current_plan, wallet_balance, inactive_reason, inactive_since, created_at')
     .eq('id', userId).single();
   if (error || !user) throw { message: 'User not found', code: 'USER_NOT_FOUND' };
 
-  const { data: payments } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, created_at').eq('user_id', userId).order('created_at', { ascending: false });
+  const { data: payments } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, transaction_id, rejection_reason, verification_result, created_at').eq('user_id', userId).order('created_at', { ascending: false });
   const { data: referrals } = await supabase.from('users').select('id, full_name, email, status, current_plan, created_at').eq('referred_by', userId);
   const { data: sentTopups } = await supabase.from('topups').select('id, receiver_id, amount, status, created_at').eq('sender_id', userId);
   const { data: receivedTopups } = await supabase.from('topups').select('id, sender_id, amount, status, created_at').eq('receiver_id', userId);
-  const { data: planChanges } = await supabase.from('plan_change_requests').select('id, current_plan, requested_plan, status, created_at').eq('user_id', userId);
+  const { data: planChanges } = await supabase.from('plan_change_requests').select('id, current_plan, requested_plan, status, created_at').eq('user_id', userId).order('created_at', { ascending: false });
+  const { data: walletTransactions } = await supabase.from('wallet_transactions').select('id, type, amount, description, reference_type, balance_after, created_at').eq('user_id', userId).order('created_at', { ascending: false });
+  const { data: notifications } = await supabase.from('notifications').select('id, type, title, read, created_at').eq('user_id', userId).order('created_at', { ascending: false });
+  const { data: conversations } = await supabase.from('conversations').select('id, last_message_at, created_at').eq('user_id', userId);
+  const { data: lastLoginRows } = await supabase.from('ip_logs').select('event_type, ip_address, created_at').eq('user_id', userId).eq('event_type', 'login').order('created_at', { ascending: false }).limit(1);
 
-  return { ...user, payments: payments || [], referrals: referrals || [], sentTopups: sentTopups || [], receivedTopups: receivedTopups || [], planChanges: planChanges || [] };
+  let messageCount = 0;
+  const conversationIds = (conversations || []).map(c => c.id);
+  if (conversationIds.length > 0) {
+    const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true }).in('conversation_id', conversationIds);
+    messageCount = count || 0;
+  }
+
+  return {
+    ...user,
+    payments: payments || [],
+    referrals: referrals || [],
+    sentTopups: sentTopups || [],
+    receivedTopups: receivedTopups || [],
+    planChanges: planChanges || [],
+    walletTransactions: walletTransactions || [],
+    notifications: notifications || [],
+    conversations: conversations || [],
+    messageCount,
+    lastLogin: lastLoginRows?.[0] || null
+  };
 }
 
 export async function updateUserStatus(userId, status, reason) {

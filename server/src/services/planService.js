@@ -69,7 +69,7 @@ export async function getPlanChangeRequests(userId) {
 
 export async function getAllPlanChangeRequests() {
   const { data: requests, error } = await supabase.from('plan_change_requests')
-    .select('*, user:users!plan_change_requests_user_id_fkey(id, full_name, email)')
+    .select('*, user:users!plan_change_requests_user_id_fkey(id, full_name, email, mobile)')
     .order('created_at', { ascending: false });
   if (error) throw { message: 'Failed to fetch plan change requests', code: 'FETCH_FAILED' };
   return requests;
