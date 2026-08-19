@@ -90,7 +90,7 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
+    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-2 mb-6">
@@ -103,7 +103,16 @@ export default function RegisterPage() {
           <p className="text-gray-500 mt-1">Step {step} of 3</p>
           <div className="flex items-center justify-center gap-2 mt-3">
             {[1, 2, 3].map(s => (
-              <div key={s} className={`h-1.5 rounded-full transition-colors ${s <= step ? 'bg-primary-600' : 'bg-gray-200'} ${s === 1 ? 'w-16' : 'w-8'}`} />
+              <div
+                key={s}
+                className={`h-1.5 rounded-full transition-all duration-300 ${
+                  s < step
+                    ? 'bg-success-500 shadow-glow-sm'
+                    : s === step
+                      ? 'bg-primary-400 shadow-glow'
+                      : 'bg-slate-500/30'
+                } ${s === 1 ? 'w-16' : 'w-8'}`}
+              />
             ))}
           </div>
         </div>

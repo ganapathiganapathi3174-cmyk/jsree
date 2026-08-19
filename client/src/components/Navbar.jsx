@@ -61,17 +61,17 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
   const breadcrumbs = getBreadcrumbs();
 
   return (
-    <header className="bg-white/90 backdrop-blur-xl border-b border-gray-200/70 shadow-sm shadow-slate-900/5 sticky top-0 z-30">
+    <header className="bg-slate-950/70 backdrop-blur-2xl border-b border-slate-500/15 shadow-sm shadow-black/40 sticky top-0 z-30">
       <div className="flex items-center justify-between px-4 sm:px-6 h-16">
         <div className="flex items-center gap-3">
-          <button onClick={onMenuToggle} className="lg:hidden p-2 rounded-xl text-gray-600 hover:bg-violet-50 hover:text-primary-700 transition-colors" aria-label="Toggle menu">
+          <button onClick={onMenuToggle} className="lg:hidden p-2 rounded-xl text-slate-400 hover:bg-white/10 hover:text-primary-300 transition-colors" aria-label="Toggle menu">
             <Menu size={20} />
           </button>
           <div className="hidden sm:flex items-center gap-2 text-sm">
             {breadcrumbs.map((crumb, i) => (
               <span key={i} className="flex items-center gap-2">
-                {i > 0 && <span className="text-violet-200">/</span>}
-                <span className={crumb.isLast ? 'text-gray-900 font-semibold' : 'text-gray-500'}>
+                {i > 0 && <span className="text-slate-600">/</span>}
+                <span className={crumb.isLast ? 'text-slate-100 font-semibold text-primary-300' : 'text-slate-400'}>
                   {crumb.label}
                 </span>
               </span>
@@ -82,39 +82,39 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
         <div className="flex items-center gap-2">
           {!isAdmin && <NotificationPanel />}
           <ThemeToggle />
-          <span className="hidden sm:block text-sm font-bold tracking-wide text-primary-600">
+          <span className="hidden sm:block text-sm font-bold tracking-wide text-primary-400">
             {isAdmin ? 'JSREE ADMIN' : 'JSREE'}
           </span>
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="flex items-center gap-2 p-1.5 rounded-xl transition-colors hover:bg-violet-50/60"
+              className="flex items-center gap-2 p-1.5 rounded-xl transition-colors hover:bg-white/[0.08]"
             >
               <Avatar user={user} size={36} />
               <div className="hidden sm:block text-left">
-                <p className="text-sm font-medium text-gray-700 leading-tight">
+                <p className="text-sm font-medium text-slate-100 leading-tight">
                   {user?.fullName || user?.name || 'User'}
                 </p>
-                <p className="text-xs capitalize text-gray-400 leading-tight">
+                <p className="text-xs capitalize text-slate-500 leading-tight">
                   {user?.role || 'user'}
                 </p>
               </div>
-              <ChevronDown size={16} className="hidden sm:block text-gray-400" />
+              <ChevronDown size={16} className="hidden sm:block text-slate-500" />
             </button>
 
             {dropdownOpen && (
-              <div className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-elevation border border-gray-200 py-1 z-50 bg-white">
+              <div className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-elevation border border-slate-500/20 py-1 z-50 bg-slate-900/95 backdrop-blur-2xl">
                 {!isAdmin && (
                   <button
                     onClick={() => { setDropdownOpen(false); navigate('/dashboard/profile'); }}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-violet-50/60"
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-200 hover:bg-primary-500/10 hover:text-primary-300"
                   >
                     <UserIcon size={16} /> Profile
                   </button>
                 )}
                 <button
                   onClick={handleLogout}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-error-600 hover:bg-error-50"
+                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-error-400 hover:bg-error-600/15"
                 >
                   <LogOut size={16} /> Logout
                 </button>

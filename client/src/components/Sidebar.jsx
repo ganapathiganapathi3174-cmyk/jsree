@@ -53,33 +53,33 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
     <>
       {isOpen && (
         <div
-          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 lg:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
           onClick={onClose}
           aria-hidden="true"
         />
       )}
 
       <aside
-        className={`fixed top-0 left-0 z-50 h-full w-64 bg-white border-r border-gray-200/70 shadow-xl shadow-slate-900/10 lg:shadow-none flex flex-col transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto ${
+        className={`fixed top-0 left-0 z-50 h-full w-64 bg-slate-950/80 backdrop-blur-2xl border-r border-slate-500/15 shadow-elevation lg:shadow-none flex flex-col transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         aria-label={isAdmin ? 'Admin navigation' : 'Account navigation'}
       >
-        <div className="flex items-center justify-between px-5 h-16 border-b border-gray-100 shrink-0">
+        <div className="flex items-center justify-between px-5 h-16 border-b border-slate-500/10 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center shadow-md shadow-primary-600/25 ring-1 ring-primary-200/70">
+            <div className="w-9 h-9 bg-gradient-to-br from-primary-500 to-accent-500 rounded-xl flex items-center justify-center shadow-glow-sm">
               <Shield size={18} className="text-white" />
             </div>
             <div className="leading-tight">
-              <span className="block font-bold tracking-tight text-gray-900 leading-none">
+              <span className="block font-bold tracking-tight text-slate-50 leading-none">
                 {isAdmin ? 'JSREE Admin' : 'JSREE'}
               </span>
-              <span className="block text-[11px] text-gray-400 mt-0.5">Membership Portal</span>
+              <span className="block text-[11px] text-slate-400 mt-0.5">Membership Portal</span>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="lg:hidden p-1.5 rounded-lg hover:bg-violet-50 text-gray-500"
+            className="lg:hidden p-1.5 rounded-lg hover:bg-white/10 text-slate-400"
             aria-label="Close menu"
           >
             <X size={20} />
@@ -95,23 +95,23 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
               onClick={onClose}
               className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
                 isActive(link.to)
-                  ? 'bg-primary-50 text-primary-700 shadow-sm ring-1 ring-primary-100'
-                  : 'text-gray-600 hover:bg-violet-50/60 hover:text-primary-700'
+                  ? 'bg-primary-500/15 text-primary-300 shadow-glow-sm'
+                  : 'text-slate-400 hover:bg-white/[0.06] hover:text-slate-100 hover:shadow-glow-sm'
               }`}
             >
               {isActive(link.to) && (
-                <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r-full bg-primary-600" />
+                <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r-full bg-primary-400 shadow-glow" />
               )}
-              <link.icon size={18} className={isActive(link.to) ? 'text-primary-600' : 'text-gray-400'} />
+              <link.icon size={18} className={isActive(link.to) ? 'text-primary-400' : 'text-slate-500'} />
               <span>{link.label}</span>
             </NavLink>
           ))}
         </nav>
 
-        <div className="p-3 border-t border-gray-100 shrink-0">
+        <div className="p-3 border-t border-slate-500/10 shrink-0">
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-gray-600 hover:bg-error-50 hover:text-error-600 transition-colors"
+            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:bg-error-600/10 hover:text-error-400 transition-colors"
           >
             <LogOut size={18} />
             <span>Logout</span>

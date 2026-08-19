@@ -1,18 +1,21 @@
-import { useTheme } from '../contexts/ThemeContext';
+import StarField from './StarField';
+import ShootingStars from './ShootingStars';
 
 export default function FallingStarsBackground() {
-  const { dark } = useTheme();
-
   return (
-    <div aria-hidden="true" className="fixed inset-0 z-0 overflow-hidden bg-surface pointer-events-none">
+    <div
+      aria-hidden="true"
+      className="fixed inset-0 z-0 overflow-hidden pointer-events-none"
+    >
       <div
         className="absolute inset-0"
         style={{
-          background: dark
-            ? 'linear-gradient(180deg, #0f172a 0%, #1e293b 100%)'
-            : 'radial-gradient(1000px 480px at 10% -10%, rgba(124, 58, 237, 0.20), transparent 65%), radial-gradient(800px 420px at 90% 0%, rgba(139, 92, 246, 0.18), transparent 60%), radial-gradient(1100px 550px at 50% 115%, rgba(167, 139, 250, 0.16), transparent 65%), #E9E4F7',
+          background:
+            'radial-gradient(circle at 20% 20%, rgba(59, 130, 246, 0.12), transparent 32%), radial-gradient(circle at 80% 10%, rgba(139, 92, 246, 0.10), transparent 32%), radial-gradient(circle at 50% 100%, rgba(30, 58, 138, 0.18), transparent 45%), linear-gradient(180deg, #020617 0%, #080D24 50%, #020617 100%)',
         }}
       />
+      <StarField />
+      <ShootingStars />
     </div>
   );
 }

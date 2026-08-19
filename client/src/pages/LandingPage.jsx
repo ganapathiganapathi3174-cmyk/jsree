@@ -9,7 +9,7 @@ const plans = [
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-surface relative">
+    <div className="min-h-screen bg-transparent relative">
       <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center shadow-sm">

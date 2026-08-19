@@ -30,11 +30,11 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
+    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-2 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center shadow-sm">
+            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-accent-500 rounded-xl flex items-center justify-center shadow-glow-sm">
               <Shield className="h-5 w-5 text-white" />
             </div>
             <span className="text-2xl font-bold tracking-tight text-gray-900">JSREE</span>
@@ -42,7 +42,7 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold text-gray-900">Welcome Back</h1>
           <p className="text-gray-500 mt-1">Sign in to your account</p>
         </div>
-        <div className="card p-8">
+        <div className="card p-8 shadow-elevation ring-1 ring-slate-500/20">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="label">Email</label>

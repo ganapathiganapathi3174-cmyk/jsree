@@ -12,7 +12,7 @@ export default function Layout({ children, isAdmin }) {
   }, [location.pathname]);
 
   return (
-    <div className="flex h-screen bg-surface overflow-hidden">
+    <div className="flex h-screen bg-transparent overflow-hidden">
       <Sidebar
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}

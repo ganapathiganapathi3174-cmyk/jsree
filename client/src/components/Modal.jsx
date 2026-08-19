@@ -29,7 +29,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       onClick={(e) => {
         if (e.target === overlayRef.current) onClose();
       }}
@@ -38,13 +38,13 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
       aria-label={title}
     >
       <div
-        className={`bg-white rounded-2xl shadow-elevation border border-violet-100/60 w-full ${sizeClasses[size] || sizeClasses.md} max-h-[90vh] overflow-y-auto`}
+        className={`bg-slate-900/95 backdrop-blur-2xl rounded-2xl shadow-elevation border border-slate-500/20 w-full ${sizeClasses[size] || sizeClasses.md} max-h-[90vh] overflow-y-auto`}
       >
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4 border-b border-gray-100">
-          <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4 border-b border-slate-500/10">
+          <h2 className="text-base font-semibold text-slate-100">{title}</h2>
           <button
             onClick={onClose}
-            className="p-1.5 hover:bg-violet-50 rounded-lg transition-colors text-gray-500"
+            className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-slate-400"
             aria-label="Close dialog"
           >
             <X size={18} />
