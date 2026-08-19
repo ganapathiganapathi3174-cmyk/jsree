@@ -29,7 +29,7 @@ export default function ChangePlan() {
     if (selectedPlan === currentPlan) { toast.error('Select a different plan'); return; }
     setSubmitting(true);
     try {
-      await api.post('/plans/change-request', { current_plan: currentPlan, requested_plan: selectedPlan, reason });
+      await api.post('/plans/change-request', { requestedPlan: String(selectedPlan), reason });
       toast.success('Request submitted!');
       setSelectedPlan(null); setReason('');
       load();
