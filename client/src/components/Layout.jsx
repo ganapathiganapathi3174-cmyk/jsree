@@ -24,7 +24,7 @@ export default function Layout({ children, isAdmin }) {
           onMenuToggle={() => setSidebarOpen((prev) => !prev)}
           isAdmin={isAdmin}
         />
-        <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
           <div className="max-w-7xl mx-auto">{children}</div>
         </main>
       </div>

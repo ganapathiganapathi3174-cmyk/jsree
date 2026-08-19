@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Users, Copy, Share2 } from 'lucide-react';
+import { Users, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import StatusBadge from '../../components/StatusBadge';
 import EmptyState from '../../components/EmptyState';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import ShareMenu from '../../components/ShareMenu';
 
 export default function Referrals() {
   const [code, setCode] = useState('');
@@ -24,7 +25,6 @@ export default function Referrals() {
 
   const link = `${window.location.origin}/register?ref=${code}`;
   const copyCode = () => { navigator.clipboard.writeText(code); toast.success('Code copied!'); };
-  const copyLink = () => { navigator.clipboard.writeText(link); toast.success('Link copied!'); };
 
   if (loading) return <LoadingSpinner fullPage />;
 
@@ -45,9 +45,9 @@ export default function Referrals() {
           <span className="font-mono text-xl font-bold text-gray-900 flex-1">{code}</span>
           <button onClick={copyCode} className="btn-primary"><Copy className="h-4 w-4" /> Copy</button>
         </div>
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <input className="input-field flex-1 text-sm" readOnly value={link} />
-          <button onClick={copyLink} className="btn-secondary"><Share2 className="h-4 w-4" /> Share</button>
+          <ShareMenu link={link} text={`Join me on JSREE with my referral code ${code}: ${link}`} />
         </div>
       </div>
 

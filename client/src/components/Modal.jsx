@@ -40,7 +40,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
       <div
         className={`bg-white rounded-2xl shadow-2xl shadow-slate-900/20 border border-gray-200 w-full ${sizeClasses[size] || sizeClasses.md} max-h-[90vh] overflow-y-auto`}
       >
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-900">{title}</h2>
           <button
             onClick={onClose}
@@ -50,7 +50,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
             <X size={18} />
           </button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className="p-5 sm:p-6">{children}</div>
       </div>
     </div>
   );

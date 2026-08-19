@@ -77,7 +77,7 @@ export default function AdminUsers() {
       ) : (
         <>
           <div className="table-shell overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[680px]">
               <thead className="bg-gray-50/60"><tr>
                 <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">User</th>
                 <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Email</th>

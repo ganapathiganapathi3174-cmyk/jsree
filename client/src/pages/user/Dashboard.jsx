@@ -7,6 +7,7 @@ import { PLAN_MAP } from '../../utils/constants';
 import StatusBadge from '../../components/StatusBadge';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Avatar from '../../components/Avatar';
+import ShareMenu from '../../components/ShareMenu';
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
@@ -24,7 +25,6 @@ export default function Dashboard() {
   const referralLink = `${window.location.origin}/register?ref=${profile?.referral_code || ''}`;
 
   const copyCode = () => { navigator.clipboard.writeText(profile?.referral_code || ''); toast.success('Code copied!'); };
-  const copyLink = () => { navigator.clipboard.writeText(referralLink); toast.success('Link copied!'); };
 
   return (
     <div className="space-y-6">
@@ -71,7 +71,11 @@ export default function Dashboard() {
             </div>
             <div>
               <p className="text-xs text-gray-500 mb-1">Referral Link</p>
-              <button onClick={copyLink} className="text-xs text-primary-600 hover:underline flex items-center gap-1 truncate w-full"><Copy className="h-3 w-3" /> Copy Link</button>
+              <ShareMenu
+                link={referralLink}
+                text={`Join me on JSREE with my referral code ${profile?.referral_code || ''}: ${referralLink}`}
+                variant="secondary"
+              />
             </div>
             <div className="flex justify-between border-t border-gray-100 pt-3 text-sm"><span className="text-gray-500">Total</span><span className="font-semibold text-gray-900">{referralSummary?.total || 0}</span></div>
             <div className="flex justify-between text-sm"><span className="text-gray-500">Active</span><span className="font-semibold text-success-600">{referralSummary?.active || 0}</span></div>
