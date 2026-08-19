@@ -20,7 +20,7 @@ export default {
           800: '#5b21b6',
           900: '#4c1d95',
         },
-        surface: '#F7F5FC',
+        surface: '#F1EEF9',
         success: {
           DEFAULT: '#16A34A',
           50: '#f0fdf4',
