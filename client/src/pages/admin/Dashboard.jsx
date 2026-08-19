@@ -35,17 +35,17 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Admin Dashboard</h1>
         <p className="text-sm text-gray-500 mt-1">Platform overview and financial summary</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {cards.map((c, i) => (
           <div key={i} className="stat-card">
-            <div className="flex items-center gap-3">
-              <div className={`w-11 h-11 rounded-lg flex items-center justify-center ${c.tile}`}><c.icon className="h-5 w-5" /></div>
+            <div className="flex items-center gap-3 h-full">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${c.tile}`}><c.icon className="h-5 w-5" /></div>
               <div className="min-w-0">
-                <p className="text-2xl font-bold text-gray-900 leading-tight">{c.value.toLocaleString()}</p>
+                <p className="text-2xl sm:text-3xl font-bold text-gray-900 leading-tight">{c.value.toLocaleString()}</p>
                 <p className="text-sm text-gray-500 truncate">{c.label}</p>
               </div>
             </div>
@@ -61,7 +61,7 @@ export default function AdminDashboard() {
               <div className={`w-11 h-11 rounded-lg flex items-center justify-center shrink-0 ${f.tile}`}><f.icon className="h-5 w-5" /></div>
               <div className="min-w-0">
                 <p className="text-sm text-gray-500 mb-0.5">{f.label}</p>
-                <p className="text-2xl font-bold text-gray-900 flex items-center leading-tight">₹{f.value.toLocaleString()}</p>
+                <p className="text-2xl sm:text-3xl font-bold text-gray-900 flex items-center leading-tight">₹{f.value.toLocaleString()}</p>
               </div>
             </div>
           ))}

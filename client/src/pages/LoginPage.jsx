@@ -39,7 +39,7 @@ export default function LoginPage() {
             </div>
             <span className="text-2xl font-bold tracking-tight text-gray-900">JSREE</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Welcome Back</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Welcome Back</h1>
           <p className="text-gray-500 mt-1">Sign in to your account</p>
         </div>
         <div className="card p-8 shadow-elevation ring-1 ring-slate-500/20">

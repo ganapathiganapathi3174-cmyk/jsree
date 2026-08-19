@@ -54,7 +54,7 @@ export default function AdminChat() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Chat Management</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Chat Management</h1>
         <p className="text-sm text-gray-500 mt-1">Conversations with members</p>
       </div>
       <div className="flex flex-col lg:flex-row gap-4" style={{ height: 'calc(100vh - 13rem)' }}>

@@ -42,7 +42,7 @@ export default function ChangePlan() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Change Plan</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Change Plan</h1>
         <p className="text-sm text-gray-500 mt-1">Request a move to a different membership plan</p>
       </div>
 

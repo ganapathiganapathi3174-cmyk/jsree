@@ -99,7 +99,7 @@ export default function RegisterPage() {
             </div>
             <span className="text-2xl font-bold tracking-tight text-gray-900">JSREE</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Create Account</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Create Account</h1>
           <p className="text-gray-500 mt-1">Step {step} of 3</p>
           <div className="flex items-center justify-center gap-2 mt-3">
             {[1, 2, 3].map(s => (

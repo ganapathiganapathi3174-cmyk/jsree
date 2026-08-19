@@ -6,6 +6,8 @@ import { PLAN_MAP } from '../../utils/constants';
 import StatusBadge from '../../components/StatusBadge';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import EmptyState from '../../components/EmptyState';
+import { RefreshCw } from 'lucide-react';
 
 export default function PlanChanges() {
   const [requests, setRequests] = useState([]);
@@ -33,11 +35,11 @@ export default function PlanChanges() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Plan Change Requests</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Plan Change Requests</h1>
         <p className="text-sm text-gray-500 mt-1">Review requests to change membership plans</p>
       </div>
       {requests.length === 0 ? (
-        <div className="table-shell"><p className="text-gray-500 text-center py-12">No pending requests</p></div>
+        <div className="table-shell"><EmptyState icon={<RefreshCw className="h-10 w-10" />} title="No pending requests" description="There are no plan change requests waiting for review." /></div>
       ) : (
         <div className="table-shell overflow-x-auto">
           <table className="w-full text-sm min-w-[720px]">
@@ -47,7 +49,7 @@ export default function PlanChanges() {
               <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Requested</th>
               <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Date</th>
               <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
+              <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
             </tr></thead>
             <tbody className="divide-y divide-gray-100">
               {requests.map(r => (
@@ -58,12 +60,12 @@ export default function PlanChanges() {
                   <td className="px-4 py-3 text-gray-500">{new Date(r.created_at).toLocaleDateString()}</td>
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center justify-end gap-2">
                       {r.status === 'pending' && <>
-                        <button onClick={() => handleApprove(r.id)} className="p-2 hover:bg-success-50 rounded-lg border border-gray-200 text-success-600" title="Approve request"><CheckCircle className="h-4 w-4" /></button>
-                        <button onClick={() => handleReject(r.id)} className="p-2 hover:bg-error-50 rounded-lg border border-gray-200 text-error-600" title="Reject request"><XCircle className="h-4 w-4" /></button>
+                        <button onClick={() => handleApprove(r.id)} className="w-10 h-10 hover:bg-success-50 rounded-xl border border-gray-200 text-success-500 flex items-center justify-center" title="Approve request"><CheckCircle className="h-4 w-4" /></button>
+                        <button onClick={() => handleReject(r.id)} className="w-10 h-10 hover:bg-error-50 rounded-xl border border-gray-200 text-error-500 flex items-center justify-center" title="Reject request"><XCircle className="h-4 w-4" /></button>
                       </>}
-                      <button onClick={() => setConfirmDelete(r)} className="p-2 hover:bg-gray-100 rounded-lg border border-gray-200 text-gray-400 hover:text-gray-600" title="Delete request"><Trash2 className="h-4 w-4" /></button>
+                      <button onClick={() => setConfirmDelete(r)} className="w-10 h-10 hover:bg-gray-100 rounded-xl border border-gray-200 text-gray-400 hover:text-gray-200 flex items-center justify-center" title="Delete request"><Trash2 className="h-4 w-4" /></button>
                     </div>
                   </td>
                 </tr>

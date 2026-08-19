@@ -41,7 +41,7 @@ export default function FinancialReports() {
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><BarChart3 className="h-5 w-5" /></div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Financial Reports</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Financial Reports</h1>
             <p className="text-sm text-gray-500 mt-0.5">Revenue summary and CSV exports</p>
           </div>
         </div>

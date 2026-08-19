@@ -5,6 +5,8 @@ import api from '../../utils/api';
 import { PLAN_MAP } from '../../utils/constants';
 import StatusBadge from '../../components/StatusBadge';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import EmptyState from '../../components/EmptyState';
+import { UserX } from 'lucide-react';
 
 export default function InactiveUsers() {
   const [users, setUsers] = useState([]);
@@ -23,11 +25,11 @@ export default function InactiveUsers() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Inactive Users</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Inactive Users</h1>
         <p className="text-sm text-gray-500 mt-1">Users who are currently deactivated</p>
       </div>
       {users.length === 0 ? (
-        <div className="table-shell"><p className="text-gray-500 text-center py-12">No inactive users</p></div>
+        <div className="table-shell"><EmptyState icon={<UserX className="h-10 w-10" />} title="No inactive users" description="All registered users are currently active." /></div>
       ) : (
         <div className="table-shell overflow-x-auto">
           <table className="w-full text-sm min-w-[720px]">
@@ -37,7 +39,7 @@ export default function InactiveUsers() {
               <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Referrals</th>
               <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Reason</th>
               <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Since</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Action</th>
+              <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Action</th>
             </tr></thead>
             <tbody className="divide-y divide-gray-100">
               {users.map(u => (
@@ -48,9 +50,11 @@ export default function InactiveUsers() {
                   <td className="px-4 py-3 text-gray-600">{u.inactive_reason || '-'}</td>
                   <td className="px-4 py-3 text-gray-500">{u.inactive_since ? new Date(u.inactive_since).toLocaleDateString() : '-'}</td>
                   <td className="px-4 py-3">
-                    <button onClick={() => handleActivate(u.id)} className="btn-success text-sm flex items-center gap-1.5 py-2">
-                      <UserCheck className="h-4 w-4" /> Activate
-                    </button>
+                    <div className="flex items-center justify-end">
+                      <button onClick={() => handleActivate(u.id)} className="btn-success text-sm flex items-center gap-1.5">
+                        <UserCheck className="h-4 w-4" /> Activate
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

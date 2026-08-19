@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Eye, CheckCircle, XCircle, Trash2, UserX } from 'lucide-react';
+import { Eye, CheckCircle, XCircle, Trash2, UserX, CreditCard } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import EmptyState from '../../components/EmptyState';
 
 export default function AdminPayments() {
   const [payments, setPayments] = useState([]);
@@ -51,43 +52,45 @@ export default function AdminPayments() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Payment Management</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Payment Management</h1>
         <p className="text-sm text-gray-500 mt-1">Review and verify registration payments</p>
       </div>
 
-      <div className="table-shell overflow-x-auto">
-        <table className="w-full text-sm min-w-[720px]">
-          <thead className="bg-gray-50/60"><tr>
-            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">User</th>
-            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Amount</th>
-            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Plan</th>
-            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
-            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Submitted</th>
-            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
-          </tr></thead>
-          <tbody className="divide-y divide-gray-100">
-            {payments.map(p => (
-              <tr key={p.id} className="hover:bg-gray-50/60 transition-colors">
-                <td className="px-4 py-3"><p className="font-medium text-gray-900">{p.user?.full_name || p.user_name || p.user_id?.slice(0,8)}</p><p className="text-xs text-gray-500">{p.user?.email || p.user_email}</p></td>
-                <td className="px-4 py-3 font-semibold text-gray-900">₹{p.expected_amount}</td>
-                <td className="px-4 py-3 text-gray-600">₹{p.selected_plan}</td>
-                <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
-                <td className="px-4 py-3 text-gray-500">{new Date(p.submitted_at).toLocaleString()}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={() => setDetail(p)} className="p-2 hover:bg-gray-100 rounded-lg border border-gray-200 text-gray-500 hover:text-gray-700" title="View details"><Eye className="h-4 w-4" /></button>
-                    {['pending', 'manual_review'].includes(p.status) && <button onClick={() => handleApprove(p.id)} className="p-2 hover:bg-success-50 rounded-lg border border-gray-200 text-success-600" title="Approve payment"><CheckCircle className="h-4 w-4" /></button>}
-                    {['pending', 'manual_review'].includes(p.status) && <button onClick={() => { setDetail(p); }} className="p-2 hover:bg-error-50 rounded-lg border border-gray-200 text-error-600" title="Reject payment"><XCircle className="h-4 w-4" /></button>}
-                    {p.status === 'pending' && <button onClick={() => setConfirmAction({ paymentId: p.id, userName: p.user?.full_name || p.user_name || p.user_email || p.user_id?.slice(0, 8) })} className="p-2 hover:bg-error-50 rounded-lg border border-gray-200 text-error-600" title="Delete registration"><Trash2 className="h-4 w-4" /></button>}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {payments.length === 0 && <p className="text-gray-500 text-center py-8">No payments found</p>}
+      {payments.length === 0 ? (
+        <div className="table-shell"><EmptyState icon={<CreditCard className="h-10 w-10" />} title="No payments found" description="There are no payment records matching your current filters." /></div>
+      ) : (
+        <div className="table-shell overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
+            <thead className="bg-gray-50/60"><tr>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">User</th>
+              <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Amount</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Plan</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Submitted</th>
+              <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {payments.map(p => (
+                <tr key={p.id} className="hover:bg-gray-50/60 transition-colors">
+                  <td className="px-4 py-3"><p className="font-medium text-gray-900">{p.user?.full_name || p.user_name || p.user_id?.slice(0,8)}</p><p className="text-xs text-gray-500">{p.user?.email || p.user_email}</p></td>
+                  <td className="px-4 py-3 font-semibold text-gray-900 text-right">₹{p.expected_amount}</td>
+                  <td className="px-4 py-3 text-gray-600">₹{p.selected_plan}</td>
+                  <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
+                  <td className="px-4 py-3 text-gray-500">{new Date(p.submitted_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => setDetail(p)} className="w-10 h-10 hover:bg-gray-100 rounded-xl border border-gray-200 text-gray-500 hover:text-primary-400 flex items-center justify-center" title="View details"><Eye className="h-4 w-4" /></button>
+                      {['pending', 'manual_review'].includes(p.status) && <button onClick={() => handleApprove(p.id)} className="w-10 h-10 hover:bg-success-50 rounded-xl border border-gray-200 text-success-500 flex items-center justify-center" title="Approve payment"><CheckCircle className="h-4 w-4" /></button>}
+                      {['pending', 'manual_review'].includes(p.status) && <button onClick={() => { setDetail(p); }} className="w-10 h-10 hover:bg-error-50 rounded-xl border border-gray-200 text-error-500 flex items-center justify-center" title="Reject payment"><XCircle className="h-4 w-4" /></button>}
+                      {p.status === 'pending' && <button onClick={() => setConfirmAction({ paymentId: p.id, userName: p.user?.full_name || p.user_name || p.user_email || p.user_id?.slice(0, 8) })} className="w-10 h-10 hover:bg-error-50 rounded-xl border border-gray-200 text-error-500 flex items-center justify-center" title="Delete registration"><Trash2 className="h-4 w-4" /></button>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <Modal isOpen={!!detail} onClose={() => { setDetail(null); setRejectReason(''); }} title="Payment Details" size="lg">
         {detail && (

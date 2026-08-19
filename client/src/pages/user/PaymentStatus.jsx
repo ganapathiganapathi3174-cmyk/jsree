@@ -21,7 +21,7 @@ export default function PaymentStatus() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Payment Status</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Payment Status</h1>
         <p className="text-sm text-gray-500 mt-1">Your registration payment records</p>
       </div>
       {payments.length === 0 ? (

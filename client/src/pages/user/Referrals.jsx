@@ -35,7 +35,7 @@ export default function Referrals() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">My Referrals</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">My Referrals</h1>
         <p className="text-sm text-gray-500 mt-1">Share your code and earn rewards</p>
       </div>
 
@@ -58,9 +58,9 @@ export default function Referrals() {
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        <div className="stat-card text-center"><p className="text-2xl font-bold text-gray-900">{referrals.length}</p><p className="text-sm text-gray-500">Total</p></div>
-        <div className="stat-card text-center"><p className="text-2xl font-bold text-success-600">{active}</p><p className="text-sm text-gray-500">Active</p></div>
-        <div className="stat-card text-center"><p className="text-2xl font-bold text-gray-400">{inactive}</p><p className="text-sm text-gray-500">Inactive</p></div>
+        <div className="stat-card text-center"><p className="text-2xl sm:text-3xl font-bold text-gray-900">{referrals.length}</p><p className="text-sm text-gray-500">Total</p></div>
+        <div className="stat-card text-center"><p className="text-2xl sm:text-3xl font-bold text-success-500">{active}</p><p className="text-sm text-gray-500">Active</p></div>
+        <div className="stat-card text-center"><p className="text-2xl sm:text-3xl font-bold text-gray-400">{inactive}</p><p className="text-sm text-gray-500">Inactive</p></div>
       </div>
 
       {referrals.length === 0 ? (

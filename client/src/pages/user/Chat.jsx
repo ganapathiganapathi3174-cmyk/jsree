@@ -57,7 +57,7 @@ export default function Chat() {
   return (
     <div className="flex flex-col h-[calc(100vh-10rem)]">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold text-gray-900">Chat with Admin</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Chat with Admin</h1>
         <p className="text-sm text-gray-500 mt-1">Messages are answered by the support team</p>
       </div>
       <div className="flex-1 card flex flex-col overflow-hidden p-0">

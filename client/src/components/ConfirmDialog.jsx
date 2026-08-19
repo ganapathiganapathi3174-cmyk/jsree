@@ -34,7 +34,7 @@ export default function ConfirmDialog({
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="sm">
       <p className="text-slate-400 text-sm leading-relaxed mb-6">{message}</p>
-      <div className="flex items-center gap-3 justify-end">
+      <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-3 sm:justify-end">
         <button
           onClick={handleClose}
           disabled={loading}

@@ -88,7 +88,7 @@ export default function PaymentStatusPage() {
             </div>
             <span className="text-2xl font-bold tracking-tight text-gray-900">JSREE</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Account Activation</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Account Activation</h1>
           <p className="text-gray-500 mt-1">Track your registration payment status</p>
         </div>
 

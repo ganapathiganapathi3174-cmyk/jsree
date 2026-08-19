@@ -47,7 +47,7 @@ export default function SuspiciousActivity() {
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-warning-50 text-warning-600 flex items-center justify-center"><AlertTriangle className="h-5 w-5" /></div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Suspicious Activity</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Suspicious Activity</h1>
             <p className="text-sm text-gray-500 mt-0.5">Flags raised by the security system</p>
           </div>
         </div>
