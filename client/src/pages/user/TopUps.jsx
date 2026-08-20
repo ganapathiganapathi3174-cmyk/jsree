@@ -12,6 +12,7 @@ const PAY_AMOUNTS = [120, 500, 1000];
 
 export default function TopUps() {
   const [topups, setTopups] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('received');
   const [proofModal, setProofModal] = useState(null);
@@ -27,7 +28,7 @@ export default function TopUps() {
     setPayAmount(PAY_AMOUNTS.includes(current) ? current : 120);
   }, []);
 
-  const load = () => api.get('/topups').then(r => setTopups(r.data.data || [])).catch(() => toast.error('Failed to load top-ups')).finally(() => setLoading(false));
+  const load = () => api.get('/topups').then(r => { setTopups(r.data.data || []); setSummary(r.data.summary || null); }).catch(() => toast.error('Failed to load top-ups')).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
 
   const received = topups.filter(t => t.receiver_id === user.id);
@@ -52,17 +53,22 @@ export default function TopUps() {
 
   const handleTopupVerify = async (file) => {
     const targets = eligibleForProof;
-    if (targets.length === 0) {
-      toast.error('No pending top-up found. A pending top-up is required to attach the payment screenshot.');
-      return;
-    }
-    const targetId = payTarget || targets[0].id;
     setSubmitting(true);
     try {
-      const fd = new FormData();
-      fd.append('screenshot', file);
-      await api.post(`/topups/${targetId}/proof`, fd);
-      toast.success('Payment proof submitted!');
+      if (targets.length === 0) {
+        const fd = new FormData();
+        fd.append('screenshot', file);
+        fd.append('amount', payAmount);
+        if (summary?.sponsorId) fd.append('receiverId', summary.sponsorId);
+        const res = await api.post('/topups/direct', fd);
+        toast.success(res.data.message || 'Payment proof submitted!');
+      } else {
+        const targetId = payTarget || targets[0].id;
+        const fd = new FormData();
+        fd.append('screenshot', file);
+        await api.post(`/topups/${targetId}/proof`, fd);
+        toast.success('Payment proof submitted!');
+      }
       load();
     } catch (err) { toast.error(err.response?.data?.message || 'Failed to submit proof'); }
     finally { setSubmitting(false); }
@@ -82,6 +88,23 @@ export default function TopUps() {
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Top-Ups</h1>
         <p className="text-sm text-gray-500 mt-1">Send and receive top-ups between members</p>
       </div>
+
+      {summary && (
+        <div className={`card flex items-center justify-between gap-4 ${summary.mustTopup ? 'border-warning-300 bg-warning-50' : ''}`}>
+          <div>
+            <p className="text-sm text-gray-600">
+              Received top-ups: <span className="font-semibold text-gray-900">{summary.receivedCompletedCount}/{summary.receivedRequired}</span>
+              {summary.remaining > 0 && <span className="text-gray-500"> — {summary.remaining} more before you must top-up</span>}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {summary.sponsorName ? `Your sponsor: ${summary.sponsorName}` : 'Only completed top-ups count towards the total.'}
+            </p>
+          </div>
+          {summary.mustTopup && (
+            <span className="rounded-lg bg-warning-600 text-white px-3 py-1.5 text-xs font-bold whitespace-nowrap">Top-Up Required</span>
+          )}
+        </div>
+      )}
 
       <div className="card">
         <div className="flex items-center justify-between mb-3">
@@ -113,8 +136,8 @@ export default function TopUps() {
           onVerify={handleTopupVerify}
         />
         {eligibleForProof.length === 0 && (
-          <p className="mt-3 text-xs text-warning-700 bg-warning-50 border border-warning-200 rounded-lg px-3 py-2">
-            No pending top-up on your account yet. Make the payment above using the QR, and attach your screenshot once a pending top-up exists in the list below.
+          <p className="mt-3 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            Make the payment above using the QR, then upload your screenshot. It will be verified and recorded as a top-up to your sponsor — no prior request is needed.
           </p>
         )}
       </div>

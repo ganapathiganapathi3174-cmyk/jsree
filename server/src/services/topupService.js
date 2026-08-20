@@ -7,10 +7,11 @@ import { runScreenshotVerification, reserveApprovedUtr } from './verificationSer
 
 const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
 const SUBMITTABLE_STATUSES = ['created', 'payment_pending'];
+const PLAN_AMOUNTS = { 120: 120, 500: 500, 1000: 1000 };
+export const TOPUP_RECEIVED_REQUIRED = 2;
 
 export async function createTopup(senderId, receiverId, amount) {
-  const planAmounts = { 120: 120, 500: 500, 1000: 1000 };
-  if (!planAmounts[amount]) throw { message: 'Invalid amount', code: 'INVALID_AMOUNT' };
+  if (!PLAN_AMOUNTS[amount]) throw { message: 'Invalid amount', code: 'INVALID_AMOUNT' };
 
   const { data: existingTopup } = await supabase.from('topups').select('id')
     .eq('sender_id', senderId).eq('receiver_id', receiverId)
@@ -32,6 +33,65 @@ export async function submitTopupProof(topupId, file, userId) {
   if (topup.sender_id !== userId) throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
   if (!SUBMITTABLE_STATUSES.includes(topup.status)) throw { message: 'Topup is not in a submittable status', code: 'TOPUP_NOT_SUBMITTABLE' };
 
+  return uploadAndVerifyTopupProof(topup, file, userId);
+}
+
+// Direct sponsor top-up: the user can top-up their sponsor WITHOUT any
+// pre-existing sponsor-created request. The sender resolves their sponsor
+// (or uses an explicit receiverId), the top-up record is created on the fly
+// and the payment screenshot is verified immediately with the same OCR
+// engine used everywhere. No screenshot -> a 'created' record is returned so
+// proof can be attached later through the normal pending flow.
+//
+// The record guards stay untouched: only one submittable top-up can exist per
+// (sender, receiver) pair, approval credits the balance exactly once, and a
+// UTR that was already approved elsewhere still rejects (DUPLICATE_UTR).
+export async function createDirectTopup({ senderId, amount, receiverId, file }) {
+  if (!PLAN_AMOUNTS[amount]) throw { message: 'Invalid amount', code: 'INVALID_AMOUNT' };
+
+  let targetReceiverId = receiverId || null;
+  if (!targetReceiverId) {
+    const { data: sender } = await supabase.from('users').select('id, referred_by').eq('id', senderId).single();
+    if (!sender || !sender.referred_by) throw { message: 'No sponsor found to top-up', code: 'NO_SPONSOR' };
+    targetReceiverId = sender.referred_by;
+  }
+
+  const { data: receiver } = await supabase.from('users').select('id, full_name, status').eq('id', targetReceiverId).single();
+  if (!receiver) throw { message: 'Receiver not found', code: 'RECEIVER_NOT_FOUND' };
+  if (receiver.status === 'inactive' || receiver.status === 'deleted') throw { message: 'Receiver is not active', code: 'RECEIVER_INACTIVE' };
+
+  // Reuse an already-pending top-up to this receiver instead of blocking with
+  // TOPUP_EXISTS or creating a duplicate row. The user can therefore act the
+  // moment they pay — no sponsor-created request was ever needed.
+  const { data: existing } = await supabase.from('topups').select('*')
+    .eq('sender_id', senderId).eq('receiver_id', targetReceiverId)
+    .in('status', SUBMITTABLE_STATUSES).single();
+  const topup = existing || (await createTopup(senderId, targetReceiverId, amount));
+
+  if (!file) {
+    return { message: 'Top-up created. Upload a payment screenshot to complete verification.', topupId: topup.id, created: true, credited: false };
+  }
+  return uploadAndVerifyTopupProof(topup, file, senderId);
+}
+
+// Pure summary of the received-top-up rule. Only COMPLETED received top-ups
+// count; rejected / pending / manual-review / failed never do, and any sender
+// counts. At TOPUP_RECEIVED_REQUIRED completed received top-ups the user MUST
+// top-up (shown in the UI).
+export function computeTopupSummary(receivedTopups) {
+  const receivedCompletedCount = (receivedTopups || []).filter(t => t.status === 'completed').length;
+  return {
+    receivedCompletedCount,
+    receivedRequired: TOPUP_RECEIVED_REQUIRED,
+    remaining: Math.max(0, TOPUP_RECEIVED_REQUIRED - receivedCompletedCount),
+    mustTopup: receivedCompletedCount >= TOPUP_RECEIVED_REQUIRED,
+  };
+}
+
+// Shared OCR verification pipeline used by the pending-proof flow and the
+// direct sponsor top-up flow (identical behavior, no duplicated logic).
+async function uploadAndVerifyTopupProof(topup, file, userId) {
+  const topupId = topup.id;
   const filename = generateUniqueFilename(file.originalname);
   const filePath = `topups/${topupId}/${filename}`;
 
@@ -45,10 +105,10 @@ export async function submitTopupProof(topupId, file, userId) {
   if (saveError) throw { message: 'Failed to update topup', code: 'UPDATE_FAILED' };
 
   // Same OCR verification engine as registration payments.
-  // Final rule: approved = upiMatch && amountMatch && dateValid.
-  // UTR is NOT an input to that decision, but an extracted UTR that was
-  // already APPROVED elsewhere (payment or top-up) rejects with
-  // DUPLICATE_UTR (handled inside applyTopupVerification).
+  // Final rule: approved = upiMatch && dateValid (+ OCR confidence gate).
+  // Amount is NOT part of that decision. UTR is NOT an input either, but an
+  // extracted UTR that was already APPROVED elsewhere (payment or top-up)
+  // rejects with DUPLICATE_UTR (handled inside applyTopupVerification).
   let outcome;
   try {
     const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
