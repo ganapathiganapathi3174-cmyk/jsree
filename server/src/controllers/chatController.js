@@ -19,7 +19,8 @@ export async function getMessages(req, res) {
     const messages = await chatService.getMessages(req.params.conversationId, req.user.id, req.user.role);
     res.json({ success: true, data: messages });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || 'Failed to fetch messages', code: error.code || 'FETCH_FAILED' });
+    const s = error.code === 'UNAUTHORIZED' ? 403 : error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed to fetch messages', code: error.code || 'FETCH_FAILED' });
   }
 }
 
@@ -36,16 +37,18 @@ export async function sendMessage(req, res) {
     const msg = await chatService.sendMessage(conversationId, req.user.id, req.user.role, message);
     res.status(201).json({ success: true, data: msg });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || 'Failed to send message', code: error.code || 'SEND_FAILED' });
+    const s = error.code === 'UNAUTHORIZED' ? 403 : error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed to send message', code: error.code || 'SEND_FAILED' });
   }
 }
 
 export async function markAsRead(req, res) {
   try {
-    const result = await chatService.markAsRead(req.params.conversationId, req.user.id);
+    const result = await chatService.markAsRead(req.params.conversationId, req.user.id, req.user.role);
     res.json({ success: true, message: result.message });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || 'Failed to mark as read', code: error.code || 'MARK_READ_FAILED' });
+    const s = error.code === 'UNAUTHORIZED' ? 403 : error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed to mark as read', code: error.code || 'MARK_READ_FAILED' });
   }
 }
 

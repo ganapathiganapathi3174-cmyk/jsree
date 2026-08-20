@@ -64,8 +64,8 @@ export default function AdminChat() {
             <div className="p-4 text-center text-gray-500 text-sm">No conversations</div>
           ) : conversations.map(c => (
             <button key={c.id} onClick={() => openChat(c)} className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 flex items-center justify-between gap-2 transition-colors ${selectedConv?.id === c.id ? 'bg-primary-50' : ''}`}>
-              <span className="text-sm font-medium text-gray-900 truncate">{c.user_name || c.user_email || c.user_id?.slice(0,8)}</span>
-              {c.unread_count > 0 && <span className="bg-error-600 text-white text-[11px] rounded-full min-w-5 h-5 px-1.5 flex items-center justify-center font-semibold">{c.unread_count}</span>}
+              <span className="text-sm font-medium text-gray-900 truncate">{c.user?.full_name || c.user?.email || c.user_id?.slice(0,8)}</span>
+              {c.unreadCount > 0 && <span className="bg-error-600 text-white text-[11px] rounded-full min-w-5 h-5 px-1.5 flex items-center justify-center font-semibold">{c.unreadCount}</span>}
             </button>
           ))}
         </div>
@@ -78,7 +78,7 @@ export default function AdminChat() {
           ) : (
             <>
               <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-900 truncate">
-                {selectedConv.user_name || selectedConv.user_email}
+                {selectedConv.user?.full_name || selectedConv.user?.email}
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/40">
                 {messages.length === 0 && <p className="text-gray-400 text-center text-sm">No messages yet</p>}

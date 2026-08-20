@@ -40,6 +40,11 @@ export async function getMessages(conversationId, userId, userRole) {
 }
 
 export async function sendMessage(conversationId, senderId, senderRole, message) {
+  const { data: conversation } = await supabase.from('conversations').select('id, user_id').eq('id', conversationId).single();
+  if (!conversation) throw { message: 'Conversation not found', code: 'CONVERSATION_NOT_FOUND' };
+  // A user may only send inside their own conversation; admins can reply to any.
+  if (senderRole !== 'admin' && conversation.user_id !== senderId) throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
+
   const { data: msg, error } = await supabase.from('messages').insert({
     conversation_id: conversationId, sender_id: senderId, sender_role: senderRole, message: message.trim()
   }).select('*').single();
@@ -49,7 +54,12 @@ export async function sendMessage(conversationId, senderId, senderRole, message)
   return msg;
 }
 
-export async function markAsRead(conversationId, userId) {
+export async function markAsRead(conversationId, userId, userRole) {
+  const { data: conversation } = await supabase.from('conversations').select('id, user_id').eq('id', conversationId).single();
+  if (!conversation) throw { message: 'Conversation not found', code: 'CONVERSATION_NOT_FOUND' };
+  // Access control mirrors getMessages: only the owner may mark their own.
+  if (userRole !== 'admin' && conversation.user_id !== userId) throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
+
   const { error } = await supabase.from('messages')
     .update({ read_at: new Date().toISOString() })
     .eq('conversation_id', conversationId).neq('sender_id', userId).is('read_at', null);

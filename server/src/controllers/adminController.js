@@ -198,19 +198,21 @@ export async function getChats(req, res) {
 
 export async function getChatMessages(req, res) {
   try {
-    const messages = await chatService.getMessages(req.params.conversationId, req.user.id);
+    const messages = await chatService.getMessages(req.params.conversationId, req.user.id, req.user.role);
     res.json({ success: true, data: messages });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || 'Failed to fetch messages', code: error.code || 'FETCH_FAILED' });
+    const s = error.code === 'UNAUTHORIZED' ? 403 : error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed to fetch messages', code: error.code || 'FETCH_FAILED' });
   }
 }
 
 export async function markChatRead(req, res) {
   try {
-    const result = await chatService.markAsRead(req.params.conversationId, req.user.id);
+    const result = await chatService.markAsRead(req.params.conversationId, req.user.id, req.user.role);
     res.json({ success: true, message: result.message });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || 'Failed', code: error.code || 'MARK_READ_FAILED' });
+    const s = error.code === 'UNAUTHORIZED' ? 403 : error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed', code: error.code || 'MARK_READ_FAILED' });
   }
 }
 
@@ -221,7 +223,8 @@ export async function sendAdminMessage(req, res) {
     const msg = await chatService.sendMessage(conversation_id, req.user.id, 'admin', message);
     res.json({ success: true, data: msg });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || 'Failed to send', code: error.code || 'SEND_FAILED' });
+    const s = error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed to send', code: error.code || 'SEND_FAILED' });
   }
 }
 
