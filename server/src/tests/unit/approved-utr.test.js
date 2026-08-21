@@ -173,23 +173,24 @@ describe('B: payment UTR policy (applyPaymentUtrPolicy)', () => {
 describe('C: top-up flow (applyTopupVerification)', () => {
   const topup = { id: 'topup-1', sender_id: 'sender-1', amount: 120 };
 
-  it('C11: approved + NEW UTR -> completed + credited exactly once + UTR reserved', async () => {
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'completed' }], error: null });
+  it('C11: approved + NEW UTR -> pending_claim + sender credited exactly once + UTR reserved', async () => {
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'pending_claim' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     chains.approved_utrs = makeUtrsChain({ insertResult: { data: { utr: 'TOP123' }, error: null } });
 
     const result = await applyTopupVerification(topup, { decision: 'approved', reason: null, utr: 'TOP123' }, time);
 
     expect(result.credited).toBe(true);
+    expect(result.pendingClaim).toBe(true);
     expect(walletCredit).toHaveBeenCalledTimes(1);
-    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, expect.any(String), 'topup-1', 'topup');
+    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, 'Top-up payment verified', 'topup-1', 'topup_sender');
     expect(chains.approved_utrs.insert).toHaveBeenCalledWith({
       utr: 'TOP123', reference_type: 'topup', reference_id: 'topup-1',
     });
   });
 
   it('C12: UTR already approved for a PAYMENT (cross-flow) -> topup rejected DUPLICATE_UTR, NO credit', async () => {
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'completed' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'pending_claim' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     chains.approved_utrs = makeUtrsChain({ insertResult: { data: null, error: { code: '23505' } } });
 
@@ -199,14 +200,14 @@ describe('C: top-up flow (applyTopupVerification)', () => {
     expect(result.reason).toBe('DUPLICATE_UTR');
     expect(walletCredit).not.toHaveBeenCalled();
 
-    // Top-up was completed by the atomic transition, then rolled to rejected.
+    // Top-up was transitioned to pending_claim, then rolled to rejected.
     const rejectCalls = chains.topups.update.mock.calls.filter(([payload]) => payload.status === 'rejected');
     expect(rejectCalls.length).toBe(1);
     expect(rejectCalls[0][0].rejection_reason).toBe('DUPLICATE_UTR');
   });
 
   it('C13: same top-up double-submitted -> balance credited exactly once', async () => {
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'completed' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'pending_claim' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     chains.approved_utrs = makeUtrsChain({ insertResult: { data: { utr: 'DBL1' }, error: null } });
 
@@ -214,7 +215,7 @@ describe('C: top-up flow (applyTopupVerification)', () => {
     expect(first.credited).toBe(true);
     expect(walletCredit).toHaveBeenCalledTimes(1);
 
-    // Second submit: guarded transition returns 0 rows (already completed) ->
+    // Second submit: guarded transition returns 0 rows (already pending_claim) ->
     // alreadyProcessed, no credit, and no additional reservation attempt.
     chains.approved_utrs.insert.mockClear();
     chains.topups = makeTopupsChain({ data: [], error: null });
@@ -228,7 +229,7 @@ describe('C: top-up flow (applyTopupVerification)', () => {
   it('C14: same UTR used by a SECOND top-up -> second rejected DUPLICATE_UTR, no credit', async () => {
     const topup2 = { id: 'topup-2', sender_id: 'sender-2', amount: 120 };
 
-    chains.topups = makeTopupsChain({ data: [{ id: topup2.id, status: 'completed' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup2.id, status: 'pending_claim' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     chains.approved_utrs = makeUtrsChain({ insertResult: { data: null, error: { code: '23505' } } });
 

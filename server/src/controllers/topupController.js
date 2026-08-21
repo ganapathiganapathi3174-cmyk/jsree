@@ -7,7 +7,7 @@ export async function getTopups(req, res) {
     const topups = [...(result.sent || []), ...(result.received || [])];
     topups.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    const summary = topupService.computeTopupSummary(result.received || []);
+    const summary = await topupService.computeTopupSummary(result.received || [], req.user.id);
     const { data: me } = await supabase.from('users').select('referred_by').eq('id', req.user.id).single();
     let sponsorName = null;
     if (me?.referred_by) {
@@ -52,18 +52,17 @@ export async function submitProof(req, res) {
 
 export async function claimTopup(req, res) {
   try {
-    const { receiverId } = req.body;
-    const senderId = req.user.id;
-    if (!receiverId) return res.status(400).json({ success: false, message: 'Receiver ID is required', code: 'VALIDATION_ERROR' });
+    const { topupId } = req.body;
+    if (!topupId) return res.status(400).json({ success: false, message: 'Topup ID is required', code: 'VALIDATION_ERROR' });
 
-    const { data: receiver } = await supabase.from('users').select('id, full_name, status').eq('id', receiverId).single();
-    if (!receiver) return res.status(404).json({ success: false, message: 'Receiver not found', code: 'RECEIVER_NOT_FOUND' });
-
-    const { data: sender } = await supabase.from('users').select('current_plan').eq('id', senderId).single();
-    const topup = await topupService.createTopup(senderId, receiverId, sender?.current_plan || 120);
-    res.status(201).json({ success: true, data: topup });
+    const result = await topupService.claimTopupForReceiver(topupId, req.user.id);
+    res.json({ success: true, message: result.message, data: { topupId, credited: result.credited, alreadyClaimed: result.alreadyClaimed || false } });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || 'Failed to create topup', code: error.code || 'TOPUP_CREATE_FAILED' });
+    const status = error.code === 'TOPUP_NOT_FOUND' ? 404
+      : error.code === 'UNAUTHORIZED' ? 403
+      : error.code === 'NOT_CLAIMABLE' || error.code === 'OWN_TOPUP_REQUIRED' ? 400
+      : 500;
+    res.status(status).json({ success: false, message: error.message || 'Failed to claim topup', code: error.code || 'CLAIM_FAILED' });
   }
 }
 

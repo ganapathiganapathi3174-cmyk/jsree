@@ -81,8 +81,8 @@ function installHappyChains({ approvalSelect }) {
 // DIRECT TOP-UP (no pre-existing sponsor request required)
 // ─────────────────────────────────────────────────────────────
 describe('createDirectTopup', () => {
-  it('D1: user with NO pending request tops up sponsor -> record created + verified + credited once', async () => {
-    installHappyChains({ approvalSelect: { data: [{ id: 'topup-new-1', status: 'completed' }], error: null } });
+  it('D1: user with NO pending request tops up sponsor -> record created + verified + sender credited once', async () => {
+    installHappyChains({ approvalSelect: { data: [{ id: 'topup-new-1', status: 'pending_claim' }], error: null } });
     runScreenshotVerification.mockResolvedValue(APPROVED_VERIFICATION);
 
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
@@ -93,12 +93,12 @@ describe('createDirectTopup', () => {
       sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, status: 'created',
     }));
     expect(walletCredit).toHaveBeenCalledTimes(1);
-    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, expect.any(String), 'topup-new-1', 'topup');
+    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, expect.any(String), 'topup-new-1', 'topup_sender');
   });
 
   it('D2: a pending request already exists -> it is REUSED (no duplicate row, no TOPUP_EXISTS block)', async () => {
     chains.users = makeUsersChain([SENDER, RECEIVER]);
-    chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP], approvalSelect: { data: [{ id: 'pending-1', status: 'completed' }], error: null } });
+    chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP], approvalSelect: { data: [{ id: 'pending-1', status: 'pending_claim' }], error: null } });
     chains.wallet_transactions = makeWalletChain();
     chains.audit_logs = { insert: vi.fn().mockReturnValue({}) };
     runScreenshotVerification.mockResolvedValue(APPROVED_VERIFICATION);
@@ -107,7 +107,7 @@ describe('createDirectTopup', () => {
 
     expect(result.topupId).toBe('pending-1');
     expect(chains.topups.insert).not.toHaveBeenCalled();
-    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, expect.any(String), 'pending-1', 'topup');
+    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, expect.any(String), 'pending-1', 'topup_sender');
   });
 
   it('D3: no sponsor (no referred_by) -> NO_SPONSOR error', async () => {
@@ -150,7 +150,7 @@ describe('createDirectTopup', () => {
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, receiverId: 'sponsor-1', file: null });
 
     expect(result.topupId).toBe('pending-1');
-    expect(result.created).toBe(true); // no-file branch: record ready for proof later
+    expect(result.created).toBe(true);
     expect(chains.topups.insert).not.toHaveBeenCalled();
   });
 
@@ -173,41 +173,46 @@ describe('createDirectTopup', () => {
 describe('computeTopupSummary (received top-ups rule)', () => {
   const row = (over) => ({ id: `t-${Math.random().toString(36).slice(2, 8)}`, status: 'completed', amount: 120, sender_id: 's-x', ...over });
 
-  it('C1: 0 completed received top-ups -> no must-top-up', () => {
-    const s = computeTopupSummary([
+  it('C1: 0 completed received top-ups -> no must-top-up', async () => {
+    chains.users = makeUsersChain([{ data: { id: 'user-1', referred_by: null }, error: null }]);
+    const s = await computeTopupSummary([
       row({ status: 'created' }), row({ status: 'payment_pending' }),
       row({ status: 'rejected' }), row({ status: 'manual_review' }), row({ status: 'failed' }),
-    ]);
+    ], 'user-1');
     expect(s.receivedCompletedCount).toBe(0);
     expect(s.remaining).toBe(2);
     expect(s.mustTopup).toBe(false);
   });
 
-  it('C2: 1 completed -> no must-top-up yet, 1 remaining', () => {
-    const s = computeTopupSummary([row({ status: 'completed' }), row({ status: 'rejected' })]);
+  it('C2: 1 completed -> no must-top-up yet, 1 remaining', async () => {
+    chains.users = makeUsersChain([{ data: { id: 'user-1', referred_by: null }, error: null }]);
+    const s = await computeTopupSummary([row({ status: 'completed' }), row({ status: 'rejected' })], 'user-1');
     expect(s.receivedCompletedCount).toBe(1);
     expect(s.remaining).toBe(1);
     expect(s.mustTopup).toBe(false);
   });
 
-  it('C3: 2 completed from DIFFERENT senders -> must-top-up (reached 2)', () => {
-    const s = computeTopupSummary([row({ sender_id: 'a' }), row({ sender_id: 'b' })]);
+  it('C3: 2 completed from DIFFERENT senders -> must-top-up (reached 2)', async () => {
+    chains.users = makeUsersChain([{ data: { id: 'user-1', referred_by: null }, error: null }]);
+    const s = await computeTopupSummary([row({ sender_id: 'a' }), row({ sender_id: 'b' })], 'user-1');
     expect(s.receivedCompletedCount).toBe(2);
     expect(s.remaining).toBe(0);
     expect(s.mustTopup).toBe(true);
   });
 
-  it('C4: rejected/pending/failed never count (even with an amount present)', () => {
-    const s = computeTopupSummary([
+  it('C4: rejected/pending/failed never count (even with an amount present)', async () => {
+    chains.users = makeUsersChain([{ data: { id: 'user-1', referred_by: null }, error: null }]);
+    const s = await computeTopupSummary([
       row({ status: 'rejected', amount: 500 }), row({ status: 'pending', amount: 120 }),
       row({ status: 'failed', amount: 1000 }), row({ status: 'created', amount: null }),
-    ]);
+    ], 'user-1');
     expect(s.receivedCompletedCount).toBe(0);
     expect(s.mustTopup).toBe(false);
   });
 
-  it('C5: 3 completed received -> still must-top-up (>= 2)', () => {
-    const s = computeTopupSummary([row({ sender_id: 'a' }), row({ sender_id: 'b' }), row({ sender_id: 'c' })]);
+  it('C5: 3 completed received -> still must-top-up (>= 2)', async () => {
+    chains.users = makeUsersChain([{ data: { id: 'user-1', referred_by: null }, error: null }]);
+    const s = await computeTopupSummary([row({ sender_id: 'a' }), row({ sender_id: 'b' }), row({ sender_id: 'c' })], 'user-1');
     expect(s.mustTopup).toBe(true);
   });
 

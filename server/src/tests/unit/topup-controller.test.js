@@ -8,6 +8,7 @@ const service = vi.hoisted(() => ({
   getTopupsForUser: vi.fn(),
   computeTopupSummary: vi.fn(),
   createDirectTopup: vi.fn(),
+  claimTopupForReceiver: vi.fn(),
 }));
 vi.mock('../../services/topupService.js', () => service);
 
@@ -73,7 +74,7 @@ describe('topupController.getTopups (summary)', () => {
   it('computes summary, resolves sponsor, and returns it', async () => {
     const received = [{ id: 't1', status: 'completed', receiver_id: 'u1' }];
     service.getTopupsForUser.mockResolvedValue({ sent: [{ id: 't9' }], received });
-    service.computeTopupSummary.mockReturnValue({ receivedCompletedCount: 1, receivedRequired: 2, remaining: 1, mustTopup: false });
+    service.computeTopupSummary.mockResolvedValue({ receivedCompletedCount: 1, receivedRequired: 2, remaining: 1, mustTopup: false, canClaim: true, receivedPendingCount: 0, receivedClaimableCount: 0 });
 
     const usersChain = mockUsersChain([
       { data: { referred_by: 'sp-1' }, error: null },
@@ -87,7 +88,7 @@ describe('topupController.getTopups (summary)', () => {
     await topupController.getTopups(req, res);
 
     expect(service.getTopupsForUser).toHaveBeenCalledWith('u1');
-    expect(service.computeTopupSummary).toHaveBeenCalledWith(received);
+    expect(service.computeTopupSummary).toHaveBeenCalledWith(received, 'u1');
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       success: true,
       summary: expect.objectContaining({ mustTopup: false, sponsorId: 'sp-1', sponsorName: 'Sponsor Name' }),
@@ -97,7 +98,7 @@ describe('topupController.getTopups (summary)', () => {
   it('returns null sponsor data when the user has no sponsor', async () => {
     const received = [];
     service.getTopupsForUser.mockResolvedValue({ sent: [], received });
-    service.computeTopupSummary.mockReturnValue({ receivedCompletedCount: 0, receivedRequired: 2, remaining: 2, mustTopup: false });
+    service.computeTopupSummary.mockResolvedValue({ receivedCompletedCount: 0, receivedRequired: 2, remaining: 2, mustTopup: false, canClaim: false, receivedPendingCount: 0, receivedClaimableCount: 0 });
 
     const usersChain = mockUsersChain([
       { data: { referred_by: null }, error: null },
@@ -112,5 +113,66 @@ describe('topupController.getTopups (summary)', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       summary: expect.objectContaining({ sponsorId: null, sponsorName: null }),
     }));
+  });
+});
+
+describe('topupController.claimTopup', () => {
+  it('claims a pending top-up successfully', async () => {
+    service.claimTopupForReceiver.mockResolvedValue({ message: 'Topup claimed and credited', credited: true, alreadyClaimed: false });
+
+    const req = { user: { id: 'u1' }, body: { topupId: 't1' } };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await topupController.claimTopup(req, res);
+
+    expect(service.claimTopupForReceiver).toHaveBeenCalledWith('t1', 'u1');
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({ topupId: 't1', credited: true, alreadyClaimed: false }),
+    }));
+  });
+
+  it('returns 400 when topupId missing', async () => {
+    const req = { user: { id: 'u1' }, body: {} };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await topupController.claimTopup(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: 'VALIDATION_ERROR' }));
+  });
+
+  it('maps OWN_TOPUP_REQUIRED to 400', async () => {
+    service.claimTopupForReceiver.mockRejectedValue({ message: 'Complete your required top-up to claim this payment', code: 'OWN_TOPUP_REQUIRED' });
+
+    const req = { user: { id: 'u1' }, body: { topupId: 't1' } };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await topupController.claimTopup(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'OWN_TOPUP_REQUIRED' }));
+  });
+
+  it('maps TOPUP_NOT_FOUND to 404', async () => {
+    service.claimTopupForReceiver.mockRejectedValue({ message: 'Topup not found', code: 'TOPUP_NOT_FOUND' });
+
+    const req = { user: { id: 'u1' }, body: { topupId: 't1' } };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await topupController.claimTopup(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it('maps UNAUTHORIZED to 403', async () => {
+    service.claimTopupForReceiver.mockRejectedValue({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
+
+    const req = { user: { id: 'u1' }, body: { topupId: 't1' } };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await topupController.claimTopup(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 });
