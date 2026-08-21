@@ -10,9 +10,9 @@ const SUBMITTABLE_STATUSES = ['created', 'payment_pending'];
 const PLAN_AMOUNTS = { 120: 120, 500: 500, 1000: 1000 };
 export const TOPUP_RECEIVED_REQUIRED = 2;
 
-// Two-phase claim statuses: sender payment verified → pending_claim → claimed by sponsor → completed.
+// Two-phase claim statuses: sender payment verified → approved → claimed by sponsor → completed.
 // Wallet is only credited at claim time, NOT at payment verification.
-const PENDING_CLAIM_STATUS = 'pending_claim';
+const APPROVED_STATUS = 'approved';
 
 export async function createTopup(senderId, receiverId, amount) {
   if (!PLAN_AMOUNTS[amount]) throw { message: 'Invalid amount', code: 'INVALID_AMOUNT' };
@@ -91,10 +91,10 @@ export async function checkHasCompletedOwnTopup(userId) {
 }
 
 // Claim a pending received top-up. Two-phase claim:
-//   1. Sender payment verified → pending_claim (wallet not credited yet)
+//   1. Sender payment verified → approved (wallet not credited yet)
 //   2. Sponsor completes own top-up → eligible to claim → wallet credited here
 //
-// Atomic: the WHERE status = 'pending_claim' update is the idempotency guard.
+// Atomic: the WHERE status = 'approved' update is the idempotency guard.
 // Concurrent claim attempts get 0 rows updated and no second wallet credit.
 export async function claimTopupForReceiver(topupId, userId) {
   const { data: topup, error: fetchError } = await supabase.from('topups').select('*').eq('id', topupId).single();
@@ -106,7 +106,7 @@ export async function claimTopupForReceiver(topupId, userId) {
     return { message: 'Topup already claimed', credited: false, alreadyClaimed: true };
   }
 
-  if (topup.status !== PENDING_CLAIM_STATUS) {
+  if (topup.status !== APPROVED_STATUS) {
     throw { message: 'Topup is not in a claimable status', code: 'NOT_CLAIMABLE' };
   }
 
@@ -116,13 +116,13 @@ export async function claimTopupForReceiver(topupId, userId) {
     throw { message: 'Complete your required top-up to claim this payment', code: 'OWN_TOPUP_REQUIRED' };
   }
 
-  // Atomic transition: pending_claim → completed. Only the winner of any
+  // Atomic transition: approved → completed. Only the winner of any
   // concurrent race proceeds to credit the wallet.
   const { data: updated, error } = await supabase
     .from('topups')
     .update({ status: 'completed', completed_at: new Date().toISOString() })
     .eq('id', topupId)
-    .eq('status', PENDING_CLAIM_STATUS)
+    .eq('status', APPROVED_STATUS)
     .select('id, status');
   if (error) throw { message: 'Failed to claim topup', code: 'CLAIM_FAILED' };
 
@@ -143,12 +143,12 @@ export async function claimTopupForReceiver(topupId, userId) {
 
 // Pure summary of the received-top-up rule. Counts:
 //   - receivedCompletedCount: completed (claimed) received top-ups
-//   - receivedPendingCount: pending_claim received top-ups (awaiting sponsor's own top-up)
-//   - receivedClaimableCount: pending_claim top-ups where sponsor already completed own top-up
+//   - receivedPendingCount: approved received top-ups (awaiting sponsor's own top-up)
+//   - receivedClaimableCount: approved top-ups where sponsor already completed own top-up
 // At TOPUP_RECEIVED_REQUIRED completed received top-ups the user MUST top-up (shown in the UI).
 export async function computeTopupSummary(receivedTopups, userId) {
   const completedCount = (receivedTopups || []).filter(t => t.status === 'completed').length;
-  const pendingClaimCount = (receivedTopups || []).filter(t => t.status === PENDING_CLAIM_STATUS).length;
+  const pendingClaimCount = (receivedTopups || []).filter(t => t.status === APPROVED_STATUS).length;
 
   // Check if user has completed their own required top-up (determines claim eligibility).
   let canClaim = false;
@@ -156,7 +156,7 @@ export async function computeTopupSummary(receivedTopups, userId) {
   if (userId) {
     canClaim = await checkHasCompletedOwnTopup(userId);
     if (canClaim) {
-      claimableCount = pendingClaimCount; // all pending_claim are claimable if own top-up done
+      claimableCount = pendingClaimCount; // all approved are claimable if own top-up done
     }
   }
 
@@ -268,13 +268,13 @@ export async function applyTopupVerification(topup, verificationResult, verifica
   }
 
   if (decision === 'approved') {
-    // TWO-PHASE CLAIM: approved payment → pending_claim (NOT completed).
+    // TWO-PHASE CLAIM: approved payment → approved (NOT completed).
     // Wallet is NOT credited here — sponsor must claim after completing
     // their own required top-up before the balance is credited.
     const { data: updated, error } = await supabase
       .from('topups')
       .update({
-        status: PENDING_CLAIM_STATUS,
+        status: APPROVED_STATUS,
         verified_at: verificationTime.toISOString(),
         verification_result: verificationResult,
       })
@@ -306,7 +306,7 @@ export async function applyTopupVerification(topup, verificationResult, verifica
             verification_result: verificationResult,
           })
           .eq('id', topup.id)
-          .eq('status', PENDING_CLAIM_STATUS);
+          .eq('status', APPROVED_STATUS);
         return { credited: false, alreadyProcessed: false, reason: 'DUPLICATE_UTR' };
       }
     }

@@ -82,7 +82,7 @@ function installHappyChains({ approvalSelect }) {
 // ─────────────────────────────────────────────────────────────
 describe('createDirectTopup', () => {
   it('D1: user with NO pending request tops up sponsor -> record created + verified + sender credited once', async () => {
-    installHappyChains({ approvalSelect: { data: [{ id: 'topup-new-1', status: 'pending_claim' }], error: null } });
+    installHappyChains({ approvalSelect: { data: [{ id: 'topup-new-1', status: 'approved' }], error: null } });
     runScreenshotVerification.mockResolvedValue(APPROVED_VERIFICATION);
 
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
@@ -98,7 +98,7 @@ describe('createDirectTopup', () => {
 
   it('D2: a pending request already exists -> it is REUSED (no duplicate row, no TOPUP_EXISTS block)', async () => {
     chains.users = makeUsersChain([SENDER, RECEIVER]);
-    chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP], approvalSelect: { data: [{ id: 'pending-1', status: 'pending_claim' }], error: null } });
+    chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP], approvalSelect: { data: [{ id: 'pending-1', status: 'approved' }], error: null } });
     chains.wallet_transactions = makeWalletChain();
     chains.audit_logs = { insert: vi.fn().mockReturnValue({}) };
     runScreenshotVerification.mockResolvedValue(APPROVED_VERIFICATION);

@@ -27,7 +27,7 @@ beforeEach(() => {
 
 const PENDING = {
   id: 'topup-1', sender_id: 'sender-a', receiver_id: 'sponsor-b',
-  amount: 120, status: 'pending_claim', created_at: '2026-08-20T10:00:00.000Z',
+  amount: 120, status: 'approved', created_at: '2026-08-20T10:00:00.000Z',
 };
 const COMPLETED = { ...PENDING, status: 'completed', completed_at: '2026-08-20T11:00:00.000Z' };
 const UPDATED_ROW = { data: [{ id: 'topup-1', status: 'completed' }], error: null };
@@ -188,7 +188,7 @@ describe('checkHasCompletedOwnTopup', () => {
 // COMPUTE TOPUP SUMMARY (two-phase)
 // ─────────────────────────────────────────────────────────────
 describe('computeTopupSummary (two-phase)', () => {
-  const pending = (over) => ({ id: `p-${Math.random().toString(36).slice(2,6)}`, status: 'pending_claim', amount: 120, sender_id: 's-x', ...over });
+  const pending = (over) => ({ id: `p-${Math.random().toString(36).slice(2,6)}`, status: 'approved', amount: 120, sender_id: 's-x', ...over });
   const completed = (over) => ({ id: `c-${Math.random().toString(36).slice(2,6)}`, status: 'completed', amount: 120, sender_id: 's-x', ...over });
 
   it('S1: pending + completed -> counts separately', async () => {

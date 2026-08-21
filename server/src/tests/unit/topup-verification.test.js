@@ -97,8 +97,8 @@ describe('Top-up verification decision engine', () => {
 // via top-up record status (NOT UTR).
 // ─────────────────────────────────────────────────────────────
 describe('Top-up balance credit', () => {
-  it('approved -> status pending_claim + sender wallet credited exactly once', async () => {
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'pending_claim' }], error: null });
+  it('approved -> status approved + sender wallet credited exactly once', async () => {
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'approved' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
 
     const result = await applyTopupVerification(topup, approved, time);
@@ -111,7 +111,7 @@ describe('Top-up balance credit', () => {
 
     // The guarded update used the atomic WHERE status IN (...) transition.
     const updateCall = chains.topups.update.mock.calls[0];
-    expect(updateCall[0].status).toBe('pending_claim');
+    expect(updateCall[0].status).toBe('approved');
   });
 
   it('rejected decision (e.g. UPI_MISMATCH) -> status rejected, no credit', async () => {
@@ -147,7 +147,7 @@ describe('Top-up balance credit', () => {
 
   it('same top-up record cannot credit balance twice (status already transitioned)', async () => {
     // First submission: transition succeeds, no prior credit -> credits sender.
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'pending_claim' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'approved' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     const first = await applyTopupVerification(topup, approved, time);
     expect(first.credited).toBe(true);
@@ -155,7 +155,7 @@ describe('Top-up balance credit', () => {
     expect(walletCredit).toHaveBeenCalledTimes(1);
 
     // Second submission (concurrent/retry): guarded UPDATE returns 0 rows
-    // because the record is already 'pending_claim' -> no credit.
+    // because the record is already 'approved' -> no credit.
     chains.topups = makeTopupsChain({ data: [], error: null });
     const second = await applyTopupVerification(topup, approved, time);
     expect(second.alreadyProcessed).toBe(true);
@@ -166,7 +166,7 @@ describe('Top-up balance credit', () => {
   it('defense in depth: existing wallet_transaction for the top-up blocks a second credit', async () => {
     // Transition succeeds but a wallet_transaction with reference_id=topup.id
     // already exists (e.g. from a previous partial run) -> no credit.
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'pending_claim' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'approved' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [{ id: 'wallet-txn-1' }], error: null });
 
     const result = await applyTopupVerification(topup, approved, time);
