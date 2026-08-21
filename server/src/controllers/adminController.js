@@ -4,6 +4,7 @@ import * as planService from '../services/planService.js';
 import * as chatService from '../services/chatService.js';
 import { supabase } from '../db/supabase.js';
 import { logAction } from '../services/auditService.js';
+import { hashPassword } from '../utils/helpers.js';
 
 export async function getDashboard(req, res) {
   try {
@@ -225,6 +226,33 @@ export async function sendAdminMessage(req, res) {
   } catch (error) {
     const s = error.code === 'CONVERSATION_NOT_FOUND' ? 404 : 500;
     res.status(s).json({ success: false, message: error.message || 'Failed to send', code: error.code || 'SEND_FAILED' });
+  }
+}
+
+export async function resetUserPassword(req, res) {
+  try {
+    const { userId } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters', code: 'INVALID_PASSWORD' });
+    }
+
+    const { data: user, error: fetchError } = await supabase.from('users').select('id, role').eq('id', userId).single();
+    if (fetchError || !user) return res.status(404).json({ success: false, message: 'User not found', code: 'USER_NOT_FOUND' });
+
+    if (user.role === 'admin' && userId !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Cannot reset another admin password', code: 'FORBIDDEN' });
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    const { error } = await supabase.from('users').update({ password_hash: passwordHash }).eq('id', userId);
+    if (error) throw { message: 'Failed to reset password', code: 'UPDATE_FAILED' };
+
+    await logAction(req.user.id, 'admin', 'reset_user_password', userId, 'user', {});
+    res.json({ success: true, message: 'Password reset successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to reset password', code: error.code || 'RESET_FAILED' });
   }
 }
 

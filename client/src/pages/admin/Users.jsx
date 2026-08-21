@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Eye, UserCheck, UserX, Trash2 } from 'lucide-react';
+import { Search, Eye, UserCheck, UserX, Trash2, Key } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import { PLAN_MAP } from '../../utils/constants';
@@ -18,6 +18,10 @@ export default function AdminUsers() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pendingPlanChanges, setPendingPlanChanges] = useState({});
+  const [resetPwUser, setResetPwUser] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   const load = (p = 1) => {
     setLoading(true);
@@ -48,6 +52,18 @@ export default function AdminUsers() {
       }
       setConfirmAction(null); setDetailUser(null); load(page);
     } catch (err) { toast.error(err.response?.data?.message || 'Action failed'); }
+  };
+
+  const handleResetPassword = async () => {
+    if (!newPassword || newPassword.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+    if (newPassword !== confirmPassword) { toast.error('Passwords do not match'); return; }
+    setResetting(true);
+    try {
+      await api.patch(`/admin/users/${resetPwUser.id}/password`, { newPassword });
+      toast.success('Password reset successfully');
+      setResetPwUser(null); setNewPassword(''); setConfirmPassword('');
+    } catch (err) { toast.error(err.response?.data?.message || 'Failed to reset password'); }
+    finally { setResetting(false); }
   };
 
   const confirmTitle = confirmAction?.action === 'delete'
@@ -131,7 +147,7 @@ export default function AdminUsers() {
       )}
 
       <Modal isOpen={!!detailUser} onClose={() => setDetailUser(null)} title="User Details">
-        {detailUser && (
+        {detailUser && (<>
           <dl className="space-y-3 text-sm">
             {[
               ['Name', detailUser.full_name],
@@ -159,7 +175,35 @@ export default function AdminUsers() {
               </div>
             )}
           </dl>
-        )}
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <button onClick={() => { setResetPwUser(detailUser); setNewPassword(''); setConfirmPassword(''); }} className="btn-secondary w-full flex items-center justify-center gap-2">
+              <Key className="h-4 w-4" /> Reset Password
+            </button>
+          </div>
+        </>)}
+      </Modal>
+
+      <Modal isOpen={!!resetPwUser} onClose={() => setResetPwUser(null)} title="Reset User Password">
+        <div className="space-y-4">
+          <div className="bg-gray-50 rounded-lg p-3 text-sm">
+            <p className="text-gray-900 font-medium">{resetPwUser?.full_name}</p>
+            <p className="text-gray-500">{resetPwUser?.email}</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+            <input type="password" className="input-field" placeholder="Minimum 6 characters" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+            <input type="password" className="input-field" placeholder="Re-enter new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleResetPassword()} />
+          </div>
+          {newPassword && confirmPassword && newPassword !== confirmPassword && (
+            <p className="text-xs text-error-600">Passwords do not match</p>
+          )}
+          <button onClick={handleResetPassword} disabled={resetting || !newPassword || newPassword.length < 6 || newPassword !== confirmPassword} className="btn-primary w-full">
+            {resetting ? 'Resetting...' : 'Reset Password'}
+          </button>
+        </div>
       </Modal>
 
       <ConfirmDialog

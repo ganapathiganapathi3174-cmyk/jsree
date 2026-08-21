@@ -14,6 +14,7 @@ router.get('/dashboard', adminController.getDashboard);
 router.get('/users', adminController.getUsers);
 router.get('/users/:userId', adminController.getUserDetails);
 router.put('/users/:userId/status', adminController.updateUserStatus);
+router.patch('/users/:userId/password', adminController.resetUserPassword);
 router.delete('/users/:userId', adminController.deleteUser);
 
 router.get('/payments', adminController.getPayments);
