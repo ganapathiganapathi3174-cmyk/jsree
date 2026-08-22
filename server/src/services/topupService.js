@@ -17,6 +17,14 @@ const APPROVED_STATUS = 'approved';
 export async function createTopup(senderId, receiverId, amount) {
   if (!PLAN_AMOUNTS[amount]) throw { message: 'Invalid amount', code: 'INVALID_AMOUNT' };
 
+  // Enforce: top-up amount must match the sender's current active plan.
+  const { data: sender } = await supabase.from('users').select('current_plan').eq('id', senderId).single();
+  if (!sender) throw { message: 'Sender not found', code: 'SENDER_NOT_FOUND' };
+  const senderPlan = Number(sender.current_plan);
+  if (senderPlan && Number(amount) !== senderPlan) {
+    throw { message: 'Top-up amount must match your current plan', code: 'INVALID_AMOUNT' };
+  }
+
   const { data: existingTopup } = await supabase.from('topups').select('id')
     .eq('sender_id', senderId).eq('receiver_id', receiverId)
     .in('status', ['created', 'payment_pending', 'proof_submitted', 'verification_pending']).single();
@@ -53,10 +61,17 @@ export async function submitTopupProof(topupId, file, userId) {
 export async function createDirectTopup({ senderId, amount, receiverId, file }) {
   if (!PLAN_AMOUNTS[amount]) throw { message: 'Invalid amount', code: 'INVALID_AMOUNT' };
 
+  // Enforce: top-up amount must match the sender's current active plan.
+  const { data: sender } = await supabase.from('users').select('id, referred_by, current_plan').eq('id', senderId).single();
+  if (!sender) throw { message: 'Sender not found', code: 'SENDER_NOT_FOUND' };
+  const senderPlan = Number(sender.current_plan);
+  if (senderPlan && Number(amount) !== senderPlan) {
+    throw { message: 'Top-up amount must match your current plan', code: 'INVALID_AMOUNT' };
+  }
+
   let targetReceiverId = receiverId || null;
   if (!targetReceiverId) {
-    const { data: sender } = await supabase.from('users').select('id, referred_by').eq('id', senderId).single();
-    if (!sender || !sender.referred_by) throw { message: 'No sponsor found to top-up', code: 'NO_SPONSOR' };
+    if (!sender.referred_by) throw { message: 'No sponsor found to top-up', code: 'NO_SPONSOR' };
     targetReceiverId = sender.referred_by;
   }
 

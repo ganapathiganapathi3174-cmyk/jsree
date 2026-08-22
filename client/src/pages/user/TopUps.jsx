@@ -24,9 +24,11 @@ export default function TopUps() {
   const [payTarget, setPayTarget] = useState(null);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
 
+  const userPlan = Number(user.current_plan);
+  const planAmounts = PAY_AMOUNTS.includes(userPlan) ? [userPlan] : PAY_AMOUNTS;
+
   useEffect(() => {
-    const current = Number(user.current_plan);
-    setPayAmount(PAY_AMOUNTS.includes(current) ? current : 120);
+    setPayAmount(PAY_AMOUNTS.includes(userPlan) ? userPlan : 120);
   }, []);
 
   const load = () => api.get('/topups').then(r => { setTopups(r.data.data || []); setSummary(r.data.summary || null); }).catch(() => toast.error('Failed to load top-ups')).finally(() => setLoading(false));
@@ -153,6 +155,7 @@ export default function TopUps() {
         <QRPaymentSection
           amount={payAmount}
           onAmountChange={(amt) => { setPayAmount(amt); if (eligibleForProof.length > 0 && !payTarget) setPayTarget(eligibleForProof[0].id); }}
+          amountOptions={planAmounts}
           verifyLabel="Verify Payment"
           verifySubmitting={submitting}
           onVerify={handleTopupVerify}
