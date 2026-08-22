@@ -19,7 +19,6 @@ import exportRoutes from './routes/export.js';
 import receiptRoutes from './routes/receipts.js';
 import securityRoutes from './routes/security.js';
 import { cacheStats } from './middleware/cache.js';
-import { ensureTopupApprovedStatus } from './db/migration.js';
 
 dotenv.config();
 
@@ -84,9 +83,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  await ensureTopupApprovedStatus();
 });
 
 export default app;
