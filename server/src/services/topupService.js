@@ -296,7 +296,7 @@ export async function applyTopupVerification(topup, verificationResult, verifica
       .eq('id', topup.id)
       .in('status', SUBMITTABLE_STATUSES)
       .select('id, status');
-    if (error) throw { message: 'Failed to complete topup', code: 'COMPLETE_FAILED' };
+    if (error) throw { message: error.message || 'Failed to complete topup', code: 'COMPLETE_FAILED', detail: error.details || error.hint || null };
 
     if (!updated || updated.length === 0) {
       // Already transitioned by another request — do NOT double-process.
