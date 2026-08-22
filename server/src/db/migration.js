@@ -17,6 +17,7 @@ export async function ensureTopupApprovedStatus() {
   const client = new pg.Client({
     connectionString: databaseUrl,
     ssl: { rejectUnauthorized: false },
+    family: 4,
   });
 
   try {
