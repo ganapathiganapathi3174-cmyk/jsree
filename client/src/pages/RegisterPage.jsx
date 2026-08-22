@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { User, Mail, Phone, Lock, ArrowRight, ArrowLeft, CreditCard, CheckCircle, Shield } from 'lucide-react';
+import { User, Mail, Phone, ArrowRight, ArrowLeft, CreditCard, CheckCircle, Shield } from 'lucide-react';
+import PasswordInput from '../components/PasswordInput';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
 import { PLANS, ADMIN_UPI } from '../utils/constants';
@@ -135,11 +136,11 @@ export default function RegisterPage() {
               </div>
               <div>
                 <label className="label">Password</label>
-                <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" type="password" placeholder="Min 6 characters" value={form.password} onChange={e => set('password', e.target.value)} /></div>
+                <PasswordInput placeholder="Min 6 characters" value={form.password} onChange={e => set('password', e.target.value)} />
               </div>
               <div>
                 <label className="label">Confirm Password</label>
-                <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" type="password" placeholder="Re-enter password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)} /></div>
+                <PasswordInput placeholder="Re-enter password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)} />
               </div>
               <div>
                 <label className="label">Referral Code (optional)</label>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, Shield, ArrowLeft } from 'lucide-react';
+import { Mail, Shield, ArrowLeft } from 'lucide-react';
+import PasswordInput from '../components/PasswordInput';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
 
@@ -41,7 +42,7 @@ export default function AdminLoginPage() {
             </div>
             <div>
               <label className="label">Password</label>
-              <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" type="password" placeholder="Admin password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
+              <PasswordInput placeholder="Admin password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
             </div>
             <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Signing in...' : 'Admin Sign In'}</button>
           </form>

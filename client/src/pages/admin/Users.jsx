@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Search, Eye, UserCheck, UserX, Trash2, Key } from 'lucide-react';
+import PasswordInput from '../../components/PasswordInput';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import { PLAN_MAP } from '../../utils/constants';
@@ -14,6 +15,7 @@ export default function AdminUsers() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [detailUser, setDetailUser] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -37,6 +39,16 @@ export default function AdminUsers() {
     }).catch(() => {});
   };
   useEffect(() => { load(); }, []);
+
+  const openUserDetail = async (u) => {
+    setDetailUser(u);
+    setDetailLoading(true);
+    try {
+      const { data } = await api.get(`/admin/users/${u.id}`);
+      setDetailUser(data.data);
+    } catch (err) { /* keep basic data */ }
+    setDetailLoading(false);
+  };
 
   const handleAction = async (action, userId) => {
     try {
@@ -101,22 +113,28 @@ export default function AdminUsers() {
         <>
           <div className="table-shell overflow-x-auto">
             <table className="w-full text-sm min-w-[680px]">
-              <thead className="bg-gray-50/60"><tr>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">User</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Email</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Plan</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Referrals</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Plan Change</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
+              <thead className="bg-slate-800/50"><tr>
+                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">User</th>
+                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Email</th>
+                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Plan</th>
+                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Referrals</th>
+                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Status</th>
+                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Plan Change</th>
+                <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Actions</th>
               </tr></thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-slate-500/10">
                 {users.map(u => (
-                  <tr key={u.id} className="hover:bg-gray-50/60 transition-colors">
-                    <td className="px-4 py-3"><p className="font-medium text-gray-900">{u.full_name}</p><p className="text-xs text-gray-500 font-mono">{u.id?.slice(0,8)}</p></td>
-                    <td className="px-4 py-3 text-gray-600">{u.email}</td>
+                  <tr key={u.id} className="hover:bg-primary-500/10 transition-colors">
+                    <td className="px-4 py-3"><p className="font-medium text-slate-100">{u.full_name}</p><p className="text-xs text-slate-500 font-mono">{u.id?.slice(0,8)}</p></td>
+                    <td className="px-4 py-3 text-slate-400">{u.email}</td>
                     <td className="px-4 py-3">{PLAN_MAP[u.current_plan]?.label || '-'}</td>
-                    <td className="px-4 py-3">{u.referral_count || 0}</td>
+                    <td className="px-4 py-3">
+                      {u.referral_count > 0 ? (
+                        <button onClick={() => openUserDetail(u)} className="font-semibold text-primary-400 hover:text-primary-300 hover:underline cursor-pointer transition-colors">{u.referral_count}</button>
+                      ) : (
+                        <span className="text-gray-400">0</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
                     <td className="px-4 py-3">
                       {pendingPlanChanges[u.id]
@@ -125,10 +143,10 @@ export default function AdminUsers() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
-                        <button onClick={() => setDetailUser(u)} className="w-10 h-10 hover:bg-gray-100 rounded-xl border border-gray-200 text-gray-500 hover:text-primary-400 flex items-center justify-center" title="View details"><Eye className="h-4 w-4" /></button>
-                        {u.status !== 'active' && <button onClick={() => setConfirmAction({ action: 'activate', id: u.id, label: 'activate this user' })} className="w-10 h-10 hover:bg-success-50 rounded-xl border border-gray-200 text-success-500 flex items-center justify-center" title="Activate user"><UserCheck className="h-4 w-4" /></button>}
-                        {u.status === 'active' && <button onClick={() => setConfirmAction({ action: 'deactivate', id: u.id, label: 'deactivate this user' })} className="w-10 h-10 hover:bg-warning-50 rounded-xl border border-gray-200 text-warning-500 flex items-center justify-center" title="Deactivate user"><UserX className="h-4 w-4" /></button>}
-                        <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="w-10 h-10 hover:bg-error-50 rounded-xl border border-gray-200 text-error-500 flex items-center justify-center" title="Permanently delete this user and all their data"><Trash2 className="h-4 w-4" /></button>
+                        <button onClick={() => openUserDetail(u)} className="w-10 h-10 hover:bg-primary-500/15 rounded-xl border border-slate-500/20 text-slate-400 hover:text-primary-400 flex items-center justify-center" title="View details"><Eye className="h-4 w-4" /></button>
+                        {u.status !== 'active' && <button onClick={() => setConfirmAction({ action: 'activate', id: u.id, label: 'activate this user' })} className="w-10 h-10 hover:bg-success-500/15 rounded-xl border border-slate-500/20 text-success-400 flex items-center justify-center" title="Activate user"><UserCheck className="h-4 w-4" /></button>}
+                        {u.status === 'active' && <button onClick={() => setConfirmAction({ action: 'deactivate', id: u.id, label: 'deactivate this user' })} className="w-10 h-10 hover:bg-warning-500/15 rounded-xl border border-slate-500/20 text-warning-400 flex items-center justify-center" title="Deactivate user"><UserX className="h-4 w-4" /></button>}
+                        <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="w-10 h-10 hover:bg-error-500/15 rounded-xl border border-slate-500/20 text-error-400 flex items-center justify-center" title="Permanently delete this user and all their data"><Trash2 className="h-4 w-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -148,6 +166,7 @@ export default function AdminUsers() {
 
       <Modal isOpen={!!detailUser} onClose={() => setDetailUser(null)} title="User Details">
         {detailUser && (<>
+          {detailLoading && <p className="text-sm text-gray-400 mb-3">Loading full details...</p>}
           <dl className="space-y-3 text-sm">
             {[
               ['Name', detailUser.full_name],
@@ -156,7 +175,6 @@ export default function AdminUsers() {
               ['ID', detailUser.id],
               ['Plan', PLAN_MAP[detailUser.current_plan]?.label || '-'],
               ['Referral Code', detailUser.referral_code],
-              ['Referrals', detailUser.referral_count || 0],
               ['Joined', new Date(detailUser.created_at).toLocaleString()],
             ].map(([k, v]) => (
               <div key={k} className="flex items-start justify-between gap-4 border-b border-gray-100 pb-2 last:border-0">
@@ -175,6 +193,37 @@ export default function AdminUsers() {
               </div>
             )}
           </dl>
+
+          <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-1">Referred By</p>
+              {detailUser.referredByUser ? (
+                <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                  <p className="font-medium text-gray-900">{detailUser.referredByUser.full_name}</p>
+                  <p className="text-gray-500">{detailUser.referredByUser.email}</p>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">None (direct registration)</p>
+              )}
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-1">Referred Users ({detailUser.referrals?.length || 0})</p>
+              {detailUser.referrals?.length > 0 ? (
+                <div className="space-y-2">
+                  {detailUser.referrals.map(r => (
+                    <div key={r.id} className="bg-gray-50 rounded-lg p-3 text-sm">
+                      <p className="font-medium text-gray-900">{r.full_name}</p>
+                      <p className="text-gray-500">{r.email}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">None</p>
+              )}
+            </div>
+          </div>
+
           <div className="mt-4 pt-4 border-t border-gray-100">
             <button onClick={() => { setResetPwUser(detailUser); setNewPassword(''); setConfirmPassword(''); }} className="btn-secondary w-full flex items-center justify-center gap-2">
               <Key className="h-4 w-4" /> Reset Password
@@ -191,11 +240,11 @@ export default function AdminUsers() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-            <input type="password" className="input-field" placeholder="Minimum 6 characters" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+            <PasswordInput placeholder="Minimum 6 characters" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-            <input type="password" className="input-field" placeholder="Re-enter new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleResetPassword()} />
+            <PasswordInput placeholder="Re-enter new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleResetPassword()} />
           </div>
           {newPassword && confirmPassword && newPassword !== confirmPassword && (
             <p className="text-xs text-error-600">Passwords do not match</p>

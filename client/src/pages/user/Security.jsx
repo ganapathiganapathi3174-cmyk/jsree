@@ -1,11 +1,17 @@
 import { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import api from '../../utils/api';
-import { Lock, Globe, Monitor, RefreshCw } from 'lucide-react';
+import { Lock, Globe, Monitor, RefreshCw, KeyRound } from 'lucide-react';
+import PasswordInput from '../../components/PasswordInput';
 
 export default function Security() {
   const [logs, setLogs] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1 });
   const [loading, setLoading] = useState(true);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changing, setChanging] = useState(false);
 
   useEffect(() => { fetchLogs(1); }, []);
 
@@ -20,6 +26,21 @@ export default function Security() {
     setLoading(false);
   };
 
+  const handleChangePassword = async () => {
+    if (!currentPassword || !newPassword || !confirmPassword) { toast.error('All fields are required'); return; }
+    if (newPassword.length < 6) { toast.error('New password must be at least 6 characters'); return; }
+    if (newPassword !== confirmPassword) { toast.error('Passwords do not match'); return; }
+    if (currentPassword === newPassword) { toast.error('New password must differ from current password'); return; }
+    setChanging(true);
+    try {
+      await api.put('/auth/change-password', { oldPassword: currentPassword, newPassword });
+      toast.success('Password changed successfully');
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to change password');
+    } finally { setChanging(false); }
+  };
+
   const getEventIcon = (type) => {
     const icons = { login: '🔑', register: '📝', payment: '💳', password_change: '🔒', admin_action: '🛡️' };
     return icons[type] || '📌';
@@ -28,8 +49,43 @@ export default function Security() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Security Log</h1>
-        <p className="text-sm text-gray-500 mt-1">Recent sign-in and security activity</p>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Security</h1>
+        <p className="text-sm text-gray-500 mt-1">Manage your password and view security activity</p>
+      </div>
+
+      <div className="card p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-primary-50 text-primary-500 rounded-xl flex items-center justify-center"><KeyRound className="h-5 w-5" /></div>
+          <div>
+            <h3 className="font-semibold text-gray-900">Change Password</h3>
+            <p className="text-sm text-gray-500">Update your account password</p>
+          </div>
+        </div>
+        <div className="space-y-4 max-w-md">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+            <PasswordInput placeholder="Enter current password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+            <PasswordInput placeholder="Minimum 6 characters" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
+            <PasswordInput placeholder="Re-enter new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleChangePassword()} />
+          </div>
+          {newPassword && confirmPassword && newPassword !== confirmPassword && (
+            <p className="text-xs text-red-600">Passwords do not match</p>
+          )}
+          <button onClick={handleChangePassword} disabled={changing || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword} className="btn-primary">
+            {changing ? 'Changing...' : 'Change Password'}
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-3">Security Log</h2>
+        <p className="text-sm text-gray-500 mb-4">Recent sign-in and security activity</p>
       </div>
 
       {loading ? (

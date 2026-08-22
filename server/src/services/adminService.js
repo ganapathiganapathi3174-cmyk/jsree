@@ -52,7 +52,7 @@ export async function getDashboardStats() {
 
 export async function getAllUsers(filters = {}) {
   let query = supabase.from('users')
-    .select('id, full_name, email, mobile, role, status, referral_code, current_plan, created_at')
+    .select('id, full_name, email, mobile, role, status, referral_code, referred_by, current_plan, created_at')
     .neq('role', 'admin');
 
   if (filters.status) query = query.eq('status', filters.status);
@@ -70,13 +70,22 @@ export async function getAllUsers(filters = {}) {
   const { data: users, error } = await query;
   if (error) throw { message: 'Failed to fetch users', code: 'FETCH_FAILED' };
 
+  const userIds = (users || []).map(u => u.id);
+  let referralCounts = {};
+  if (userIds.length > 0) {
+    const { data: refRows } = await supabase.from('users')
+      .select('referred_by').in('referred_by', userIds).not('referred_by', 'is', null);
+    (refRows || []).forEach(r => { referralCounts[r.referred_by] = (referralCounts[r.referred_by] || 0) + 1; });
+  }
+  const usersWithCounts = (users || []).map(u => ({ ...u, referral_count: referralCounts[u.id] || 0 }));
+
   let countQuery = supabase.from('users').select('id', { count: 'exact', head: true }).neq('role', 'admin');
   if (filters.status) countQuery = countQuery.eq('status', filters.status);
   if (filters.plan) countQuery = countQuery.eq('current_plan', parseInt(filters.plan));
   if (filters.search) countQuery = countQuery.or(`full_name.ilike.%${filters.search}%,email.ilike.%${filters.search}%,mobile.ilike.%${filters.search}%`);
   const { count } = await countQuery;
 
-  return { users: users || [], total: count || 0, page: filters.page || 1, limit: filters.limit || 20 };
+  return { users: usersWithCounts, total: count || 0, page: filters.page || 1, limit: filters.limit || 20 };
 }
 
 export async function getUserDetails(userId) {
@@ -84,6 +93,14 @@ export async function getUserDetails(userId) {
     .select('id, full_name, email, mobile, role, status, referral_code, referred_by, current_plan, wallet_balance, inactive_reason, inactive_since, created_at')
     .eq('id', userId).single();
   if (error || !user) throw { message: 'User not found', code: 'USER_NOT_FOUND' };
+
+  let referredByUser = null;
+  if (user.referred_by) {
+    const { data: referrer } = await supabase.from('users')
+      .select('id, full_name, email')
+      .eq('id', user.referred_by).single();
+    referredByUser = referrer || null;
+  }
 
   const { data: payments } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, transaction_id, rejection_reason, verification_result, created_at').eq('user_id', userId).order('created_at', { ascending: false });
   const { data: referrals } = await supabase.from('users').select('id, full_name, email, status, current_plan, created_at').eq('referred_by', userId);
@@ -104,6 +121,7 @@ export async function getUserDetails(userId) {
 
   return {
     ...user,
+    referredByUser,
     payments: payments || [],
     referrals: referrals || [],
     sentTopups: sentTopups || [],
