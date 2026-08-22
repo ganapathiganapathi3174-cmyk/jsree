@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
-import { UserCheck } from 'lucide-react';
+import { UserCheck, UserX, Phone, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
-import { PLAN_MAP } from '../../utils/constants';
 import StatusBadge from '../../components/StatusBadge';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
-import { UserX } from 'lucide-react';
 
 export default function InactiveUsers() {
   const [users, setUsers] = useState([]);
@@ -35,20 +33,28 @@ export default function InactiveUsers() {
           <table className="w-full text-sm min-w-[720px]">
             <thead className="bg-gray-50/60"><tr>
               <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">User</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Plan</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Referrals</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Reason</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Since</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Email</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Mobile</th>
+              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
               <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Action</th>
             </tr></thead>
             <tbody className="divide-y divide-gray-100">
               {users.map(u => (
                 <tr key={u.id} className="hover:bg-gray-50/60 transition-colors">
-                  <td className="px-4 py-3"><p className="font-medium text-gray-900">{u.full_name}</p><p className="text-xs text-gray-500">{u.email}</p></td>
-                  <td className="px-4 py-3">{PLAN_MAP[u.current_plan]?.label}</td>
-                  <td className="px-4 py-3">{u.referral_count || 0}</td>
-                  <td className="px-4 py-3 text-gray-600">{u.inactive_reason || '-'}</td>
-                  <td className="px-4 py-3 text-gray-500">{u.inactive_since ? new Date(u.inactive_since).toLocaleDateString() : '-'}</td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-gray-900">{u.full_name}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-1.5 text-gray-600">
+                      <Mail className="h-3.5 w-3.5 text-gray-400" /> {u.email}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-1.5 text-gray-600">
+                      <Phone className="h-3.5 w-3.5 text-gray-400" /> {u.mobile || '-'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end">
                       <button onClick={() => handleActivate(u.id)} className="btn-success text-sm flex items-center gap-1.5">
