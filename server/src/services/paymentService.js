@@ -209,13 +209,11 @@ export async function uploadScreenshot(paymentId, file, userId) {
 // Returns { newStatus, reason, reservedUtr }.
 // ─────────────────────────────────────────────────────────────
 export async function applyPaymentUtrPolicy(paymentId, { decision, utr }) {
-  let newStatus = decision === 'approved' ? 'approved' : decision === 'manual_review' ? 'manual_review' : 'rejected';
+  let newStatus = decision === 'approved' ? 'approved' : 'rejected';
   let reason = null;
   let reservedUtr = null;
 
-  // UTR reservation happens ONLY on auto-approve. manual_review payments are
-  // not approved yet — the UTR is captured but not reserved until admin
-  // approval decides the outcome.
+  // UTR reservation happens ONLY on auto-approve.
   if (decision === 'approved' && utr) {
     const reserve = await reserveApprovedUtr(utr, 'payment', paymentId);
     if (reserve.duplicate) {
@@ -304,14 +302,6 @@ export async function verifyPayment(paymentId, imageBuffer) {
         { paymentId, amount: payment.expected_amount, reason: effectiveReason }
       );
     } catch (e) { /* non-blocking */ }
-  } else if (newStatus === 'manual_review') {
-    try {
-      await notificationService.createNotification(
-        payment.user_id, 'payment_review', 'Payment Under Review',
-        `Your payment of ₹${payment.expected_amount} needs manual review. We will verify it shortly.`,
-        { paymentId, amount: payment.expected_amount, reason: effectiveReason || null }
-      );
-    } catch (e) { /* non-blocking */ }
   }
 
   const elapsed = Date.now() - t0;
@@ -356,7 +346,6 @@ export async function approvePayment(paymentId, adminId) {
 
   // Defensive approved-UTR gate for admin approvals that carry a UTR
   // (normally only OCR auto-verify sets transaction_id, so this is a no-op).
-  // A manual_review payment has its UTR captured but NOT reserved yet.
   let reservedUtr = null;
   const utrToReserve = payment.transaction_id || (payment.verification_result?.utr) || null;
   if (utrToReserve) {

@@ -51,43 +51,70 @@ const time = new Date('2026-08-18T12:00:00.000Z');
 //   UTR has ZERO influence; it is never an input.
 // ─────────────────────────────────────────────────────────────
 describe('Top-up verification decision engine', () => {
-  it('T1: correct UPI + correct amount + valid date + NO UTR -> APPROVED', () => {
-    const { decision, reason } = sharedDecide({ upiMatch: true, amountMatch: true, dateValid: true });
+  it('T1: all conditions pass -> APPROVED', () => {
+    const { decision, reason } = sharedDecide({
+      upiMatch: true, amountMatch: true, dateValid: true,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
+    });
     expect(decision).toBe('approved');
     expect(reason).toBeNull();
   });
 
-  it('T2: correct UPI + correct amount + valid date + duplicate UTR -> APPROVED', () => {
-    // UTR is not even a parameter of the engine — duplicate/missing/random
-    // UTR cannot influence the decision.
-    const { decision } = sharedDecide({ upiMatch: true, amountMatch: true, dateValid: true });
-    expect(decision).toBe('approved');
-  });
-
-  it('T3: correct UPI + correct amount + valid date + random UTR -> APPROVED', () => {
-    const { decision } = sharedDecide({ upiMatch: true, amountMatch: true, dateValid: true });
-    expect(decision).toBe('approved');
-  });
-
-  it('T4: wrong UPI -> REJECTED (UPI_MISMATCH)', () => {
-    const { decision, reason } = sharedDecide({ upiMatch: false, amountMatch: true, dateValid: true });
+  it('T2: wrong UPI -> REJECTED (UPI_MISMATCH)', () => {
+    const { decision, reason } = sharedDecide({
+      upiMatch: false, amountMatch: true, dateValid: true,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
+    });
     expect(decision).toBe('rejected');
     expect(reason).toBe('UPI_MISMATCH');
   });
 
-  it('T5: wrong amount -> APPROVED (amount removed from the decision)', () => {
-    const { decision, reason } = sharedDecide({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('approved');
-    expect(reason).toBeNull();
+  it('T3: wrong amount -> REJECTED (AMOUNT_MISMATCH)', () => {
+    const { decision, reason } = sharedDecide({
+      upiMatch: true, amountMatch: false, dateValid: true,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('AMOUNT_MISMATCH');
   });
 
-  it('T6: invalid date/time -> REJECTED (INVALID_PAYMENT_DATE)', () => {
-    const { decision, reason } = sharedDecide({ upiMatch: true, amountMatch: true, dateValid: false });
+  it('T4: invalid date/time -> REJECTED (INVALID_PAYMENT_DATE)', () => {
+    const { decision, reason } = sharedDecide({
+      upiMatch: true, amountMatch: true, dateValid: false,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
+    });
     expect(decision).toBe('rejected');
     expect(reason).toBe('INVALID_PAYMENT_DATE');
   });
 
-  it('T7: top-up uses the SAME engine as registration payments', () => {
+  it('T5: missing UTR -> REJECTED (MISSING_UTR)', () => {
+    const { decision, reason } = sharedDecide({
+      upiMatch: true, amountMatch: true, dateValid: true,
+      utrPresent: false, transactionStatusOk: true, ocrConfidence: 90,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('MISSING_UTR');
+  });
+
+  it('T6: failed transaction -> REJECTED (TRANSACTION_FAILED)', () => {
+    const { decision, reason } = sharedDecide({
+      upiMatch: true, amountMatch: true, dateValid: true,
+      utrPresent: true, transactionStatusOk: false, ocrConfidence: 90,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('TRANSACTION_FAILED');
+  });
+
+  it('T7: low OCR confidence -> REJECTED (LOW_OCR_CONFIDENCE)', () => {
+    const { decision, reason } = sharedDecide({
+      upiMatch: true, amountMatch: true, dateValid: true,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 30,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('LOW_OCR_CONFIDENCE');
+  });
+
+  it('T8: top-up uses the SAME engine as registration payments', () => {
     expect(sharedDecide).toBe(paymentDecide);
   });
 });

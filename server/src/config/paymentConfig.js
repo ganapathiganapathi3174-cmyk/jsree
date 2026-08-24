@@ -6,7 +6,6 @@
 //   - PAYMENT_PLANS            mapping plan -> { amount, receiverUpi }
 //   - PAYMENT_TIME_WINDOW_MINUTES   how recent a screenshot must be
 //   - MIN_OCR_CONFIDENCE_APPROVE    auto-approve confidence floor
-//   - MIN_OCR_CONFIDENCE_MANUAL     manual-review confidence floor
 //
 // All values are env-overridable and fall back to production-safe
 // defaults. Verified plans (120/500/1000) are enforced by the schema.
@@ -34,7 +33,6 @@ export const PAYMENT_TIME_WINDOW_MINUTES = Number(process.env.PAYMENT_TIME_WINDO
 // Screenshots are UPI receipts; OCR confidence is a quality signal, never a
 // security boundary on its own (amount/UPI/date are the security gates).
 export const MIN_OCR_CONFIDENCE_APPROVE = Number(process.env.MIN_OCR_CONFIDENCE_APPROVE || 55);
-export const MIN_OCR_CONFIDENCE_MANUAL = Number(process.env.MIN_OCR_CONFIDENCE_MANUAL || 35);
 
 // When enabled, UTRs are re-normalized (strip non-alphanumerics, uppercase)
 // BEFORE the approved-UTR duplicate comparison. Off by default: screenshots

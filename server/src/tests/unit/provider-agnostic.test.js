@@ -34,10 +34,6 @@ vi.mock('../../db/supabase.js', () => ({
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 const NOW = () => new Date('2026-08-24T07:30:00.000Z'); // 2026-08-24 13:00 IST
-const VALID_DATE = '24/08/2026, 1:00 PM';
-const VALID_DATE_MONTH = '24 Aug 2026, 1:00 pm';
-const VALID_DATE_24H = '24/08/2026 13:00';
-const OLD_DATE = '23/08/2026, 1:00 PM';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -342,7 +338,103 @@ describe('Extraction: Transaction status', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// SECTION 2: FULL PIPELINE — VALID SCREENSHOTS
+// SECTION 2: decidePaymentVerification — STRICT BINARY DECISION
+// ═══════════════════════════════════════════════════════════════
+
+describe('decidePaymentVerification: strict binary (approved/rejected only)', () => {
+  it('ALL conditions pass -> approved', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: true, amountMatch: true, dateValid: true,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
+    });
+    expect(decision).toBe('approved');
+    expect(reason).toBeNull();
+  });
+
+  it('wrong UPI -> rejected', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: false, amountMatch: true, dateValid: true,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('UPI_MISMATCH');
+  });
+
+  it('wrong amount -> rejected', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: true, amountMatch: false, dateValid: true,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('AMOUNT_MISMATCH');
+  });
+
+  it('invalid date -> rejected', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: true, amountMatch: true, dateValid: false,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('INVALID_PAYMENT_DATE');
+  });
+
+  it('missing UTR -> rejected', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: true, amountMatch: true, dateValid: true,
+      utrPresent: false, transactionStatusOk: true, ocrConfidence: 90,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('MISSING_UTR');
+  });
+
+  it('failed transaction -> rejected', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: true, amountMatch: true, dateValid: true,
+      utrPresent: true, transactionStatusOk: false, ocrConfidence: 90,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('TRANSACTION_FAILED');
+  });
+
+  it('low OCR confidence -> rejected', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: true, amountMatch: true, dateValid: true,
+      utrPresent: true, transactionStatusOk: true, ocrConfidence: 30,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('LOW_OCR_CONFIDENCE');
+  });
+
+  it('multiple failures -> rejects on first gate (UPI)', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: false, amountMatch: false, dateValid: false,
+      utrPresent: false, transactionStatusOk: false, ocrConfidence: 10,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('UPI_MISMATCH');
+  });
+
+  it('no path to manual_review exists', () => {
+    // Exhaustively test every combination — none should return manual_review
+    const combos = [
+      { upiMatch: false, amountMatch: false, dateValid: false, utrPresent: false, transactionStatusOk: false, ocrConfidence: 0 },
+      { upiMatch: true, amountMatch: false, dateValid: false, utrPresent: false, transactionStatusOk: false, ocrConfidence: 0 },
+      { upiMatch: true, amountMatch: true, dateValid: false, utrPresent: false, transactionStatusOk: false, ocrConfidence: 0 },
+      { upiMatch: true, amountMatch: true, dateValid: true, utrPresent: false, transactionStatusOk: false, ocrConfidence: 0 },
+      { upiMatch: true, amountMatch: true, dateValid: true, utrPresent: true, transactionStatusOk: false, ocrConfidence: 0 },
+      { upiMatch: true, amountMatch: true, dateValid: true, utrPresent: true, transactionStatusOk: true, ocrConfidence: 0 },
+      { upiMatch: true, amountMatch: true, dateValid: true, utrPresent: true, transactionStatusOk: true, ocrConfidence: 55 },
+    ];
+    for (const combo of combos) {
+      const { decision } = decidePaymentVerification(combo);
+      expect(['approved', 'rejected']).toContain(decision);
+      expect(decision).not.toBe('manual_review');
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 3: FULL PIPELINE — VALID SCREENSHOTS
 // ═══════════════════════════════════════════════════════════════
 
 describe('Full pipeline: Google Pay receipt format', () => {
@@ -356,6 +448,7 @@ describe('Full pipeline: Google Pay receipt format', () => {
     });
     expect(verificationResult.decision).toBe('approved');
     expect(verificationResult.upiMatch).toBe(true);
+    expect(verificationResult.amountMatch).toBe(true);
   });
 
   it('GPay with month-name date format -> APPROVED', async () => {
@@ -564,10 +657,10 @@ describe('Full pipeline: Amazon Pay receipt format', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// SECTION 3: INVALID SCREENSHOTS — REJECTION/REVIEW RULES
+// SECTION 4: STRICT REJECTION — every failure mode
 // ═══════════════════════════════════════════════════════════════
 
-describe('Invalid screenshots: wrong UPI -> REJECTED', () => {
+describe('Strict rejection: wrong UPI -> REJECTED', () => {
   it('all providers reject wrong UPI regardless of layout', async () => {
     const layouts = [
       ['GPay', gpayReceipt(120, 'attacker@okicici', '24/08/2026, 1:00 PM')],
@@ -588,7 +681,35 @@ describe('Invalid screenshots: wrong UPI -> REJECTED', () => {
   });
 });
 
-describe('Invalid screenshots: old/out-of-window date -> REJECTED', () => {
+describe('Strict rejection: wrong amount -> REJECTED', () => {
+  it('Paytm showing ₹500 for a ₹120 plan -> REJECTED', async () => {
+    runOCR.mockResolvedValue({
+      text: paytmReceipt(500, RECEIVER_UPI, '24/08/2026, 1:00 PM'),
+      confidence: 90,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    expect(verificationResult.amountMatch).toBe(false);
+  });
+
+  it('GPay showing ₹1000 for a ₹500 plan -> REJECTED', async () => {
+    runOCR.mockResolvedValue({
+      text: gpayReceipt(1000, RECEIVER_UPI, '24/08/2026, 1:00 PM'),
+      confidence: 90,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 500, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    expect(verificationResult.amountMatch).toBe(false);
+  });
+});
+
+describe('Strict rejection: old/out-of-window date -> REJECTED', () => {
   it('all providers reject out-of-window dates', async () => {
     const layouts = [
       ['GPay', gpayReceipt(120, RECEIVER_UPI, '15/08/2026, 1:00 PM')],
@@ -609,8 +730,8 @@ describe('Invalid screenshots: old/out-of-window date -> REJECTED', () => {
   });
 });
 
-describe('Invalid screenshots: failed transaction -> MANUAL_REVIEW', () => {
-  it('all providers route failed transactions to manual review', async () => {
+describe('Strict rejection: failed transaction -> REJECTED', () => {
+  it('all providers reject failed transactions', async () => {
     const layouts = [
       ['GPay', gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM', 'Payment Failed')],
       ['PhonePe', phonepeReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM', 'Transaction Failed')],
@@ -622,15 +743,15 @@ describe('Invalid screenshots: failed transaction -> MANUAL_REVIEW', () => {
       const { verificationResult } = await runScreenshotVerification({
         imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
       });
-      expect(verificationResult.decision, `${name} should route failed to manual_review`).toBe('manual_review');
+      expect(verificationResult.decision, `${name} should reject failed`).toBe('rejected');
       expect(verificationResult.reason, `${name} reason`).toBe('TRANSACTION_FAILED');
       expect(verificationResult.transactionStatus.status).toBe('failed');
     }
   });
 });
 
-describe('Invalid screenshots: pending/processing transaction -> MANUAL_REVIEW', () => {
-  it('pending transactions route to manual review', async () => {
+describe('Strict rejection: pending/processing transaction -> REJECTED', () => {
+  it('pending transactions are rejected', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM', 'Payment Pending'),
       confidence: 90,
@@ -638,14 +759,14 @@ describe('Invalid screenshots: pending/processing transaction -> MANUAL_REVIEW',
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.decision).toBe('rejected');
     expect(verificationResult.reason).toBe('TRANSACTION_FAILED');
     expect(verificationResult.transactionStatus.status).toBe('failed');
   });
 });
 
-describe('Invalid screenshots: ambiguous date (same day, no time) -> MANUAL_REVIEW', () => {
-  it('date-only on correct day routes to manual review, not rejection', async () => {
+describe('Strict rejection: ambiguous date (same day, no time) -> REJECTED', () => {
+  it('date-only on correct day is rejected (missing time component)', async () => {
     runOCR.mockResolvedValue({
       text: paytmReceipt(120, RECEIVER_UPI, '24/08/2026'),
       confidence: 90,
@@ -653,10 +774,43 @@ describe('Invalid screenshots: ambiguous date (same day, no time) -> MANUAL_REVI
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('manual_review');
-    expect(verificationResult.reason).toBe('DATE_AMBIGUOUS');
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
   });
 });
+
+describe('Strict rejection: missing UTR -> REJECTED', () => {
+  it('receipt without UTR is rejected', async () => {
+    runOCR.mockResolvedValue({
+      text: `Google Pay\nPayment Successful\n₹120\nTo Jayaraj\n${RECEIVER_UPI}\nDate: 24/08/2026, 1:00 PM`,
+      confidence: 90,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('MISSING_UTR');
+    expect(verificationResult.utr).toBeNull();
+  });
+});
+
+describe('Strict rejection: low OCR confidence -> REJECTED', () => {
+  it('low OCR confidence is rejected even with valid data', async () => {
+    runOCR.mockResolvedValue({
+      text: paytmReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM'),
+      confidence: 40,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('LOW_OCR_CONFIDENCE');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 5: SECURITY — no provider-specific bypass
+// ═══════════════════════════════════════════════════════════════
 
 describe('Security: no provider-specific bypass', () => {
   it('does not approve simply because text contains "Paytm"', async () => {
@@ -685,7 +839,7 @@ describe('Security: no provider-specific bypass', () => {
 
   it('UPI match + date + no provider keyword still approves', async () => {
     runOCR.mockResolvedValue({
-      text: `Payment of ₹120 to ${RECEIVER_UPI}\nCompleted\n24/08/2026, 1:00 PM`,
+      text: `Payment of ₹120 to ${RECEIVER_UPI}\nCompleted\n24/08/2026, 1:00 PM\nUTR: 123456789012`,
       confidence: 90,
     });
     const { verificationResult } = await runScreenshotVerification({
@@ -696,7 +850,7 @@ describe('Security: no provider-specific bypass', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// SECTION 4: BOTH FLOWS (Registration Payment + Top-Up)
+// SECTION 6: BOTH FLOWS (Registration Payment + Top-Up)
 // ═══════════════════════════════════════════════════════════════
 
 describe('Shared engine: registration payment and top-up use same rules', () => {
@@ -746,7 +900,7 @@ describe('Shared engine: registration payment and top-up use same rules', () => 
     expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
   });
 
-  it('registration payment: failed transaction -> MANUAL_REVIEW', async () => {
+  it('registration payment: failed transaction -> REJECTED', async () => {
     runOCR.mockResolvedValue({
       text: bhimReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM', 'Payment Failed'),
       confidence: 90,
@@ -754,11 +908,11 @@ describe('Shared engine: registration payment and top-up use same rules', () => 
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.decision).toBe('rejected');
     expect(verificationResult.reason).toBe('TRANSACTION_FAILED');
   });
 
-  it('top-up: low OCR confidence -> MANUAL_REVIEW', async () => {
+  it('top-up: low OCR confidence -> REJECTED', async () => {
     runOCR.mockResolvedValue({
       text: paytmReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM'),
       confidence: 40,
@@ -766,47 +920,17 @@ describe('Shared engine: registration payment and top-up use same rules', () => 
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.decision).toBe('rejected');
     expect(verificationResult.reason).toBe('LOW_OCR_CONFIDENCE');
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// SECTION 5: AMOUNT INDEPENDENCE (shared with all providers)
-// ═══════════════════════════════════════════════════════════════
-
-describe('Amount independence: wrong amount never blocks valid receipt', () => {
-  it('Paytm showing ₹500 for a ₹120 plan -> still APPROVED', async () => {
-    runOCR.mockResolvedValue({
-      text: paytmReceipt(500, RECEIVER_UPI, '24/08/2026, 1:00 PM'),
-      confidence: 90,
-    });
-    const { verificationResult } = await runScreenshotVerification({
-      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
-    });
-    expect(verificationResult.decision).toBe('approved');
-    expect(verificationResult.amountMatch).toBe(false);
-  });
-
-  it('GPay showing ₹1000 for a ₹500 plan -> still APPROVED', async () => {
-    runOCR.mockResolvedValue({
-      text: gpayReceipt(1000, RECEIVER_UPI, '24/08/2026, 1:00 PM'),
-      confidence: 90,
-    });
-    const { verificationResult } = await runScreenshotVerification({
-      imageBuffer: Buffer.from('img'), expectedAmount: 500, receiverUpi: RECEIVER_UPI, now: NOW(),
-    });
-    expect(verificationResult.decision).toBe('approved');
-    expect(verificationResult.amountMatch).toBe(false);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// SECTION 6: FORWARD-ONLY TIME WINDOW (server → server + 30 min)
+// SECTION 7: FORWARD-ONLY TIME WINDOW (server → server + 30 min)
 // ═══════════════════════════════════════════════════════════════
 
 describe('Forward-only time window: past transactions rejected', () => {
-  it('transaction 5 minutes in the past -> REJECTED (not within forward window)', async () => {
+  it('transaction 5 minutes in the past -> REJECTED', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 12:55 PM'),
       confidence: 90,
@@ -815,7 +939,6 @@ describe('Forward-only time window: past transactions rejected', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.dateValid).toBe(false);
-    // Has exact time in the past → clearly invalid, not ambiguous
     expect(verificationResult.decision).toBe('rejected');
     expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
   });
@@ -878,11 +1001,12 @@ describe('Forward-only time window: past transactions rejected', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.dateValid).toBe(false);
+    expect(verificationResult.decision).toBe('rejected');
   });
 });
 
-describe('Forward-only window: correct date, no time -> manual review', () => {
-  it('date-only receipt on the same day -> DATE_AMBIGUOUS (manual review)', async () => {
+describe('Forward-only window: correct date, no time -> REJECTED', () => {
+  it('date-only receipt on the same day -> REJECTED (missing time)', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026'),
       confidence: 90,
@@ -891,9 +1015,8 @@ describe('Forward-only window: correct date, no time -> manual review', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.dateValid).toBe(false);
-    expect(verificationResult.dateAmbiguous).toBe(true);
-    expect(verificationResult.decision).toBe('manual_review');
-    expect(verificationResult.reason).toBe('DATE_AMBIGUOUS');
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
   });
 
   it('date-only receipt on wrong day -> REJECTED', async () => {
@@ -905,14 +1028,13 @@ describe('Forward-only window: correct date, no time -> manual review', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.dateValid).toBe(false);
-    expect(verificationResult.dateAmbiguous).toBe(false);
     expect(verificationResult.decision).toBe('rejected');
     expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// SECTION 7: FIELD-LEVEL CONFIDENCE SCORING
+// SECTION 8: FIELD-LEVEL CONFIDENCE SCORING
 // ═══════════════════════════════════════════════════════════════
 
 describe('Field-level confidence scoring', () => {
@@ -931,7 +1053,7 @@ describe('Field-level confidence scoring', () => {
     expect(verificationResult.fieldConfidence.transactionStatus.confidence).toBe('high');
   });
 
-  it('wrong amount returns low confidence for amount field', async () => {
+  it('wrong amount returns low confidence -> REJECTED', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(500, RECEIVER_UPI, '24/08/2026, 1:00 PM'),
       confidence: 90,
@@ -940,10 +1062,10 @@ describe('Field-level confidence scoring', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.fieldConfidence.amount.confidence).toBe('low');
-    expect(verificationResult.fieldConfidence.receiverUpi.confidence).toBe('high');
+    expect(verificationResult.decision).toBe('rejected');
   });
 
-  it('wrong UPI returns low confidence for receiverUpi field', async () => {
+  it('wrong UPI returns low confidence -> REJECTED', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(120, 'attacker@okicici', '24/08/2026, 1:00 PM'),
       confidence: 90,
@@ -952,10 +1074,10 @@ describe('Field-level confidence scoring', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.fieldConfidence.receiverUpi.confidence).toBe('low');
-    expect(verificationResult.fieldConfidence.amount.confidence).toBe('high');
+    expect(verificationResult.decision).toBe('rejected');
   });
 
-  it('date-only receipt returns medium confidence for transactionDate', async () => {
+  it('date-only receipt returns medium confidence -> REJECTED', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026'),
       confidence: 90,
@@ -964,10 +1086,10 @@ describe('Field-level confidence scoring', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.fieldConfidence.transactionDate.confidence).toBe('medium');
-    expect(verificationResult.fieldConfidence.transactionDate.reason).toContain('no exact time');
+    expect(verificationResult.decision).toBe('rejected');
   });
 
-  it('no UTR in receipt returns none confidence for utr field', async () => {
+  it('no UTR in receipt returns none confidence -> REJECTED', async () => {
     runOCR.mockResolvedValue({
       text: `Google Pay\nPayment Successful\n₹120\nTo Jayaraj\n${RECEIVER_UPI}\nDate: 24/08/2026, 1:00 PM`,
       confidence: 90,
@@ -976,10 +1098,10 @@ describe('Field-level confidence scoring', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.fieldConfidence.utr.confidence).toBe('none');
-    expect(verificationResult.fieldConfidence.utr.reason).toContain('No UTR');
+    expect(verificationResult.decision).toBe('rejected');
   });
 
-  it('failed transaction returns high confidence for transactionStatus', async () => {
+  it('failed transaction returns low confidence -> REJECTED', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM', 'Payment Failed'),
       confidence: 90,
@@ -987,7 +1109,35 @@ describe('Field-level confidence scoring', () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.fieldConfidence.transactionStatus.confidence).toBe('high');
-    expect(verificationResult.fieldConfidence.transactionStatus.reason).toContain('failed');
+    expect(verificationResult.fieldConfidence.transactionStatus.confidence).toBe('low');
+    expect(verificationResult.decision).toBe('rejected');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 9: NO PATH TO MANUAL_REVIEW
+// ═══════════════════════════════════════════════════════════════
+
+describe('Absolute guarantee: no path to manual_review', () => {
+  it('every rejection reason is a string, never manual_review', async () => {
+    const scenarios = [
+      { text: gpayReceipt(120, 'wrong@bank', '24/08/2026, 1:00 PM'), expect: 'UPI_MISMATCH' },
+      { text: gpayReceipt(500, RECEIVER_UPI, '24/08/2026, 1:00 PM'), expect: 'AMOUNT_MISMATCH' },
+      { text: gpayReceipt(120, RECEIVER_UPI, '15/08/2026, 1:00 PM'), expect: 'INVALID_PAYMENT_DATE' },
+      { text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 12:55 PM'), expect: 'INVALID_PAYMENT_DATE' },
+      { text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:31 PM'), expect: 'INVALID_PAYMENT_DATE' },
+      { text: `Google Pay\nPayment Successful\n₹120\nTo Jayaraj\n${RECEIVER_UPI}\nDate: 24/08/2026, 1:00 PM`, expect: 'MISSING_UTR' },
+      { text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM', 'Payment Failed'), expect: 'TRANSACTION_FAILED' },
+      { text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM', 'Payment Pending'), expect: 'TRANSACTION_FAILED' },
+    ];
+    for (const { text, expect: expectedReason } of scenarios) {
+      runOCR.mockResolvedValue({ text, confidence: 90 });
+      const { verificationResult } = await runScreenshotVerification({
+        imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+      });
+      expect(verificationResult.decision).toBe('rejected');
+      expect(verificationResult.reason).toBe(expectedReason);
+      expect(verificationResult.decision).not.toBe('manual_review');
+    }
   });
 });
