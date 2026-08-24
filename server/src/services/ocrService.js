@@ -125,12 +125,17 @@ export function extractUPIs(text) {
 // Results use the canonical uppercase form (see normalizeUTRValue).
 // ─────────────────────────────────────────────────────────────
 export function extractUTRs(text) {
-  const spaceNormalized = text.replace(/(\d)\s+(\d)/g, '$1$2');
+  // Join OCR-split digit pairs WITHOUT crossing line breaks (a newline is
+  // also \s — joining across it glued the UTR to the next line's date).
+  const spaceNormalized = text.replace(/(\d)[ \t]+(\d)/g, '$1$2');
   const labeled = [];
-  const labeledRe = /(?:utr|txn|transaction|ref(?:erence)?|upi\s*ref(?:\s*no)?|transaction\s*id|bank\s*ref|payment\s*ref|order\s*id|reference\s*number)\s*(?:no|num|id|#|number)?\s*[:\-]?\s*([A-Za-z0-9_]{6,30})/gi;
+  // Longest-first label alternatives + trailing \b so a short label like
+  // "Ref" can never terminate inside "Reference" (which previously let the
+  // capture swallow label letters, e.g. extracting "ERENCE").
+  const labeledRe = /\b(upi\s*transaction\s*(?:id|ref(?:erence)?(?:\s*(?:no|number))?|ref(?:\s*(?:no|number))?)|transaction\s*(?:id|reference(?:\s*(?:no|number))?|ref(?:\s*(?:no|number))?)|upi\s*ref(?:erence)?(?:\s*(?:no|number))?|bank\s*ref(?:erence)?(?:\s*(?:no|number))?|payment\s*ref(?:erence)?(?:\s*(?:no|number))?|reference\s*(?:no|number|id)|ref(?:erence)?\s*(?:no|number|id)|order\s*id|utr(?:\s*(?:no|number|id))?|ref(?:erence)?(?=\s*[:\-]))\b\s*[:\-]?\s*([A-Za-z0-9_]{6,30})/gi;
   let m;
   while ((m = labeledRe.exec(spaceNormalized)) !== null) {
-    const v = normalizeUTR(m[1]).toUpperCase();
+    const v = normalizeUTR(m[2]).toUpperCase();
     if (v && v.length >= 6 && v.length <= 30) labeled.push(v);
   }
 

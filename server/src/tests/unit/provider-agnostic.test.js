@@ -929,8 +929,8 @@ describe('Shared engine: registration payment and top-up use same rules', () => 
 // SECTION 7: FORWARD-ONLY TIME WINDOW (server → server + 30 min)
 // ═══════════════════════════════════════════════════════════════
 
-describe('Forward-only time window: past transactions rejected', () => {
-  it('transaction 5 minutes in the past -> REJECTED', async () => {
+describe('Freshness window: recent payments approved, stale/replayed rejected', () => {
+  it('transaction 5 minutes in the past -> APPROVED (real-world upload delay)', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 12:55 PM'),
       confidence: 90,
@@ -938,14 +938,25 @@ describe('Forward-only time window: past transactions rejected', () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.dateValid).toBe(false);
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    expect(verificationResult.dateValid).toBe(true);
+    expect(verificationResult.decision).toBe('approved');
   });
 
-  it('transaction 30 minutes in the past -> REJECTED', async () => {
+  it('transaction 30 minutes in the past -> APPROVED (window boundary)', async () => {
     runOCR.mockResolvedValue({
       text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 12:30 PM'),
+      confidence: 90,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.dateValid).toBe(true);
+    expect(verificationResult.decision).toBe('approved');
+  });
+
+  it('transaction 31 minutes in the past -> REJECTED (stale screenshot)', async () => {
+    runOCR.mockResolvedValue({
+      text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 12:29 PM'),
       confidence: 90,
     });
     const { verificationResult } = await runScreenshotVerification({
@@ -1124,7 +1135,7 @@ describe('Absolute guarantee: no path to manual_review', () => {
       { text: gpayReceipt(120, 'wrong@bank', '24/08/2026, 1:00 PM'), expect: 'UPI_MISMATCH' },
       { text: gpayReceipt(500, RECEIVER_UPI, '24/08/2026, 1:00 PM'), expect: 'AMOUNT_MISMATCH' },
       { text: gpayReceipt(120, RECEIVER_UPI, '15/08/2026, 1:00 PM'), expect: 'INVALID_PAYMENT_DATE' },
-      { text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 12:55 PM'), expect: 'INVALID_PAYMENT_DATE' },
+      { text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 12:25 PM'), expect: 'INVALID_PAYMENT_DATE' },
       { text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:31 PM'), expect: 'INVALID_PAYMENT_DATE' },
       { text: `Google Pay\nPayment Successful\n₹120\nTo Jayaraj\n${RECEIVER_UPI}\nDate: 24/08/2026, 1:00 PM`, expect: 'MISSING_UTR' },
       { text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM', 'Payment Failed'), expect: 'TRANSACTION_FAILED' },

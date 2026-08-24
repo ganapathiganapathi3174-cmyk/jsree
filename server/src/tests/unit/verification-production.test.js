@@ -145,11 +145,11 @@ describe('runScreenshotVerification — real UPI receipt formats (false-rejectio
     expect(verificationResult.amountMatch).toBe(false);
   });
 
-  it('midnight IST boundary: 00:00 IST today is 10 min BEFORE server 00:10 IST -> REJECTED (past)', async () => {
+  it('midnight IST boundary: 00:00 IST today at server 00:10 IST is 10 min old, same day -> APPROVED', async () => {
     runOCR.mockResolvedValue({ text: receipt(120, RECEIVER_UPI, 'Date: 16/08/2026 00:00'), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({ imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: MIDNIGHT_IST_NOW() });
-    expect(verificationResult.dateValid).toBe(false);
-    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.dateValid).toBe(true);
+    expect(verificationResult.decision).toBe('approved');
   });
 });
 

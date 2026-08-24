@@ -3,8 +3,8 @@ import {
   extractPaymentData,
   matchAmount,
   matchUPI,
-  runAmountRecoveryOCR,
-  isWithinForwardWindow,
+  isWithinTimeWindow,
+  isSameIstDay,
   dateTimeEntryToDate,
 } from './ocrService.js';
 import {
@@ -147,9 +147,16 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // Deterministic clock for tests; production uses the real server clock.
   const verificationTime = now instanceof Date ? now : new Date();
   const windowMinutes = PAYMENT_TIME_WINDOW_MINUTES;
-  // Forward-only: transaction must be NOW or in the future (up to +30 min).
-  // Past transactions (even 1 second ago) are REJECTED.
-  const dateValid = isWithinForwardWindow(date, verificationTime, windowMinutes);
+  // Same-IST-day + symmetric freshness window:
+  //   - transaction must be on the SERVER's current date (Asia/Kolkata)
+  //   - transaction time within [serverNow - 30 min, serverNow + 30 min]
+  // A real payment always happens shortly BEFORE the screenshot is uploaded,
+  // so requiring transaction >= serverNow rejected every genuine receipt.
+  // Replays (previous day) and stale screenshots (>30 min old) still reject.
+  const dateValid =
+    !!date &&
+    isSameIstDay(date, verificationTime) &&
+    isWithinTimeWindow(date, verificationTime, windowMinutes);
   const hasTimeComponent = !!(timeEntry || anyEntry)?.hasTime;
 
   // Transaction status must explicitly indicate success.
