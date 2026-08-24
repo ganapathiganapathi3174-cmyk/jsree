@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { verifyPayment } from '../../services/paymentService.js';
 import { runScreenshotVerification } from '../../services/verificationService.js';
+import { applyTopupVerification } from '../../services/topupService.js';
 
 const { runOCR, runAmountRecoveryOCR } = vi.hoisted(() => ({
   runOCR: vi.fn(),
@@ -18,8 +19,9 @@ vi.mock('../../services/ocrService.js', async (importOriginal) => {
 // ─────────────────────────────────────────────────────────────
 const { db } = vi.hoisted(() => {
   const state = {
-    // Mutable payments row: updates MERGE so re-selects observe new status.
+    // Mutable rows: updates MERGE so re-selects observe new status.
     paymentRow: null,
+    topupRow: null,
     results: {},
     updates: {},
     inserts: {},
@@ -30,9 +32,11 @@ const { db } = vi.hoisted(() => {
   const builder = (table) => {
     const p = {
       _sel: false,
+      _last: null,
       update: (payload) => {
         rec('updates', table, payload);
         if (table === 'payments' && state.paymentRow) Object.assign(state.paymentRow, payload);
+        if (table === 'topups' && state.topupRow) Object.assign(state.topupRow, payload);
         p._sel = false;
         return p;
       },
@@ -45,20 +49,19 @@ const { db } = vi.hoisted(() => {
       or: () => p,
       order: () => p,
       limit: () => p,
+      range: () => p,
       single: () => p,
       maybeSingle: () => p,
       then: (res) => {
-        if (table === 'payments') {
-          if ((p._last === 'single' || p._last === 'maybeSingle')) {
-            return res({ data: state.paymentRow ? { ...state.paymentRow } : null, error: null });
-          }
-          if (p._sel) return res({ data: state.paymentRow ? [{ ...state.paymentRow }] : [], error: null });
+        const row = table === 'payments' ? state.paymentRow : table === 'topups' ? state.topupRow : undefined;
+        if (row !== undefined) {
+          if (p._last === 'single' || p._last === 'maybeSingle') return res({ data: row ? { ...row } : null, error: null });
+          if (p._sel) return res({ data: row ? [{ ...row }] : [], error: null });
         }
         return res(state.results[table] || { data: null, error: null });
       },
       catch: () => p,
     };
-    // track terminal op for single/maybeSingle resolution shape
     for (const m of ['single', 'maybeSingle']) {
       const orig = p[m];
       p[m] = (...a) => { p._last = m; p._sel = false; return orig(...a); };
@@ -216,3 +219,90 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
   });
 });
 
+
+// ═══════════════════════════════════════════════════════════════
+// TOP-UP RUNTIME PATH: same engine, binary persistence only.
+// ═══════════════════════════════════════════════════════════════
+describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
+  const seedTopup = (overrides = {}) => ({
+    id: 'top-1',
+    sender_id: 'sender-1',
+    receiver_id: 'receiver-1',
+    amount: 120,
+    plan: 120,
+    status: 'created',
+    ...overrides,
+  });
+
+  function resetTopupDb(row) {
+    db.state.updates = {};
+    db.state.inserts = {};
+    db.state.topupRow = { ...row };
+    db.state.results = {
+      users: { data: { id: 'u', wallet_balance: 0 }, error: null },
+      approved_utrs: { data: { id: 'utr-1' }, error: null },
+      wallet_transactions: { data: [], error: null },
+      notifications: { data: null, error: null },
+      audit_logs: { data: null, error: null },
+    };
+  }
+
+  async function runTopupVerification(text) {
+    runOCR.mockResolvedValue({ text, confidence: 90 });
+    const { verificationResult, verificationTime } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+    });
+    return applyTopupVerification(seedTopup(), verificationResult, verificationTime);
+  }
+
+  it('Paytm valid proof -> topup "completed", both wallets credited once', async () => {
+    resetTopupDb(seedTopup());
+    const outcome = await runTopupVerification(
+      ['Paytm', 'Money Sent Successfully', '\u20B9120', `To: ${RECEIVER_UPI}`, 'UPI Ref No: TOP2408240001', istDateLine(2)].join('\n')
+    );
+    const statuses = (db.state.updates.topups || []).map(u => u.status);
+    const credits = (db.state.inserts.wallet_transactions || []);
+    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ flow: 'topup-valid', outcome, persistedStatuses: statuses, creditCount: credits.length }));
+    expect(statuses).toContain('completed');
+    expect(statuses.every(s => s !== 'manual_review')).toBe(true);
+    expect(credits.length).toBe(2);
+  });
+
+  it('GPay valid proof -> completed + credited (provider parity)', async () => {
+    resetTopupDb(seedTopup());
+    await runTopupVerification(
+      ['Google Pay', 'Payment Successful', '\u20B9120', 'To Jayaraj', RECEIVER_UPI, `Date: ${istDateLine(2)}`, 'UPI transaction ID: T7GHDTOP001'].join('\n')
+    );
+    const statuses = (db.state.updates.topups || []).map(u => u.status);
+    expect(statuses).toContain('completed');
+    expect((db.state.inserts.wallet_transactions || []).length).toBe(2);
+  });
+
+  it('PhonePe wrong amount -> rejected, NO wallet credit', async () => {
+    resetTopupDb(seedTopup());
+    await runTopupVerification(
+      ['PhonePe', 'Transaction Successful', '\u20B9500', `Paid to ${RECEIVER_UPI}`, istDateLine(2), 'Transaction ID: PPXTOP000002'].join('\n')
+    );
+    const statuses = (db.state.updates.topups || []).map(u => u.status);
+    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ flow: 'topup-wrong-amount', persistedStatuses: statuses }));
+    expect(statuses).toContain('rejected');
+    expect(statuses.every(s => s !== 'manual_review' && s !== 'completed')).toBe(true);
+    expect(db.state.inserts.wallet_transactions || []).toHaveLength(0);
+  });
+
+  it('duplicate UTR -> reverted to rejected, NO wallet credit', async () => {
+    resetTopupDb(seedTopup());
+    db.state.results.approved_utrs = { data: null, error: { code: '23505', message: 'unique violation' } };
+    const outcome = await runTopupVerification(
+      ['Paytm', 'Money Sent Successfully', '\u20B9120', `To: ${RECEIVER_UPI}`, 'UPI Ref No: DUPSTOP00003', istDateLine(2)].join('\n')
+    );
+    const statuses = (db.state.updates.topups || []).map(u => u.status);
+    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ flow: 'topup-duplicate-utr', outcome, persistedStatuses: statuses }));
+    expect(outcome.credited).toBeFalsy();
+    expect(statuses).toContain('rejected');
+    expect(statuses.every(s => s !== 'manual_review')).toBe(true);
+    expect(db.state.inserts.wallet_transactions || []).toHaveLength(0);
+  });
+});

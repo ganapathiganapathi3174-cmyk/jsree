@@ -50,7 +50,7 @@ export default function PaymentStatusPage() {
       return {
         icon: <XCircle className="h-5 w-5" />,
         title: 'Payment was not approved',
-        body: rejected.rejection_reason || 'Your payment could not be approved. Please contact support.',
+        body: 'Payment verification failed. Please upload a valid payment screenshot.',
         tone: 'bg-error-50 border-error-200 text-error-800'
       };
     }
@@ -69,10 +69,10 @@ export default function PaymentStatusPage() {
       const rejectedLogin = loginPayment.paymentStatus === 'rejected';
       return {
         icon: rejectedLogin ? <XCircle className="h-5 w-5" /> : <Clock className="h-5 w-5" />,
-        title: rejectedLogin ? 'Payment was not approved' : 'Payment under review',
+        title: rejectedLogin ? 'Payment was not approved' : 'Verifying your payment',
         body: rejectedLogin
-          ? (loginPayment.rejectionReason || 'Your payment could not be approved. Please contact support.')
-          : 'Your account is pending activation. You will be able to access the dashboard once your registration payment is approved.',
+          ? 'Payment verification failed. Please upload a valid payment screenshot.'
+          : 'Your account will be activated automatically once your registration payment is verified.',
         tone: rejectedLogin ? 'bg-error-50 border-error-200 text-error-800' : 'bg-warning-50 border-warning-200 text-warning-800'
       };
     }
@@ -123,9 +123,9 @@ export default function PaymentStatusPage() {
                   <p className="text-sm text-gray-600">
                     Plan: ₹{activePayment.selected_plan} | Submitted: {new Date(activePayment.submitted_at).toLocaleString()}
                   </p>
-                  {(activePayment.rejection_reason || activePayment.verification_result?.reason) && (
+                  {activePayment.rejection_reason && (
                     <p className="text-sm text-error-600">
-                      Reason: {activePayment.rejection_reason || activePayment.verification_result.reason}
+                      Payment verification failed. Please upload a valid payment screenshot.
                     </p>
                   )}
                   {activePayment.screenshot_url && (
