@@ -293,34 +293,36 @@ export async function applyTopupVerification(topup, verificationResult, verifica
 }
 
 // Credit the SENDER's wallet once (their payment was verified).
-// Idempotent: checks for an existing wallet_transaction with this topup's id.
+// Idempotent: checks for an existing wallet_transaction with this topup's id + user_id.
 async function creditSenderOnce(topup) {
   const { data: existing, error: checkError } = await supabase
     .from('wallet_transactions')
     .select('id')
     .eq('reference_id', topup.id)
-    .eq('reference_type', 'topup_sender')
+    .eq('reference_type', 'topup')
+    .eq('user_id', topup.sender_id)
     .limit(1);
   if (checkError) throw { message: 'Failed to check existing sender credit', code: 'CREDIT_CHECK_FAILED' };
   if (existing && existing.length > 0) return false;
 
-  await walletService.credit(topup.sender_id, topup.amount, 'Top-up payment verified', topup.id, 'topup_sender');
+  await walletService.credit(topup.sender_id, topup.amount, 'Top-up payment verified', topup.id, 'topup');
   return true;
 }
 
-// Credit the RECEIVER's wallet once when they claim a pending top-up.
-// Idempotent: checks for an existing wallet_transaction with this topup's id.
+// Credit the RECEIVER's wallet once when a top-up is completed.
+// Idempotent: checks for an existing wallet_transaction with this topup's id + user_id.
 async function creditReceiverOnce(topup) {
   const { data: existing, error: checkError } = await supabase
     .from('wallet_transactions')
     .select('id')
     .eq('reference_id', topup.id)
-    .eq('reference_type', 'topup_receiver')
+    .eq('reference_type', 'topup')
+    .eq('user_id', topup.receiver_id)
     .limit(1);
   if (checkError) throw { message: 'Failed to check existing receiver credit', code: 'CREDIT_CHECK_FAILED' };
   if (existing && existing.length > 0) return false;
 
-  await walletService.credit(topup.receiver_id, topup.amount, 'Top-up claimed', topup.id, 'topup_receiver');
+  await walletService.credit(topup.receiver_id, topup.amount, 'Top-up completed', topup.id, 'topup');
   return true;
 }
 

@@ -171,26 +171,26 @@ describe('B: payment UTR policy (applyPaymentUtrPolicy)', () => {
 });
 
 describe('C: top-up flow (applyTopupVerification)', () => {
-  const topup = { id: 'topup-1', sender_id: 'sender-1', amount: 120 };
+  const topup = { id: 'topup-1', sender_id: 'sender-1', receiver_id: 'receiver-1', amount: 120 };
 
   it('C11: approved + NEW UTR -> approved + sender credited exactly once + UTR reserved', async () => {
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'approved' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'completed' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     chains.approved_utrs = makeUtrsChain({ insertResult: { data: { utr: 'TOP123' }, error: null } });
 
     const result = await applyTopupVerification(topup, { decision: 'approved', reason: null, utr: 'TOP123' }, time);
 
     expect(result.credited).toBe(true);
-    expect(result.pendingClaim).toBe(true);
-    expect(walletCredit).toHaveBeenCalledTimes(1);
-    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, 'Top-up payment verified', 'topup-1', 'topup_sender');
+    expect(result.pendingClaim).toBe(false);
+    expect(walletCredit).toHaveBeenCalledTimes(2);
+    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, 'Top-up payment verified', 'topup-1', 'topup');
     expect(chains.approved_utrs.insert).toHaveBeenCalledWith({
       utr: 'TOP123', reference_type: 'topup', reference_id: 'topup-1',
     });
   });
 
   it('C12: UTR already approved for a PAYMENT (cross-flow) -> topup rejected DUPLICATE_UTR, NO credit', async () => {
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'approved' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'completed' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     chains.approved_utrs = makeUtrsChain({ insertResult: { data: null, error: { code: '23505' } } });
 
@@ -207,13 +207,13 @@ describe('C: top-up flow (applyTopupVerification)', () => {
   });
 
   it('C13: same top-up double-submitted -> balance credited exactly once', async () => {
-    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'approved' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'completed' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     chains.approved_utrs = makeUtrsChain({ insertResult: { data: { utr: 'DBL1' }, error: null } });
 
     const first = await applyTopupVerification(topup, { decision: 'approved', reason: null, utr: 'DBL1' }, time);
     expect(first.credited).toBe(true);
-    expect(walletCredit).toHaveBeenCalledTimes(1);
+    expect(walletCredit).toHaveBeenCalledTimes(2);
 
     // Second submit: guarded transition returns 0 rows (already approved) ->
     // alreadyProcessed, no credit, and no additional reservation attempt.
@@ -222,14 +222,14 @@ describe('C: top-up flow (applyTopupVerification)', () => {
     const second = await applyTopupVerification(topup, { decision: 'approved', reason: null, utr: 'DBL1' }, time);
     expect(second.alreadyProcessed).toBe(true);
     expect(second.credited).toBe(false);
-    expect(walletCredit).toHaveBeenCalledTimes(1);
+    expect(walletCredit).toHaveBeenCalledTimes(2);
     expect(chains.approved_utrs.insert).not.toHaveBeenCalled();
   });
 
   it('C14: same UTR used by a SECOND top-up -> second rejected DUPLICATE_UTR, no credit', async () => {
     const topup2 = { id: 'topup-2', sender_id: 'sender-2', amount: 120 };
 
-    chains.topups = makeTopupsChain({ data: [{ id: topup2.id, status: 'approved' }], error: null });
+    chains.topups = makeTopupsChain({ data: [{ id: topup2.id, status: 'completed' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });
     chains.approved_utrs = makeUtrsChain({ insertResult: { data: null, error: { code: '23505' } } });
 
