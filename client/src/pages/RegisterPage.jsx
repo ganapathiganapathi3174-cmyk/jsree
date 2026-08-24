@@ -77,10 +77,10 @@ export default function RegisterPage() {
         toast.success('Registration and payment approved!');
         navigate('/dashboard');
       } else if (verification?.status === 'rejected') {
-        toast.success('Registration complete! Payment is pending admin review.');
+        toast.error(`Payment could not be verified (${verification.reason || 'details in payment status'}). Please resubmit a valid screenshot.`);
         navigate('/payment-status');
       } else {
-        toast.success('Registration complete! Payment submitted for review.');
+        toast.success('Registration complete! Payment verification could not finish — please resubmit your screenshot.');
         navigate('/payment-status');
       }
     } catch (err) {

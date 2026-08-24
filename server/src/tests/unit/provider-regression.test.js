@@ -291,3 +291,54 @@ describe('Duplicate UTR protection still enforced', () => {
     expect(outcome.reservedUtr).toBe('FRESHUTR123456');
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Time relationship matrix (server clock fixed at 24 Aug 2026 13:00 IST).
+// transactionTime <= verificationTime for legitimate payments.
+// ─────────────────────────────────────────────────────────────
+describe('Time relationship: recent past approved, stale/future rejected', () => {
+  const receiptAt = (istLine) => [
+    'Paytm',
+    'Money Sent Successfully',
+    '\u20B9120',
+    `To: ${RECEIVER_UPI}`,
+    'UPI Ref No: TMX24082400001',
+    istLine,
+  ].join('\n');
+
+  async function decideAt(istLine) {
+    runOCR.mockResolvedValue({ text: receiptAt(istLine), confidence: 90 });
+    const { verificationResult } = await verify();
+    return verificationResult;
+  }
+
+  it('1. payment 2 minutes before upload -> APPROVED', async () => {
+    expect((await decideAt('24 Aug 2026, 12:58 PM')).decision).toBe('approved');
+  });
+
+  it('2. payment 10 minutes before upload -> APPROVED', async () => {
+    expect((await decideAt('24 Aug 2026, 12:50 PM')).decision).toBe('approved');
+  });
+
+  it('3. payment 29 minutes before upload -> APPROVED', async () => {
+    expect((await decideAt('24 Aug 2026, 12:31 PM')).decision).toBe('approved');
+  });
+
+  it('4. payment 45 minutes before upload (older than window) -> REJECTED', async () => {
+    const r = await decideAt('24 Aug 2026, 12:15 PM');
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('INVALID_PAYMENT_DATE');
+  });
+
+  it('5. genuinely future payment beyond tolerance (+35 min) -> REJECTED', async () => {
+    const r = await decideAt('24 Aug 2026, 1:35 PM');
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('INVALID_PAYMENT_DATE');
+  });
+
+  it('6. payment from previous day -> REJECTED', async () => {
+    const r = await decideAt('23 Aug 2026, 12:58 PM');
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('INVALID_PAYMENT_DATE');
+  });
+});

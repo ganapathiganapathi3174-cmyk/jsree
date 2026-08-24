@@ -55,10 +55,13 @@ export default function PaymentStatusPage() {
       };
     }
     if (pending) {
+      const isManualReview = pending.status === 'manual_review';
       return {
         icon: <Clock className="h-5 w-5" />,
-        title: 'Payment under review',
-        body: 'Your account is pending activation. You will be able to access the dashboard once your registration payment is approved.',
+        title: isManualReview ? 'Payment needs re-verification' : 'Verifying your payment',
+        body: isManualReview
+          ? 'This payment was queued under an older review process. Upload your screenshot again and it will be verified automatically.'
+          : 'Your account will be activated automatically once your registration payment is verified.',
         tone: 'bg-warning-50 border-warning-200 text-warning-800'
       };
     }
@@ -120,8 +123,10 @@ export default function PaymentStatusPage() {
                   <p className="text-sm text-gray-600">
                     Plan: ₹{activePayment.selected_plan} | Submitted: {new Date(activePayment.submitted_at).toLocaleString()}
                   </p>
-                  {activePayment.rejection_reason && (
-                    <p className="text-sm text-error-600">Reason: {activePayment.rejection_reason}</p>
+                  {(activePayment.rejection_reason || activePayment.verification_result?.reason) && (
+                    <p className="text-sm text-error-600">
+                      Reason: {activePayment.rejection_reason || activePayment.verification_result.reason}
+                    </p>
                   )}
                   {activePayment.screenshot_url && (
                     <button onClick={() => setSelected(activePayment)} className="btn-secondary text-sm mt-2">

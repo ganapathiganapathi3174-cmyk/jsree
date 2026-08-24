@@ -75,7 +75,12 @@ export default function AdminPayments() {
                   <td className="px-4 py-3"><p className="font-medium text-gray-900">{p.user?.full_name || p.user_name || p.user_id?.slice(0,8)}</p><p className="text-xs text-gray-500">{p.user?.email || p.user_email}</p></td>
                   <td className="px-4 py-3 font-semibold text-gray-900 text-right">₹{p.expected_amount}</td>
                   <td className="px-4 py-3 text-gray-600">₹{p.selected_plan}</td>
-                  <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={p.status} />
+                    {(p.rejection_reason || p.verification_result?.reason) && (
+                      <p className="text-[11px] text-error-600 mt-1 max-w-[180px] break-words">{p.rejection_reason || p.verification_result.reason}</p>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-500">{new Date(p.submitted_at).toLocaleString()}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">

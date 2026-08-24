@@ -157,7 +157,11 @@ export async function uploadScreenshot(paymentId, file, userId) {
   const { data: payment } = await supabase.from('payments').select('id, user_id, status').eq('id', paymentId).single();
   if (!payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
   if (payment.user_id !== userId) throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
-  if (payment.status !== 'pending') throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
+  // Accept the same statuses verification acts on. Legacy rows stuck in
+  // 'manual_review' (produced by earlier decision rules) can resubmit and
+  // are resolved by the current binary engine on this upload.
+  const SUBMITTABLE = ['pending', 'manual_review'];
+  if (!SUBMITTABLE.includes(payment.status)) throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
 
   // Screenshot content hash — used to detect the SAME proof image being
   // reused for multiple registrations (duplicate-proof rule). Only an
