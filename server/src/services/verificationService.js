@@ -5,6 +5,7 @@ import {
   matchUPI,
   runAmountRecoveryOCR,
   isWithinTimeWindow,
+  isWithinForwardWindow,
   dateTimeEntryToDate,
   isSameIstDay,
 } from './ocrService.js';
@@ -159,11 +160,13 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // Deterministic clock for tests; production uses the real server clock.
   const verificationTime = now instanceof Date ? now : new Date();
   const windowMinutes = PAYMENT_TIME_WINDOW_MINUTES;
-  const dateValid = isWithinTimeWindow(date, verificationTime, windowMinutes);
+  // Forward-only: transaction must be NOW or in the future (up to +30 min).
+  // Past transactions (even 1 second ago) do NOT auto-approve.
+  const dateValid = isWithinForwardWindow(date, verificationTime, windowMinutes);
 
   // "Same correct IST day, no exact time on the receipt" — not enough to
-  // auto-approve, but enough to route to admin review instead of a hard
-  // INVALID_PAYMENT_DATE rejection (false-rejection source).
+  // auto-approve (forward window requires exact time), but enough to route
+  // to admin review instead of a hard INVALID_PAYMENT_DATE rejection.
   const dateAmbiguous = !dateValid && !!date && !(timeEntry || anyEntry)?.hasTime && isSameIstDay(date, verificationTime);
 
   const { decision, reason } = decidePaymentVerification({
@@ -204,6 +207,46 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     status: transactionStatus ? transactionStatus.matched : null,
   };
 
+  // Field-level confidence scoring: per-field reliability indicators for
+  // admin debugging and potential analytics.  None of these affect the
+  // approve/reject decision — they are informational only.
+  const fieldConfidence = {
+    amount: {
+      confidence: amountMatch ? 'high' : (extractedAmounts.length > 0 ? 'low' : 'none'),
+      reason: amountMatch
+        ? 'Extracted amount matches expected'
+        : (extractedAmounts.length > 0
+          ? `Extracted ${extractedAmounts.join(', ')} does not match expected ${expectedAmount}`
+          : 'No amount found in screenshot'),
+    },
+    receiverUpi: {
+      confidence: upiMatch ? 'high' : (extractedUPIs.length > 0 ? 'low' : 'none'),
+      reason: upiMatch
+        ? 'Receiver UPI matches expected'
+        : (extractedUPIs.length > 0
+          ? `Found ${detectedUpi} does not match expected ${receiverUpi}`
+          : 'No UPI found in screenshot'),
+    },
+    utr: {
+      confidence: utr ? 'high' : 'none',
+      reason: utr ? `UTR found: ${utr}` : 'No UTR found in screenshot',
+    },
+    transactionDate: {
+      confidence: (timeEntry || anyEntry)?.hasTime ? 'high' : (date ? 'medium' : 'none'),
+      reason: dateValid
+        ? `Date/time within forward window`
+        : (dateAmbiguous
+          ? 'Date found but no exact time (manual review)'
+          : 'No valid transaction date found'),
+    },
+    transactionStatus: {
+      confidence: transactionStatus ? 'high' : 'none',
+      reason: transactionStatus
+        ? `Status detected: ${transactionStatus.status}`
+        : 'No transaction status detected in screenshot',
+    },
+  };
+
   return {
     verificationResult: {
       ocrConfidence,
@@ -223,6 +266,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       reason: effectiveReason,
       checks,
       detected,
+      fieldConfidence,
     },
     verificationTime,
     utr,

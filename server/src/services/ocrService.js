@@ -77,7 +77,7 @@ export function extractAmounts(text) {
   const patterns = [
     /(?:₹|Rs\.?|INR)\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/gi,
     /(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:₹|Rs\.?|INR)/gi,
-    /(?:amount|paid|sent|total|debit(?:ed)?)\s*[:\-]?\s*(?:₹|Rs\.?|INR)?\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/gi,
+    /(?:you\s+paid|payment\s+(?:of|amount)?|amount|paid|sent|total|debit(?:ed)?|transferred)\s*[:\-]?\s*(?:₹|Rs\.?|INR)?\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/gi,
   ];
   const amounts = [];
   for (const re of patterns) {
@@ -127,7 +127,7 @@ export function extractUPIs(text) {
 export function extractUTRs(text) {
   const spaceNormalized = text.replace(/(\d)\s+(\d)/g, '$1$2');
   const labeled = [];
-  const labeledRe = /(?:utr|txn|transaction|ref(?:erence)?|upi\s*ref|transaction\s*id)\s*(?:no|num|id|#)?\s*[:\-]?\s*([A-Za-z0-9_]{6,30})/gi;
+  const labeledRe = /(?:utr|txn|transaction|ref(?:erence)?|upi\s*ref(?:\s*no)?|transaction\s*id|bank\s*ref|payment\s*ref|order\s*id|reference\s*number)\s*(?:no|num|id|#|number)?\s*[:\-]?\s*([A-Za-z0-9_]{6,30})/gi;
   let m;
   while ((m = labeledRe.exec(spaceNormalized)) !== null) {
     const v = normalizeUTR(m[1]).toUpperCase();
@@ -152,22 +152,23 @@ export function extractDates(text) {
   const patterns = [
     /(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})\s*[\/\-\.]\s*(\d{2,4})\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?/gi,
     /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{2,4})/gi,
+    /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{1,2}),?\s+(\d{2,4})/gi,
   ];
   const months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
   const dates = [];
   for (const re of patterns) {
     let m;
     while ((m = re.exec(text)) !== null) {
-// For first pattern: m[1]=day, m[2]=month, m[3]=year, m[4]=time (optional)
-      // For second pattern: m[1]=day, m[2]=month name, m[3]=year
       let dateStr;
-      const monthName = months[m[2].toLowerCase()];
+      const monthNameIdx = months[(m[2] || m[1] || '').toLowerCase()];
       if (m[4] !== undefined) {
-        // First pattern with optional time
         dateStr = `${m[1]}/${m[2]}/${m[3]} ${m[4] || ''}`.trim();
-      } else if (monthName !== undefined) {
-        // Second pattern (month name) -> normalize to numeric month
-        dateStr = `${m[1]}/${monthName + 1}/${m[3]}`;
+      } else if (m[2] && monthNameIdx !== undefined) {
+        // Pattern 2: "19 Aug 2026" -> m[1]=day, m[2]=month, m[3]=year
+        dateStr = `${m[1]}/${monthNameIdx + 1}/${m[3]}`;
+      } else if (m[1] && months[m[1].toLowerCase()] !== undefined && m[2] && m[3]) {
+        // Pattern 3: "Aug 19, 2026" -> m[1]=month, m[2]=day, m[3]=year
+        dateStr = `${m[2]}/${months[m[1].toLowerCase()] + 1}/${m[3]}`;
       } else {
         dateStr = `${m[1]}/${m[2]}/${m[3]}`;
       }
@@ -191,40 +192,126 @@ export function extractDates(text) {
 // ─────────────────────────────────────────────────────────────
 const TIME_SUFFIX = String.raw`\s*[,]?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?`;
 
+// Date-only regexes (no time required) — used to detect date-only lines
+// so cross-line time pairing works.
+const DATE_ONLY_DDMMYYYY = /(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})\s*[\/\-\.]\s*(\d{2,4})/i;
+const DATE_ONLY_MONTHNAME = /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{2,4})/i;
+const DATE_ONLY_US = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{1,2}),?\s+(\d{2,4})/i;
+
+// Date+time regexes (time required) — used to extract full date+time from
+// a single line.
+const DATE_TIME_DDMMYYYY = new RegExp(String.raw`(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})\s*[\/\-\.]\s*(\d{2,4})` + TIME_SUFFIX, 'i');
+const DATE_TIME_MONTHNAME = new RegExp(String.raw`(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{2,4})` + TIME_SUFFIX, 'i');
+const DATE_TIME_US = new RegExp(String.raw`(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{1,2}),?\s+(\d{2,4})` + TIME_SUFFIX, 'i');
+
+function buildDateTimeEntry(raw, day, month, year, hour, minute, second, ampm, hasTime) {
+  return { raw, day, month, year, hour, minute, second, ampm, hasTime };
+}
+
 export function extractDateTimes(text) {
   if (!text) return [];
   const results = [];
   const lines = String(text).split(/\r?\n/);
+
+  let lastDateEntry = null;
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line) continue;
 
-    let m = line.match(new RegExp(String.raw`(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})\s*[\/\-\.]\s*(\d{2,4})` + TIME_SUFFIX, 'i'));
+    // Try date+time patterns first (time on same line).
+    let m = line.match(DATE_TIME_DDMMYYYY);
     if (m && !/@/.test(line)) {
-      results.push({
-        raw: line,
-        day: parseInt(m[1], 10), month: parseInt(m[2], 10), year: parseInt(m[3], 10),
-        hour: m[4] !== undefined ? parseInt(m[4], 10) : null,
-        minute: m[5] !== undefined ? parseInt(m[5], 10) : null,
-        second: m[6] !== undefined ? parseInt(m[6], 10) : null,
-        ampm: m[7] || null,
-        hasTime: m[4] !== undefined,
-      });
+      const entry = buildDateTimeEntry(line,
+        parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10),
+        m[4] !== undefined ? parseInt(m[4], 10) : null,
+        m[5] !== undefined ? parseInt(m[5], 10) : null,
+        m[6] !== undefined ? parseInt(m[6], 10) : null,
+        m[7] || null, m[4] !== undefined);
+      results.push(entry);
+      lastDateEntry = entry.hasTime ? null : entry;
       continue;
     }
 
-    m = line.match(new RegExp(String.raw`(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{2,4})` + TIME_SUFFIX, 'i'));
+    m = line.match(DATE_TIME_MONTHNAME);
     if (m) {
-      const month = monthNumber(m[2]);
-      results.push({
-        raw: line,
-        day: parseInt(m[1], 10), month, year: parseInt(m[3], 10),
-        hour: m[4] !== undefined ? parseInt(m[4], 10) : null,
-        minute: m[5] !== undefined ? parseInt(m[5], 10) : null,
-        second: m[6] !== undefined ? parseInt(m[6], 10) : null,
-        ampm: m[7] || null,
-        hasTime: m[4] !== undefined,
-      });
+      const entry = buildDateTimeEntry(line,
+        parseInt(m[1], 10), monthNumber(m[2]), parseInt(m[3], 10),
+        m[4] !== undefined ? parseInt(m[4], 10) : null,
+        m[5] !== undefined ? parseInt(m[5], 10) : null,
+        m[6] !== undefined ? parseInt(m[6], 10) : null,
+        m[7] || null, m[4] !== undefined);
+      results.push(entry);
+      lastDateEntry = entry.hasTime ? null : entry;
+      continue;
+    }
+
+    m = line.match(DATE_TIME_US);
+    if (m) {
+      const entry = buildDateTimeEntry(line,
+        parseInt(m[2], 10), monthNumber(m[1]), parseInt(m[3], 10),
+        m[4] !== undefined ? parseInt(m[4], 10) : null,
+        m[5] !== undefined ? parseInt(m[5], 10) : null,
+        m[6] !== undefined ? parseInt(m[6], 10) : null,
+        m[7] || null, m[4] !== undefined);
+      results.push(entry);
+      lastDateEntry = entry.hasTime ? null : entry;
+      continue;
+    }
+
+    // Date-only patterns (no time) — record for cross-line pairing.
+    m = line.match(DATE_ONLY_DDMMYYYY);
+    if (m && !/@/.test(line)) {
+      const entry = buildDateTimeEntry(line,
+        parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10),
+        null, null, null, null, false);
+      results.push(entry);
+      lastDateEntry = entry;
+      continue;
+    }
+
+    m = line.match(DATE_ONLY_MONTHNAME);
+    if (m) {
+      const entry = buildDateTimeEntry(line,
+        parseInt(m[1], 10), monthNumber(m[2]), parseInt(m[3], 10),
+        null, null, null, null, false);
+      results.push(entry);
+      lastDateEntry = entry;
+      continue;
+    }
+
+    m = line.match(DATE_ONLY_US);
+    if (m) {
+      const entry = buildDateTimeEntry(line,
+        parseInt(m[2], 10), monthNumber(m[1]), parseInt(m[3], 10),
+        null, null, null, null, false);
+      results.push(entry);
+      lastDateEntry = entry;
+      continue;
+    }
+
+    // Standalone time-only line — pair with the most recent date-only entry.
+    if (lastDateEntry && !lastDateEntry.hasTime) {
+      const timeOnly = line.match(new RegExp(String.raw`^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$`, 'i'));
+      if (timeOnly) {
+        const hour = parseInt(timeOnly[1], 10);
+        const minute = parseInt(timeOnly[2], 10);
+        const second = timeOnly[3] !== undefined ? parseInt(timeOnly[3], 10) : 0;
+        const ampm = timeOnly[4] || null;
+        if (hour <= 23 && minute <= 59 && second <= 59) {
+          const paired = buildDateTimeEntry(
+            `${lastDateEntry.raw} ${line}`,
+            lastDateEntry.day, lastDateEntry.month, lastDateEntry.year,
+            hour, minute, second, ampm, true);
+          results.push(paired);
+          // Update the date-only entry to reflect the paired time.
+          lastDateEntry.hasTime = true;
+          lastDateEntry.hour = hour;
+          lastDateEntry.minute = minute;
+          lastDateEntry.second = second;
+          lastDateEntry.ampm = ampm;
+          lastDateEntry = null;
+        }
+      }
     }
   }
   return results;
@@ -270,8 +357,8 @@ export function isSameIstDay(dateA, dateB) {
 export function extractTransactionStatus(text) {
   if (!text) return null;
   const lower = String(text).toLowerCase();
-  const successRe = /\b(completed|success(?:ful|fully)?|paid|money\s*sent)\b/;
-  const failedRe = /\b(failed|declined|reversed|unsuccessful|not\s*completed|cancelled)\b/;
+  const successRe = /\b(completed|success(?:ful|fully)?|paid|money\s*sent|sent\s+successfully|payment\s+successful|transaction\s+successful|transferred)\b/;
+  const failedRe = /\b(failed|declined|reversed|unsuccessful|not\s+completed|cancelled?|pending|processing)\b/;
   const success = lower.match(successRe);
   const failed = lower.match(failedRe);
   if (failed) return { status: 'failed', matched: failed[0] };
@@ -359,6 +446,18 @@ export function isWithinTimeWindow(date, now, windowMinutes) {
   const diff = now.getTime() - date.getTime();
   const bound = windowMinutes * 60 * 1000;
   return diff >= -bound && diff <= bound;
+}
+
+// Forward-only time window: transaction must be >= serverTime AND
+// <= serverTime + windowMinutes.  Past transactions (even 1 second ago)
+// do NOT pass.  Used by the verification layer to enforce:
+//   "transactionDateTime >= serverCurrentDateTime
+//    AND transactionDateTime <= serverCurrentDateTime + 30 minutes"
+export function isWithinForwardWindow(date, now, windowMinutes) {
+  if (!date) return false;
+  const diff = date.getTime() - now.getTime();
+  const bound = windowMinutes * 60 * 1000;
+  return diff >= 0 && diff <= bound;
 }
 
 export { IST_UTC_OFFSET_MS, IST_TIMEZONE as TIMEZONE };
