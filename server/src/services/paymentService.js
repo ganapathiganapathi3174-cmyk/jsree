@@ -332,6 +332,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
 export async function getPaymentStatus(paymentId) {
   const { data: payment, error } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, created_at, verified_at, verification_result, rejection_reason').eq('id', paymentId).single();
   if (error || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
+  if (payment.status === 'manual_review') payment.status = 'pending';
   return payment;
 }
 
@@ -340,6 +341,12 @@ export async function getUserPayments(userId) {
     .select('id, selected_plan, expected_amount, status, screenshot_url, rejection_reason, verification_result, submitted_at, verified_at, approved_at, rejected_at, created_at')
     .eq('user_id', userId).order('created_at', { ascending: false });
   if (error) throw { message: 'Failed to fetch payments', code: 'FETCH_FAILED' };
+  // Legacy manual_review rows are never exposed to the frontend.
+  // They appear as "pending" so the user can resubmit; on resubmission
+  // the binary engine resolves them to approved/rejected.
+  for (const p of payments) {
+    if (p.status === 'manual_review') p.status = 'pending';
+  }
   return payments;
 }
 

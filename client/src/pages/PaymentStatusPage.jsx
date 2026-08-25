@@ -55,13 +55,10 @@ export default function PaymentStatusPage() {
       };
     }
     if (pending) {
-      const isManualReview = pending.status === 'manual_review';
       return {
         icon: <Clock className="h-5 w-5" />,
-        title: isManualReview ? 'Payment needs re-verification' : 'Verifying your payment',
-        body: isManualReview
-          ? 'This payment was queued under an older review process. Upload your screenshot again and it will be verified automatically.'
-          : 'Your account will be activated automatically once your registration payment is verified.',
+        title: 'Verifying your payment',
+        body: 'Your account will be activated automatically once your registration payment is verified.',
         tone: 'bg-warning-50 border-warning-200 text-warning-800'
       };
     }
