@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { verifyPayment } from '../../services/paymentService.js';
+import { getUserPayments } from '../../services/paymentService.js';
 import { runScreenshotVerification } from '../../services/verificationService.js';
 import { applyTopupVerification } from '../../services/topupService.js';
 
@@ -304,5 +305,20 @@ describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
     expect(statuses).toContain('rejected');
     expect(statuses.every(s => s !== 'manual_review')).toBe(true);
     expect(db.state.inserts.wallet_transactions || []).toHaveLength(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// USER-FACING API: legacy manual_review never reaches the frontend.
+// ═══════════════════════════════════════════════════════════════
+describe('USER-FACING API: getUserPayments maps manual_review -> pending', () => {
+  it('legacy manual_review row returned as pending to the user', async () => {
+    db.state.paymentRow = { id: 'pay-lr', status: 'manual_review', selected_plan: 120, expected_amount: 120 };
+    db.state.results.payments = { data: [{ id: 'pay-lr', status: 'manual_review', selected_plan: 120, expected_amount: 120 }], error: null };
+    const payments = await getUserPayments('user-1');
+    const statuses = payments.map(p => p.status);
+    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ case: 'legacy-manual_review-to-user', statuses }));
+    expect(statuses).toContain('pending');
+    expect(statuses).not.toContain('manual_review');
   });
 });
