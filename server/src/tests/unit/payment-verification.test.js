@@ -2,138 +2,167 @@ import { describe, it, expect } from 'vitest';
 import { decidePaymentVerification } from '../../services/paymentService.js';
 
 // ─────────────────────────────────────────────────────────────
-// FINAL PAYMENT VERIFICATION RULE
+// PAYMENT VERIFICATION RULE — binary only
 //
-// Approval requires:
-//   1. ADMIN UPI MATCH
-//   2. VALID PAYMENT DATE/TIME
-//   3. READABLE/AUTHENTIC SCREENSHOT (OCR confidence gate)
+// Approval requires ALL of:
+//   1. UPI match (exact normalized match)
+//   2. Amount match (exact)
+//   3. Date/time within symmetric ±30 min window on same IST day
+//   4. Transaction status = success
+//   5. UTR present
+//   6. OCR confidence ≥ 55
 //
-// Amount is intentionally NOT part of the decision — a correct receipt that
-// shows a different amount than the selected plan amount is STILL approved.
-// UTR has ZERO influence on the decision (UTR uniqueness is enforced by the
-// separate approve/duplicate gate, not by this engine).
+// Any single gate failing → rejected.
 // ─────────────────────────────────────────────────────────────
 
+const ALL_GATES_PASS = {
+  upiMatch: true,
+  amountMatch: true,
+  dateValid: true,
+  transactionStatusOk: true,
+  utrPresent: true,
+  ocrConfidence: 90,
+};
+
 describe('Payment Verification Decision Engine', () => {
-  it('TEST 1: correct UPI + correct amount + valid date/time + NO UTR -> APPROVED', () => {
-    const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: true });
+  it('TEST 1: all gates pass -> APPROVED', () => {
+    const { decision, reason } = decidePaymentVerification(ALL_GATES_PASS);
     expect(decision).toBe('approved');
     expect(reason).toBeNull();
   });
 
-  it('TEST 2: correct UPI + correct amount + unreadable UTR + valid date/time -> APPROVED', () => {
-    // UTR unreadable/gibberish is ignored — decision still approved.
-    const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: true });
-    expect(decision).toBe('approved');
-    expect(reason).toBeNull();
+  it('TEST 2: missing UTR -> REJECTED (MISSING_UTR)', () => {
+    const { decision, reason } = decidePaymentVerification({
+      ...ALL_GATES_PASS, utrPresent: false,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('MISSING_UTR');
   });
 
-  it('TEST 3: correct UPI + correct amount + valid date/time + random UTR -> APPROVED', () => {
-    // Random UTR has zero influence.
-    const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: true });
-    expect(decision).toBe('approved');
-    expect(reason).toBeNull();
-  });
-
-  it('TEST 4: correct UPI + WRONG amount + valid date/time -> APPROVED (amount removed from decision)', () => {
-    const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('approved');
-    expect(reason).toBeNull();
-  });
-
-  it('TEST 5: WRONG UPI + correct amount + valid date/time -> REJECTED (UPI_MISMATCH)', () => {
-    const { decision, reason } = decidePaymentVerification({ upiMatch: false, amountMatch: true, dateValid: true });
+  it('TEST 3: wrong UPI -> REJECTED (UPI_MISMATCH)', () => {
+    const { decision, reason } = decidePaymentVerification({
+      ...ALL_GATES_PASS, upiMatch: false,
+    });
     expect(decision).toBe('rejected');
     expect(reason).toBe('UPI_MISMATCH');
   });
 
-  it('TEST 6: correct UPI + correct amount + INVALID date/time -> REJECTED (INVALID_PAYMENT_DATE)', () => {
-    const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: false });
+  it('TEST 4: wrong amount -> REJECTED (AMOUNT_MISMATCH)', () => {
+    const { decision, reason } = decidePaymentVerification({
+      ...ALL_GATES_PASS, amountMatch: false,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('AMOUNT_MISMATCH');
+  });
+
+  it('TEST 5: invalid date -> REJECTED (INVALID_PAYMENT_DATE)', () => {
+    const { decision, reason } = decidePaymentVerification({
+      ...ALL_GATES_PASS, dateValid: false,
+    });
     expect(decision).toBe('rejected');
     expect(reason).toBe('INVALID_PAYMENT_DATE');
   });
 
-  it('TEST 7: ₹120 -> ₹120 APPROVED', () => {
-    const { decision } = decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: true });
+  it('TEST 6: transaction failed -> REJECTED (TRANSACTION_FAILED)', () => {
+    const { decision, reason } = decidePaymentVerification({
+      ...ALL_GATES_PASS, transactionStatusOk: false,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('TRANSACTION_FAILED');
+  });
+
+  it('TEST 7: low OCR confidence -> REJECTED (LOW_OCR_CONFIDENCE)', () => {
+    const { decision, reason } = decidePaymentVerification({
+      ...ALL_GATES_PASS, ocrConfidence: 30,
+    });
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('LOW_OCR_CONFIDENCE');
+  });
+
+  it('TEST 8: OCR confidence undefined -> APPROVED (treated as confident)', () => {
+    const { decision } = decidePaymentVerification({
+      ...ALL_GATES_PASS, ocrConfidence: undefined,
+    });
     expect(decision).toBe('approved');
   });
 
-  it('TEST 8: ₹500 -> ₹500 APPROVED', () => {
-    const { decision } = decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: true });
-    expect(decision).toBe('approved');
-  });
-
-  it('TEST 9: ₹1000 -> ₹1000 APPROVED', () => {
-    const { decision } = decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: true });
-    expect(decision).toBe('approved');
-  });
-
-  it('TEST 10: ₹120 screenshot -> expected ₹500 APPROVED (amount-independent)', () => {
-    const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('approved');
-    expect(reason).toBeNull();
-  });
-
-  it('TEST 11: ₹500 screenshot -> expected ₹1000 APPROVED (amount-independent)', () => {
-    const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('approved');
-    expect(reason).toBeNull();
-  });
-
-  it('TEST 12: ₹1000 screenshot -> expected ₹120 APPROVED (amount-independent)', () => {
-    const { decision, reason } = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true });
-    expect(decision).toBe('approved');
-    expect(reason).toBeNull();
-  });
-});
-
-describe('Amount does NOT affect the approval/rejection decision', () => {
-  it('flipping amountMatch true<->false never changes the outcome', () => {
-    const cases = [
-      // upi, date -> decision
-      [true, true, 'approved'],
-      [false, true, 'rejected'],
-      [true, false, 'rejected'],
-      [false, false, 'rejected'],
-    ];
-    for (const [upiMatch, dateValid, expected] of cases) {
-      for (const amountMatch of [true, false]) {
-        const { decision } = decidePaymentVerification({ upiMatch, amountMatch, dateValid });
-        expect(decision, `upi=${upiMatch} amount=${amountMatch} date=${dateValid}`).toBe(expected);
-      }
+  it('TEST 9: any single gate failing always rejects', () => {
+    const gates = ['upiMatch', 'amountMatch', 'dateValid', 'transactionStatusOk', 'utrPresent'];
+    for (const gate of gates) {
+      const args = { ...ALL_GATES_PASS, [gate]: false };
+      const { decision } = decidePaymentVerification(args);
+      expect(decision, `${gate}=false should reject`).toBe('rejected');
     }
   });
 
-  it('a wrong amount never produces an AMOUNT_MISMATCH rejection', () => {
-    const r = decidePaymentVerification({ upiMatch: true, amountMatch: false, dateValid: true, ocrConfidence: 90 });
-    expect(r.decision).toBe('approved');
-    expect(r.reason).not.toBe('AMOUNT_MISMATCH');
+  it('TEST 10: multiple gates failing still rejects (not approving)', () => {
+    const { decision, reason } = decidePaymentVerification({
+      upiMatch: false, amountMatch: false, dateValid: false,
+      transactionStatusOk: false, utrPresent: false, ocrConfidence: 10,
+    });
+    expect(decision).toBe('rejected');
+  });
+
+  it('TEST 11: ₹120 correct -> APPROVED', () => {
+    const { decision } = decidePaymentVerification(ALL_GATES_PASS);
+    expect(decision).toBe('approved');
+  });
+
+  it('TEST 12: ₹500 correct -> APPROVED', () => {
+    const { decision } = decidePaymentVerification(ALL_GATES_PASS);
+    expect(decision).toBe('approved');
+  });
+
+  it('TEST 13: ₹1000 correct -> APPROVED', () => {
+    const { decision } = decidePaymentVerification(ALL_GATES_PASS);
+    expect(decision).toBe('approved');
   });
 });
 
-describe('UTR has ZERO influence on the decision', () => {
-  it('decision engine does not read UTR input at all', () => {
-    // In every following case the UTR is irrelevant: only
-    // upiMatch / dateValid drive the decision (amount is ignored too).
-    const cases = [
-      // upi, date -> decision
-      [true, true, 'approved'],
-      [true, false, 'rejected'],
-      [false, true, 'rejected'],
-      [false, false, 'rejected'],
-    ];
-    for (const [upiMatch, dateValid, expected] of cases) {
-      const { decision } = decidePaymentVerification({ upiMatch, amountMatch: false, dateValid });
-      expect(decision, `upi=${upiMatch} date=${dateValid}`).toBe(expected);
-    }
+describe('Each gate independently causes rejection', () => {
+  it('wrong UPI produces UPI_MISMATCH', () => {
+    const r = decidePaymentVerification({ ...ALL_GATES_PASS, upiMatch: false });
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('UPI_MISMATCH');
   });
 
-  it('missing / duplicate / random UTR cannot flip an otherwise-approved decision', () => {
-    const base = decidePaymentVerification({ upiMatch: true, amountMatch: true, dateValid: true });
-    expect(base.decision).toBe('approved');
-    // Even if a UTR were extracted (here simulated historically), approval
-    // logic signature accepts no UTR parameter — nothing to skip or match.
-    expect(decidePaymentVerification.length).toBeLessThan(2);
+  it('wrong amount produces AMOUNT_MISMATCH', () => {
+    const r = decidePaymentVerification({ ...ALL_GATES_PASS, amountMatch: false });
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('AMOUNT_MISMATCH');
+  });
+
+  it('wrong date produces INVALID_PAYMENT_DATE', () => {
+    const r = decidePaymentVerification({ ...ALL_GATES_PASS, dateValid: false });
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('INVALID_PAYMENT_DATE');
+  });
+
+  it('failed transaction produces TRANSACTION_FAILED', () => {
+    const r = decidePaymentVerification({ ...ALL_GATES_PASS, transactionStatusOk: false });
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('TRANSACTION_FAILED');
+  });
+
+  it('missing UTR produces MISSING_UTR', () => {
+    const r = decidePaymentVerification({ ...ALL_GATES_PASS, utrPresent: false });
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('MISSING_UTR');
+  });
+
+  it('low OCR confidence produces LOW_OCR_CONFIDENCE', () => {
+    const r = decidePaymentVerification({ ...ALL_GATES_PASS, ocrConfidence: 40 });
+    expect(r.decision).toBe('rejected');
+    expect(r.reason).toBe('LOW_OCR_CONFIDENCE');
+  });
+});
+
+describe('UTR is a required gate', () => {
+  it('missing UTR flips otherwise-approved to rejected', () => {
+    const approved = decidePaymentVerification({ ...ALL_GATES_PASS, utrPresent: true });
+    const rejected = decidePaymentVerification({ ...ALL_GATES_PASS, utrPresent: false });
+    expect(approved.decision).toBe('approved');
+    expect(rejected.decision).toBe('rejected');
+    expect(rejected.reason).toBe('MISSING_UTR');
   });
 });

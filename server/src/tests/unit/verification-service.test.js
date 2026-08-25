@@ -13,7 +13,6 @@ vi.mock('../../services/ocrService.js', async (importOriginal) => {
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 
-// Real UPI screenshots show IST (Asia/Kolkata) wall-clock time.
 function istClock(minOffset = 0) {
   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
   const ist = new Date(Date.now() + minOffset * 60 * 1000 + IST_OFFSET_MS);
@@ -33,13 +32,22 @@ beforeEach(() => {
 });
 
 describe('runScreenshotVerification (shared pipeline, payments + top-ups)', () => {
-  it('correct UPI + correct amount + valid date + NO UTR -> APPROVED', async () => {
-    runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, null, istClock()), confidence: 90 });
+  it('correct UPI + correct amount + valid date + UTR -> APPROVED', async () => {
+    runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, 'UTR12345', istClock()), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI,
     });
     expect(verificationResult.decision).toBe('approved');
-    expect(verificationResult.utr).toBeNull();
+    expect(verificationResult.utr).toBe('UTR12345');
+  });
+
+  it('correct UPI + correct amount + valid date + NO UTR -> REJECTED (MISSING_UTR)', async () => {
+    runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, null, istClock()), confidence: 90 });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI,
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('MISSING_UTR');
   });
 
   it('correct UPI + correct amount + valid date + duplicate UTR -> APPROVED', async () => {
@@ -68,14 +76,13 @@ describe('runScreenshotVerification (shared pipeline, payments + top-ups)', () =
     expect(verificationResult.reason).toBe('UPI_MISMATCH');
   });
 
-  it('wrong amount with otherwise-valid receipt -> still APPROVED (amount removed from decision)', async () => {
+  it('wrong amount -> REJECTED (AMOUNT_MISMATCH)', async () => {
     runOCR.mockResolvedValue({ text: makeText(500, RECEIVER_UPI, 'RANDOM9XYZ', istClock()), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI,
     });
-    expect(verificationResult.decision).toBe('approved');
-    expect(verificationResult.reason).toBeNull();
-    // The mismatch is still recorded for admin display, but never rejects.
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
     expect(verificationResult.amountMatch).toBe(false);
   });
 
@@ -87,37 +94,21 @@ describe('runScreenshotVerification (shared pipeline, payments + top-ups)', () =
     expect(verificationResult.decision).toBe('rejected');
     expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
   });
-});
 
-// ─────────────────────────────────────────────────────────────
-// Regression: amount is REMOVED from the verification decision.
-// A correct screenshot that shows a different amount than the selected
-// plan is still approved. UPI mismatch, invalid date and unreadable
-// screenshots keep rejecting exactly as before.
-// ─────────────────────────────────────────────────────────────
-describe('Amount independence regression (payments + top-ups share this engine)', () => {
-  it('unreadable/missing amount line still APPROVES on valid UPI + date', async () => {
-    runOCR.mockResolvedValue({ text: `Payment Successful\nTo: ${RECEIVER_UPI}\nDate: ${istClock()}\nUTR: X12345`, confidence: 90 });
+  it('all gates pass (UPI + amount + date + UTR + success status) -> APPROVED', async () => {
+    runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, 'UTR99999', istClock()), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI,
     });
-    expect(verificationResult.amountMatch).toBe(false);
     expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.upiMatch).toBe(true);
+    expect(verificationResult.amountMatch).toBe(true);
+    expect(verificationResult.dateValid).toBe(true);
+    expect(verificationResult.utr).toBe('UTR99999');
   });
+});
 
-  it('all amount formats/plans approve when UPI + date are valid', async () => {
-    const cases = [
-      ['₹120', 120], ['₹500', 500], ['₹1000', 1000], ['120.00', 120], ['Rs 120', 120],
-    ];
-    for (const [shown, plan] of cases) {
-      runOCR.mockResolvedValue({ text: makeText(shown, RECEIVER_UPI, 'UTR-1', istClock()), confidence: 90 });
-      const { verificationResult } = await runScreenshotVerification({
-        imageBuffer: Buffer.from('img'), expectedAmount: plan, receiverUpi: RECEIVER_UPI,
-      });
-      expect(verificationResult.decision, `amount ${shown} / plan ${plan}`).toBe('approved');
-    }
-  });
-
+describe('Gate rejection regression (payments + top-ups share this engine)', () => {
   it('wrong UPI still rejects even when the amount matches', async () => {
     runOCR.mockResolvedValue({ text: makeText(120, 'wrongperson@okicici', 'RANDOM9XYZ', istClock()), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({
@@ -127,10 +118,19 @@ describe('Amount independence regression (payments + top-ups share this engine)'
     expect(verificationResult.reason).toBe('UPI_MISMATCH');
   });
 
+  it('wrong amount rejects even when UPI + date are valid', async () => {
+    runOCR.mockResolvedValue({ text: makeText(500, RECEIVER_UPI, 'UTR123', istClock()), confidence: 90 });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI,
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+  });
+
   it('invalid date still rejects regardless of the amount', async () => {
     runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, 'RANDOM9XYZ', istClock(-48 * 60)), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({
-      imageBuffer: Buffer.from('img'), expectedAmount: 500, receiverUpi: RECEIVER_UPI,
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI,
     });
     expect(verificationResult.decision).toBe('rejected');
     expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
@@ -141,5 +141,18 @@ describe('Amount independence regression (payments + top-ups share this engine)'
     await expect(runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI,
     })).rejects.toMatchObject({ code: 'OCR_UNREADABLE' });
+  });
+
+  it('all amount formats with matching UPI + date + UTR + status -> APPROVED', async () => {
+    const cases = [
+      [120, 120], [500, 500], [1000, 1000], [120.00, 120], [999.99, 999.99],
+    ];
+    for (const [ocrAmount, plan] of cases) {
+      runOCR.mockResolvedValue({ text: makeText(ocrAmount, RECEIVER_UPI, '412345678901', istClock()), confidence: 90 });
+      const { verificationResult } = await runScreenshotVerification({
+        imageBuffer: Buffer.from('img'), expectedAmount: plan, receiverUpi: RECEIVER_UPI,
+      });
+      expect(verificationResult.decision, `amount ${ocrAmount} / plan ${plan}`).toBe('approved');
+    }
   });
 });
