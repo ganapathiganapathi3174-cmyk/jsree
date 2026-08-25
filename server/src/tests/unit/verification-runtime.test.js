@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { verifyPayment } from '../../services/paymentService.js';
 import { getUserPayments } from '../../services/paymentService.js';
 import { runScreenshotVerification } from '../../services/verificationService.js';
-import { applyTopupVerification } from '../../services/topupService.js';
+import { applyTopupVerification, getTopupsForUser } from '../../services/topupService.js';
 
 const { runOCR, runAmountRecoveryOCR } = vi.hoisted(() => ({
   runOCR: vi.fn(),
@@ -320,5 +320,70 @@ describe('USER-FACING API: getUserPayments maps manual_review -> pending', () =>
     console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ case: 'legacy-manual_review-to-user', statuses }));
     expect(statuses).toContain('pending');
     expect(statuses).not.toContain('manual_review');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// DEMO/SAMPLE SCREENSHOT: runtime rejection through verifyPayment.
+// ═══════════════════════════════════════════════════════════════
+describe('RUNTIME PATH: DEMO/SAMPLE screenshot rejected', () => {
+
+  function resetDbForDemo() {
+    db.state.paymentRow = seedPaymentRow({ status: 'pending' });
+    db.state.results = {};
+    db.state.updates = {};
+    db.state.inserts = {};
+  }
+
+  it('DEMO screenshot -> rejected with DEMO_SCREENSHOT', async () => {
+    resetDbForDemo();
+    runOCR.mockResolvedValue({
+      text: [
+        'Google Pay', 'DEMO', 'Payment Successful',
+        '₹120', `To Jayaraj`, RECEIVER_UPI,
+        `Date: ${istDateLine(2)}`, 'UPI Ref No: DEMO123456'
+      ].join('\n'),
+      confidence: 90,
+    });
+    runAmountRecoveryOCR.mockResolvedValue([120]);
+    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    const statuses = (db.state.updates.payments || []).map(u => u.status);
+    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ flow: 'demo-rejected', decision: result.decision, reason: result.reason, persistedStatuses: statuses }));
+    expect(result.decision).toBe('rejected');
+    expect(result.reason).toBe('DEMO_SCREENSHOT');
+    expect(statuses).toContain('rejected');
+    expect(statuses.every(s => s !== 'manual_review' && s !== 'approved')).toBe(true);
+  });
+
+  it('SAMPLE screenshot -> rejected with DEMO_SCREENSHOT', async () => {
+    resetDbForDemo();
+    runOCR.mockResolvedValue({
+      text: [
+        'PhonePe', 'SAMPLE', 'Transaction Successful',
+        '₹120', `Paid to ${RECEIVER_UPI}`,
+        '25/08/2026, 9:50 AM', 'UTR: SAMP123456789'
+      ].join('\n'),
+      confidence: 88,
+    });
+    runAmountRecoveryOCR.mockResolvedValue([120]);
+    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    expect(result.decision).toBe('rejected');
+    expect(result.reason).toBe('DEMO_SCREENSHOT');
+  });
+
+  it('TEST payment screenshot -> rejected with DEMO_SCREENSHOT', async () => {
+    resetDbForDemo();
+    runOCR.mockResolvedValue({
+      text: [
+        'UPI', 'TEST PAYMENT', 'Completed',
+        '₹120', RECEIVER_UPI,
+        'Ref No: TEST999888', '25/08/2026, 9:50 AM'
+      ].join('\n'),
+      confidence: 85,
+    });
+    runAmountRecoveryOCR.mockResolvedValue([120]);
+    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    expect(result.decision).toBe('rejected');
+    expect(result.reason).toBe('DEMO_SCREENSHOT');
   });
 });

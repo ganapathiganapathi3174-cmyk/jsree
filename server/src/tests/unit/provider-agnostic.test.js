@@ -1152,3 +1152,46 @@ describe('Absolute guarantee: no path to manual_review', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 10: DEMO/SAMPLE SCREENSHOT REJECTION
+// ═══════════════════════════════════════════════════════════════
+
+describe('Demo/screenshot-authenticity rejection', () => {
+  const demoScreenshots = [
+    ['DEMO screenshot', 'Google Pay\nDEMO\nPayment Successful\n₹120\nTo Jayaraj\n' + RECEIVER_UPI + '\nDate: 25/08/2026, 9:50 AM\nUPI Ref No: 123456789'],
+    ['SAMPLE receipt', 'PhonePe\nSAMPLE\nTransaction Successful\n₹120\nPaid to ' + RECEIVER_UPI + '\n25/08/2026, 9:50 AM\nUTR: 9876543210'],
+    ['SPECIMEN', 'Paytm\nSPECIMEN\nMoney Sent Successfully\n₹120\nTo: ' + RECEIVER_UPI + '\nUPI Ref No: 111222333\n25/08/2026'],
+    ['TEST payment', 'UPI\nTEST PAYMENT\nCompleted\n₹120\n' + RECEIVER_UPI + '\nRef No: 444555666\n25/08/2026, 9:50 AM'],
+    ['MOCK receipt', 'Google Pay\nMOCK\nPayment Successful\n₹120\nTo Jayaraj\n' + RECEIVER_UPI + '\nDate: 25/08/2026, 9:50 AM\nUPI Ref No: 777888999'],
+    ['SIMULATION', 'Bank UPI\nSIMULATION\nTransaction Successful\n₹120\nTo: ' + RECEIVER_UPI + '\n25/08/2026, 9:50 AM\nUPI Ref: 112233445'],
+    ['placeholder text', 'GPay\nThis is a placeholder screenshot\nPayment Successful\n₹120\n' + RECEIVER_UPI + '\nRef: 998877665\n25/08/2026, 9:50 AM'],
+    ['"this is not a real payment"', 'PhonePe\nThis is not a real payment\n₹120\n' + RECEIVER_UPI + '\nUTR: 554433221\n25/08/2026, 9:50 AM\nCompleted'],
+    ['"do not use"', 'UPI\nDo not use this screenshot\n₹120\n' + RECEIVER_UPI + '\nRef No: 123123123\n25/08/2026, 9:50 AM\nPaid'],
+    ['"for testing purposes"', 'Google Pay\nFor testing purposes only\nPayment Successful\n₹120\nTo Jayaraj\n' + RECEIVER_UPI + '\nUPI Ref No: 456456456\n25/08/2026, 9:50 AM'],
+    ['"test only"', 'Paytm\nTEST ONLY\nMoney Sent Successfully\n₹120\nTo: ' + RECEIVER_UPI + '\nUPI Ref No: 789789789\n25/08/2026'],
+    ['"screenshot for demo"', 'UPI\nScreenshot for demo\n₹120\n' + RECEIVER_UPI + '\nUPI Ref No: 321321321\n25/08/2026, 9:50 AM\nCompleted'],
+    ['"payment demo"', 'Google Pay\nPayment Demo\nPayment Successful\n₹120\nTo Jayaraj\n' + RECEIVER_UPI + '\nDate: 25/08/2026, 9:50 AM\nUPI Ref No: 654654654'],
+    ['"upi demo"', 'PhonePe\nUPI Demo\nTransaction Successful\n₹120\nPaid to ' + RECEIVER_UPI + '\n25/08/2026, 9:50 AM\nUTR: 987987987'],
+    ['"fake" screenshot', 'Google Pay\nThis is a fake screenshot\nPayment Successful\n₹120\nTo Jayaraj\n' + RECEIVER_UPI + '\nDate: 25/08/2026, 9:50 AM\nUPI Ref No: 147147147'],
+    ['"dummy" receipt', 'UPI\nDummy receipt\nCompleted\n₹120\n' + RECEIVER_UPI + '\nRef No: 258258258\n25/08/2026, 9:50 AM\nPaid'],
+  ];
+
+  it.each(demoScreenshots)('"%s" -> REJECTED with DEMO_SCREENSHOT', async (label, text) => {
+    runOCR.mockResolvedValue({ text, confidence: 90 });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('DEMO_SCREENSHOT');
+  });
+
+  it('valid receipt (no demo markers) is NOT falsely rejected', async () => {
+    runOCR.mockResolvedValue({ text: gpayReceipt(120, RECEIVER_UPI, '24/08/2026, 1:00 PM'), confidence: 90 });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.reason).toBeNull();
+  });
+});

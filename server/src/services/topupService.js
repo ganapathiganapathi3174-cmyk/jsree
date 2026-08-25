@@ -366,6 +366,10 @@ export async function getTopupsForUser(userId) {
   const { data: received, error: receivedError } = await supabase.from('topups')
     .select('*, sender:users!topups_sender_id_fkey(id, full_name, email)').eq('receiver_id', userId).order('created_at', { ascending: false });
   if (sentError || receivedError) throw { message: 'Failed to fetch topups', code: 'FETCH_FAILED' };
+  // Legacy manual_review rows are never exposed to the frontend.
+  for (const t of [...(sent || []), ...(received || [])]) {
+    if (t.status === 'manual_review') t.status = 'pending';
+  }
   return { sent: sent || [], received: received || [] };
 }
 
@@ -374,5 +378,6 @@ export async function getTopupDetails(topupId) {
     .select('*, sender:users!topups_sender_id_fkey(id, full_name, email), receiver:users!topups_receiver_id_fkey(id, full_name, email)')
     .eq('id', topupId).single();
   if (error || !topup) throw { message: 'Topup not found', code: 'TOPUP_NOT_FOUND' };
+  if (topup.status === 'manual_review') topup.status = 'pending';
   return topup;
 }

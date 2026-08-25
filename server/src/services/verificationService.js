@@ -6,6 +6,7 @@ import {
   isWithinTimeWindow,
   isSameIstDay,
   dateTimeEntryToDate,
+  isDemoScreenshot,
 } from './ocrService.js';
 import {
   PAYMENT_TIME_WINDOW_MINUTES,
@@ -116,6 +117,48 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     throw { message: 'OCR could not read the screenshot', code: 'OCR_UNREADABLE' };
   }
 
+  // Deterministic clock for tests; production uses the real server clock.
+  const verificationTime = now instanceof Date ? now : new Date();
+
+  // Screenshot authenticity: reject obvious demo/test/sample screenshots.
+  const isDemo = isDemoScreenshot(ocrText);
+  if (isDemo) {
+    const demoResult = {
+      ocrConfidence,
+      recoveredFromBands: false,
+      extractedAmounts,
+      extractedUPIs,
+      extractedUTRs,
+      extractedDates: [],
+      extractedDateTimes: [],
+      amountMatch: false,
+      upiMatch: false,
+      utr: null,
+      dateValid: false,
+      hasTimeComponent: false,
+      transactionStatus: null,
+      decision: 'rejected',
+      reason: 'DEMO_SCREENSHOT',
+      checks: {
+        amount: { passed: false, expected: expectedAmount, detected: null },
+        receiverUpi: { passed: false, expected: receiverUpi, detected: null },
+        utr: { passed: false, detected: null },
+        transactionDate: { passed: false, detected: null, timezone: TIMEZONE },
+        transactionStatus: { passed: false, detected: null },
+        duplicate: { passed: true, utr: null },
+      },
+      detected: { amount: null, utr: null, upi: null, date: null, dateTimeMs: null, status: null },
+      fieldConfidence: {
+        amount: { confidence: 'none', reason: 'Demo screenshot detected' },
+        receiverUpi: { confidence: 'none', reason: 'Demo screenshot detected' },
+        utr: { confidence: 'none', reason: 'Demo screenshot detected' },
+        transactionDate: { confidence: 'none', reason: 'Demo screenshot detected' },
+        transactionStatus: { confidence: 'none', reason: 'Demo screenshot detected' },
+      },
+    };
+    return { verificationResult: demoResult, verificationTime, utr: null };
+  }
+
   // Full-page OCR may have dropped a large-font amount line (common on UPI
   // receipts). Purely a recovery pass for the RECORD: the recovered tokens
   // go into checks.amount / detected.amount for admin display. Amount never
@@ -144,8 +187,6 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   const dateEntry = timeEntry || anyEntry;
   const date = dateEntry ? dateTimeEntryToDate(dateEntry) : (extractedDates[0] || null);
 
-  // Deterministic clock for tests; production uses the real server clock.
-  const verificationTime = now instanceof Date ? now : new Date();
   const windowMinutes = PAYMENT_TIME_WINDOW_MINUTES;
   // Same-IST-day + symmetric freshness window:
   //   - transaction must be on the SERVER's current date (Asia/Kolkata)

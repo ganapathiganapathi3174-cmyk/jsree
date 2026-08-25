@@ -411,6 +411,19 @@ export async function runAmountRecoveryOCR(imageBuffer) {
   return extractAmounts(recovered.join('\n'));
 }
 
+// ─────────────────────────────────────────────────────────────
+// Demo/screenshot-authenticity detection.
+//
+// Screenshots containing demo/test markers are NOT genuine payment
+// receipts and must be rejected outright.
+// ─────────────────────────────────────────────────────────────
+const DEMO_MARKERS = /\b(demo|sample|specimen|test\s+payment|mock|simulation|placeholder|example|dummy|fake|not\s+a\s+real|this\s+is\s+not|do\s+not\s+use|for\s+testing|test\s+only|test\s+purpose|screenshot\s+for|payment\s+demo|upi\s+demo)\b/i;
+
+export function isDemoScreenshot(ocrText) {
+  if (!ocrText) return false;
+  return DEMO_MARKERS.test(ocrText);
+}
+
 export function extractPaymentData(ocrText) {
   const amounts = extractAmounts(ocrText);
   const upis = extractUPIs(ocrText);

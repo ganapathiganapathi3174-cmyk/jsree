@@ -140,7 +140,7 @@ export async function login(email, password, ipAddress = null, userAgent = null)
       .limit(1)
       .single();
 
-    const paymentStatus = paymentError || !payment ? null : payment.status;
+    const paymentStatus = paymentError || !payment ? null : (payment.status === 'manual_review' ? 'pending' : payment.status);
     const rejected = paymentStatus === 'rejected';
 
     throw {
