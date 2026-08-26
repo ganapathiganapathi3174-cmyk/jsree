@@ -127,12 +127,12 @@ function buildDiag(provider, uploadResp, dbRec) {
 }
 
 const PROVIDERS = [
-  { name: 'GPay', txLabel: 'UPI Ref', statusText: 'Completed', mobile: '9000000001' },
-  { name: 'PhonePe', txLabel: 'Transaction ID', statusText: 'Successful', mobile: '9000000002' },
-  { name: 'Paytm', txLabel: 'UPI Ref No', statusText: 'Paid', mobile: '9000000003' },
-  { name: 'BHIM', txLabel: 'Reference Id', statusText: 'Completed', mobile: '9000000004' },
-  { name: 'Bank UPI', txLabel: 'RRN', statusText: 'Successful', mobile: '9000000005' },
-  { name: 'Amazon Pay', txLabel: 'UTR', statusText: 'Completed', mobile: '9000000006' },
+  { name: 'GPay', txLabel: 'UPI Ref', statusText: 'Completed', mobile: '9010000001' },
+  { name: 'PhonePe', txLabel: 'Transaction ID', statusText: 'Successful', mobile: '9010000002' },
+  { name: 'Paytm', txLabel: 'UPI Ref No', statusText: 'Paid', mobile: '9010000003' },
+  { name: 'BHIM', txLabel: 'Reference Id', statusText: 'Completed', mobile: '9010000004' },
+  { name: 'Bank UPI', txLabel: 'RRN', statusText: 'Successful', mobile: '9010000005' },
+  { name: 'Amazon Pay', txLabel: 'UTR', statusText: 'Completed', mobile: '9010000006' },
 ];
 
 async function main() {
@@ -162,7 +162,8 @@ async function main() {
   for (let i = 0; i < PROVIDERS.length; i++) {
     const p = PROVIDERS[i];
     const utr = `41${String(10000000000 + i * 1111111111).slice(0, 12)}`;
-    const email = `diag${p.name.toLowerCase().replace(/\s+/g, '')}@test.com`;
+    const ts = Date.now();
+    const email = `diag${p.name.toLowerCase().replace(/\s+/g, '')}${ts}@test.com`;
     console.log(`--- ${p.name} (UTR: ${utr}) ---`);
 
     const user = await registerOrLogin(`Diag${p.name}`, email, p.mobile);

@@ -74,12 +74,54 @@ export function parsePaymentDate(dateStr) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// English word → number parser (covers plan amount range 0–9999).
+//
+// Real Paytm receipts display the amount as "Rupees One Hundred Twenty
+// Only" — Tesseract drops the stylised numeric amount entirely.  This
+// parser converts the English words to an integer so extractAmounts()
+// can recognise it.
+//
+// Only an allowlist of number words is accepted; random OCR garbage
+// that happens to resemble a word is silently ignored.
+// ─────────────────────────────────────────────────────────────
+const WORD_VALUES = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+  thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70,
+  eighty: 80, ninety: 90,
+};
+const WORD_MULTIPLIERS = { hundred: 100, thousand: 1000 };
+
+export function wordToNumber(words) {
+  if (!words) return 0;
+  const tokens = words.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/);
+  let total = 0;
+  let current = 0;
+  for (const t of tokens) {
+    if (WORD_VALUES[t] !== undefined) {
+      current += WORD_VALUES[t];
+    } else if (t === 'hundred') {
+      current = current === 0 ? 100 : current * 100;
+    } else if (t === 'thousand') {
+      total += (current === 0 ? 1 : current) * 1000;
+      current = 0;
+    } else {
+      return 0;
+    }
+  }
+  return total + current;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Amount extraction — context-aware, noise-resistant.
 //
 // Priority order:
 //   1. Currency-prefixed values (₹120, Rs. 120, INR 120)
 //   2. Currency-suffixed values (120₹, 120 Rs.)
 //   3. Label-anchored values ("Amount: 120", "You paid 120")
+//   4. English word amounts ("Rupees One Hundred Twenty Only")
 //
 // The numeric fallback is REMOVED from the main extractor: bare digits
 // are never treated as payment amounts because they produce false matches
@@ -109,6 +151,19 @@ export function extractAmounts(text) {
       if (v > 0 && v < 100000) amounts.push(v);
     }
   }
+
+  // 4. English word amounts: "Rupees One Hundred Twenty Only" → 120.
+  //    Only matches when preceded by a currency-word prefix (Rupees, INR, Rs.)
+  //    to avoid extracting random English text as amounts.
+  //    [^\n] prevents crossing line boundaries.
+  const WORD_AMOUNT_RE = /(?:rupees|inr|rs\.?)\s+(([a-z][^\n]*)+)/gi;
+  let wm;
+  while ((wm = WORD_AMOUNT_RE.exec(text)) !== null) {
+    const phrase = wm[1].replace(/\bonly\b/gi, '').trim();
+    const v = wordToNumber(phrase);
+    if (v > 0 && v < 100000) amounts.push(v);
+  }
+
   return amounts;
 }
 
@@ -258,6 +313,14 @@ const DATE_TIME_DDMMYYYY = new RegExp(String.raw`(\d{1,2})\s*[\/\-\.]\s*(\d{1,2}
 const DATE_TIME_MONTHNAME = new RegExp(String.raw`(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{2,4})` + TIME_SUFFIX, 'i');
 const DATE_TIME_US = new RegExp(String.raw`(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{1,2}),?\s+(\d{2,4})` + TIME_SUFFIX, 'i');
 
+// Time-before-date regex — Paytm displays "7:50 PM, 26/8/2026" where
+// the time component precedes the date.  The standard DATE_TIME_DDMMYYYY
+// regex expects date-first and fails to match this format, causing the
+// time to be silently lost.
+const TIME_BEFORE_DATE_DDMMYYYY = new RegExp(
+  String.raw`(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?\s*,?\s*(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})\s*[\/\-\.]\s*(\d{2,4})`, 'i'
+);
+
 function buildDateTimeEntry(raw, day, month, year, hour, minute, second, ampm, hasTime) {
   return { raw, day, month, year, hour, minute, second, ampm, hasTime };
 }
@@ -273,7 +336,21 @@ export function extractDateTimes(text) {
     if (!line) continue;
 
     // Try date+time patterns first (time on same line).
-    let m = line.match(DATE_TIME_DDMMYYYY);
+    // Paytm time-before-date format: "7:50 PM, 26/8/2026"
+    let m = line.match(TIME_BEFORE_DATE_DDMMYYYY);
+    if (m && !/@/.test(line)) {
+      const entry = buildDateTimeEntry(line,
+        parseInt(m[5], 10), parseInt(m[6], 10), parseInt(m[7], 10),
+        m[1] !== undefined ? parseInt(m[1], 10) : null,
+        m[2] !== undefined ? parseInt(m[2], 10) : null,
+        m[3] !== undefined ? parseInt(m[3], 10) : null,
+        m[4] || null, m[1] !== undefined);
+      results.push(entry);
+      lastDateEntry = entry.hasTime ? null : entry;
+      continue;
+    }
+
+    m = line.match(DATE_TIME_DDMMYYYY);
     if (m && !/@/.test(line)) {
       const entry = buildDateTimeEntry(line,
         parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10),

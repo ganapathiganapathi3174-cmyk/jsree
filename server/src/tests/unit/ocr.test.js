@@ -9,6 +9,10 @@ import {
   extractUPIs,
   extractUTRs,
   extractDates,
+  extractDateTimes,
+  extractTransactionStatus,
+  dateTimeEntryToDate,
+  wordToNumber,
   matchAmount,
   matchUPI,
   matchUPIWithRecovery,
@@ -630,5 +634,294 @@ describe('Amount extraction — date/time noise must never become amount', () =>
     expect(result).not.toContain(2026);
     expect(result).not.toContain(56);
     expect(result).not.toContain(26);
+  });
+});
+
+describe('OCR Service - wordToNumber()', () => {
+  it('Rupees One Hundred Twenty → 120', () => {
+    expect(wordToNumber('One Hundred Twenty')).toBe(120);
+  });
+
+  it('One Hundred → 100', () => {
+    expect(wordToNumber('One Hundred')).toBe(100);
+  });
+
+  it('Five Hundred → 500', () => {
+    expect(wordToNumber('Five Hundred')).toBe(500);
+  });
+
+  it('One Thousand → 1000', () => {
+    expect(wordToNumber('One Thousand')).toBe(1000);
+  });
+
+  it('Two Thousand → 2000', () => {
+    expect(wordToNumber('Two Thousand')).toBe(2000);
+  });
+
+  it('Five Hundred Twenty → 520', () => {
+    expect(wordToNumber('Five Hundred Twenty')).toBe(520);
+  });
+
+  it('empty string → 0', () => {
+    expect(wordToNumber('')).toBe(0);
+  });
+
+  it('null → 0', () => {
+    expect(wordToNumber(null)).toBe(0);
+  });
+});
+
+describe('OCR Service - Amount Extraction: English word amounts', () => {
+  it('Rupees One Hundred Twenty Only → 120', () => {
+    const result = extractAmounts('Rupees One Hundred Twenty Only');
+    expect(result).toContain(120);
+  });
+
+  it('Rupees Five Hundred Only → 500', () => {
+    const result = extractAmounts('Rupees Five Hundred Only');
+    expect(result).toContain(500);
+  });
+
+  it('Rupees One Thousand Only → 1000', () => {
+    const result = extractAmounts('Rupees One Thousand Only');
+    expect(result).toContain(1000);
+  });
+
+  it('INR One Hundred Twenty → 120', () => {
+    const result = extractAmounts('INR One Hundred Twenty');
+    expect(result).toContain(120);
+  });
+
+  it('Rs. One Hundred Twenty Only → 120', () => {
+    const result = extractAmounts('Rs. One Hundred Twenty Only');
+    expect(result).toContain(120);
+  });
+
+  it('existing numeric ₹120 still works', () => {
+    const result = extractAmounts('₹120');
+    expect(result).toContain(120);
+  });
+
+  it('existing numeric Rs.500 still works', () => {
+    const result = extractAmounts('Rs.500');
+    expect(result).toContain(500);
+  });
+
+  it('existing numeric INR 1000 still works', () => {
+    const result = extractAmounts('INR 1000');
+    expect(result).toContain(1000);
+  });
+
+  it('date/time text must NOT become an amount', () => {
+    const result = extractAmounts('7:50 PM, 26/8/2026');
+    expect(result).toEqual([]);
+  });
+
+  it('UTR must NOT become an amount', () => {
+    const result = extractAmounts('UPI Ref No: 5136848533156');
+    expect(result).not.toContain(5136848533156);
+  });
+
+  it('year must NOT become an amount via word extraction', () => {
+    const result = extractAmounts('Date 26/08/2026');
+    expect(result).not.toContain(2026);
+  });
+
+  it('random English without currency prefix must NOT become amount', () => {
+    const result = extractAmounts('One Hundred Twenty something');
+    expect(result).toEqual([]);
+  });
+});
+
+describe('OCR Service - extractDateTimes: Paytm time-before-date', () => {
+  it('Paytm format: 7:50 PM, 26/8/2026', () => {
+    const entries = extractDateTimes('7:50 PM, 26/8/2026');
+    expect(entries.length).toBe(1);
+    expect(entries[0].hasTime).toBe(true);
+    expect(entries[0].hour).toBe(7);
+    expect(entries[0].minute).toBe(50);
+    expect(entries[0].ampm).toBe('PM');
+    expect(entries[0].day).toBe(26);
+    expect(entries[0].month).toBe(8);
+    expect(entries[0].year).toBe(2026);
+    const date = dateTimeEntryToDate(entries[0]);
+    expect(date.getHours()).toBe(19);
+  });
+
+  it('Paytm format without comma: 7:50 PM 26/8/2026', () => {
+    const entries = extractDateTimes('7:50 PM 26/8/2026');
+    expect(entries.length).toBe(1);
+    expect(entries[0].hasTime).toBe(true);
+    expect(entries[0].hour).toBe(7);
+    expect(entries[0].minute).toBe(50);
+    expect(entries[0].ampm).toBe('PM');
+    expect(entries[0].day).toBe(26);
+    expect(entries[0].month).toBe(8);
+    expect(entries[0].year).toBe(2026);
+    const date = dateTimeEntryToDate(entries[0]);
+    expect(date.getHours()).toBe(19);
+  });
+
+  it('zero-padded: 07:50 PM, 26/08/2026', () => {
+    const entries = extractDateTimes('07:50 PM, 26/08/2026');
+    expect(entries.length).toBe(1);
+    expect(entries[0].hasTime).toBe(true);
+    expect(entries[0].hour).toBe(7);
+    expect(entries[0].minute).toBe(50);
+    const date = dateTimeEntryToDate(entries[0]);
+    expect(date.getHours()).toBe(19);
+  });
+
+  it('24-hour format: 19:50, 26/8/2026', () => {
+    const entries = extractDateTimes('19:50, 26/8/2026');
+    expect(entries.length).toBe(1);
+    expect(entries[0].hasTime).toBe(true);
+    expect(entries[0].hour).toBe(19);
+    expect(entries[0].minute).toBe(50);
+    expect(entries[0].ampm).toBeNull();
+    const date = dateTimeEntryToDate(entries[0]);
+    expect(date.getHours()).toBe(19);
+  });
+
+  it('with seconds: 7:50:30 PM, 26/8/2026', () => {
+    const entries = extractDateTimes('7:50:30 PM, 26/8/2026');
+    expect(entries.length).toBe(1);
+    expect(entries[0].hasTime).toBe(true);
+    expect(entries[0].hour).toBe(7);
+    expect(entries[0].minute).toBe(50);
+    expect(entries[0].second).toBe(30);
+    const date = dateTimeEntryToDate(entries[0]);
+    expect(date.getHours()).toBe(19);
+    expect(date.getMinutes()).toBe(50);
+  });
+
+  it('date-before-time still works: 26/8/2026, 7:50 PM', () => {
+    const entries = extractDateTimes('26/8/2026, 7:50 PM');
+    expect(entries.length).toBe(1);
+    expect(entries[0].hasTime).toBe(true);
+    expect(entries[0].hour).toBe(7);
+    expect(entries[0].minute).toBe(50);
+    expect(entries[0].day).toBe(26);
+    expect(entries[0].month).toBe(8);
+    const date = dateTimeEntryToDate(entries[0]);
+    expect(date.getHours()).toBe(19);
+  });
+
+  it('date-only still works: 26/08/2026', () => {
+    const entries = extractDateTimes('26/08/2026');
+    expect(entries.length).toBe(1);
+    expect(entries[0].hasTime).toBe(false);
+    expect(entries[0].day).toBe(26);
+    expect(entries[0].month).toBe(8);
+    expect(entries[0].year).toBe(2026);
+  });
+
+  it('dateTimeEntryToDate produces valid IST date for time-before-date', () => {
+    const entries = extractDateTimes('7:50 PM, 26/8/2026');
+    const date = dateTimeEntryToDate(entries[0]);
+    expect(date).not.toBeNull();
+    expect(date.getHours()).toBe(19);
+    expect(date.getMinutes()).toBe(50);
+  });
+});
+
+describe('OCR Service - REGRESSION: Production payment 6f418faf', () => {
+  const PRODUCTION_OCR_TEXT = `Money Sent Successfully
+Rupees One Hundred Twenty Only
+J JSREE payment
+To: Jeyaraj Alagar
+UPI ID:
+jayarajj126-3@okicici
+From: Jeyaraj Alagar
+UPI ID: 9360953174@ptaxis
+Indian Overseas Bank - 0327
+UPI Ref No: 5136845469399
+7:50 PM, 26/8/2026
+Paytm`;
+
+  it('extractedAmounts contains 120', () => {
+    const amounts = extractAmounts(PRODUCTION_OCR_TEXT);
+    expect(amounts).toContain(120);
+  });
+
+  it('amountMatch === true', () => {
+    const amounts = extractAmounts(PRODUCTION_OCR_TEXT);
+    expect(matchAmount(amounts, 120)).toBe(true);
+  });
+
+  it('extractedUPIs contains jayarajj126-3@okicici', () => {
+    const upis = extractUPIs(PRODUCTION_OCR_TEXT);
+    expect(upis.some(u => u.includes('jayarajj126-3@okicici'))).toBe(true);
+  });
+
+  it('upiMatch === true', () => {
+    const upis = extractUPIs(PRODUCTION_OCR_TEXT);
+    const result = matchUPIWithRecovery(upis, 'jayarajj126-3@okicici');
+    expect(result.match).toBe(true);
+  });
+
+  it('date extraction has hasTime === true', () => {
+    const entries = extractDateTimes(PRODUCTION_OCR_TEXT);
+    const timeEntry = entries.find(e => e.hasTime);
+    expect(timeEntry).toBeDefined();
+    expect(timeEntry.hour).toBe(7);
+    expect(timeEntry.minute).toBe(50);
+    expect(timeEntry.ampm).toBe('PM');
+    const date = dateTimeEntryToDate(timeEntry);
+    expect(date.getHours()).toBe(19);
+    expect(date.getMinutes()).toBe(50);
+  });
+
+  it('transactionStatus === success', () => {
+    const status = extractTransactionStatus(PRODUCTION_OCR_TEXT);
+    expect(status).not.toBeNull();
+    expect(status.status).toBe('success');
+  });
+});
+
+describe('OCR Service - REGRESSION: decidePaymentVerification with production OCR text', () => {
+  const { decidePaymentVerification } = require('../../services/verificationService.js');
+
+  const PRODUCTION_OCR_TEXT = `Money Sent Successfully
+Rupees One Hundred Twenty Only
+J JSREE payment
+To: Jeyaraj Alagar
+UPI ID:
+jayarajj126-3@okicici
+From: Jeyaraj Alagar
+UPI ID: 9360953174@ptaxis
+Indian Overseas Bank - 0327
+UPI Ref No: 5136845469399
+7:50 PM, 26/8/2026
+Paytm`;
+
+  it('returns approved for genuine production Paytm OCR text', () => {
+    const amounts = extractAmounts(PRODUCTION_OCR_TEXT);
+    const upis = extractUPIs(PRODUCTION_OCR_TEXT);
+    const upiResult = matchUPIWithRecovery(upis, 'jayarajj126-3@okicici');
+    const entries = extractDateTimes(PRODUCTION_OCR_TEXT);
+    const timeEntry = entries.find(e => e.hasTime);
+    const date = timeEntry ? dateTimeEntryToDate(timeEntry) : null;
+    const status = extractTransactionStatus(PRODUCTION_OCR_TEXT);
+    const utrs = extractUTRs(PRODUCTION_OCR_TEXT);
+    const utr = utrs.length > 0 ? utrs[0] : null;
+
+    const now = new Date('2026-08-26T14:30:00Z');
+    const windowMinutes = 30;
+    const dateValid =
+      !!date &&
+      (Math.abs(date.getTime() - now.getTime()) <= windowMinutes * 60 * 1000);
+
+    const result = decidePaymentVerification({
+      upiMatch: upiResult.match,
+      amountMatch: matchAmount(amounts, 120),
+      dateValid,
+      utrPresent: !!utr,
+      transactionStatusOk: status?.status === 'success',
+      ocrConfidence: 73,
+    });
+
+    expect(result.decision).toBe('approved');
+    expect(result.reason).toBeNull();
   });
 });
