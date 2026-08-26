@@ -10,14 +10,15 @@ import {
   parsePaymentDate,
 } from '../../services/ocrService.js';
 
-const { runOCR, runAmountRecoveryOCR } = vi.hoisted(() => ({
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
   runOCR: vi.fn(),
   runAmountRecoveryOCR: vi.fn(),
+  runAdditionalOCRPasses: vi.fn(),
 }));
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
 });
 
 vi.mock('../../db/supabase.js', () => ({
@@ -41,6 +42,7 @@ function receipt(amount, upi, dateLine, extra = '') {
 beforeEach(() => {
   vi.clearAllMocks();
   runAmountRecoveryOCR.mockResolvedValue([]);
+  runAdditionalOCRPasses.mockResolvedValue([]);
   // Default: high confidence.
   runOCR.mockResolvedValue({ text: '', confidence: 90 });
 });

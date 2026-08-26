@@ -73,12 +73,34 @@ export function parsePaymentDate(dateStr) {
   return d;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Amount extraction — context-aware, noise-resistant.
+//
+// Priority order:
+//   1. Currency-prefixed values (₹120, Rs. 120, INR 120)
+//   2. Currency-suffixed values (120₹, 120 Rs.)
+//   3. Label-anchored values ("Amount: 120", "You paid 120")
+//
+// The numeric fallback is REMOVED from the main extractor: bare digits
+// are never treated as payment amounts because they produce false matches
+// against year (2026), time (56), phone numbers, UTRs, and other receipt
+// noise.  (The recovery-OCR path in runAmountRecoveryOCR uses its own
+// narrow fallback — see that function.)
+// ─────────────────────────────────────────────────────────────
 export function extractAmounts(text) {
+  const NUM = '(\\d+(?:,\\d{3})*(?:\\.\\d{1,2})?)';
+  const CURRENCY = '(?:₹|Rs\\.?|INR)';
+  const LABEL = '(?:you\\s+paid|payment\\s+(?:of|amount|made)?|amount(?:\\s+paid)?|paid|sent|total|debit(?:ed)?|transferred|credited)';
+
   const patterns = [
-    /(?:₹|Rs\.?|INR)\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/gi,
-    /(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:₹|Rs\.?|INR)/gi,
-    /(?:you\s+paid|payment\s+(?:of|amount)?|amount|paid|sent|total|debit(?:ed)?|transferred)\s*[:\-]?\s*(?:₹|Rs\.?|INR)?\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/gi,
+    // Currency prefix: ₹120, Rs. 120, INR 120.00
+    new RegExp(`${CURRENCY}\\s*${NUM}`, 'gi'),
+    // Currency suffix: 120₹, 120 Rs., 120 INR
+    new RegExp(`${NUM}\\s*${CURRENCY}`, 'gi'),
+    // Label-anchored: "Amount: ₹120", "Paid 120", "You paid ₹120.00"
+    new RegExp(`${LABEL}\\s*[:\\-]?\\s*${CURRENCY}?\\s*${NUM}`, 'gi'),
   ];
+
   const amounts = [];
   for (const re of patterns) {
     let m;
@@ -87,31 +109,58 @@ export function extractAmounts(text) {
       if (v > 0 && v < 100000) amounts.push(v);
     }
   }
-  if (amounts.length === 0) {
-    const plain = text.match(/\b(\d+(?:\.\d{1,2})?)\b/g);
-    if (plain) {
-      for (const p of plain) {
-        const v = parseFloat(p);
-        if (v >= 50 && v <= 10000) amounts.push(v);
-      }
-    }
-  }
   return amounts;
 }
 
+// ─────────────────────────────────────────────────────────────
+// UPI extraction — context-aware, OCR-artifact resilient.
+//
+// Priority order:
+//   1. Label-anchored extraction (most reliable):
+//      "UPI ID: user@bank", "To: user@bank", "VPA: user@bank"
+//   2. Global pattern scan on space-fixed text.
+//
+// Common OCR artifacts handled:
+//   - spaces inserted before/after @
+//   - newline splits the UPI across lines
+//   - trailing character loss on the domain (e.g. "okicic" for "okicici")
+//   - visually confused characters (0/O, 1/l/I) are NOT silently
+//     corrected — the caller decides on exact match.
+// ─────────────────────────────────────────────────────────────
 export function extractUPIs(text) {
-  const spaceFixed = text.replace(/(\w)\s+(@\w)/g, '$1$2').replace(/(\w-?\w*)\s+(@\w)/g, '$1$2').replace(/(\w{2,})\s+(\d{2,}-?\d+@\w+)/g, '$1$2');
-  const patterns = [
-    /([a-zA-Z0-9._-]+@[a-zA-Z0-9]+)/gi,
-    /(?:to|vpa|upi\s*id)\s*[:\-]?\s*([a-zA-Z0-9._-]+@[a-zA-Z0-9]+)/gi,
-  ];
+  if (!text) return [];
   const upis = new Set();
-  for (const re of patterns) {
-    let m;
-    while ((m = re.exec(spaceFixed)) !== null) {
-      upis.add(normalizeUPI(m[1]));
+
+  // 1. Label-anchored: extract UPI from structured receipt labels.
+  //    These are the most reliable because the label constrains context.
+  const lines = text.split(/\r?\n/);
+  const UPI_LABEL_RE = /(?:to|vpa|upi\s*id|receiver|beneficiary|paid\s+to)\s*[:\-]?\s*([a-zA-Z0-9._+-]+\s*@\s*[a-zA-Z0-9]+)/i;
+  for (const line of lines) {
+    const m = line.match(UPI_LABEL_RE);
+    if (m) {
+      const cleaned = m[1].replace(/\s+/g, '').trim();
+      if (cleaned.includes('@')) upis.add(normalizeUPI(cleaned));
     }
   }
+
+  // 2. Global scan with aggressive space-artifact cleanup.
+  //    Collapse whitespace around @, across the entire text.
+  const spaceFixed = text
+    .replace(/(\w)\s+(@\w)/g, '$1$2')
+    .replace(/(\w-?\w*)\s+(@\w)/g, '$1$2')
+    .replace(/(\w{2,})\s+(\d{2,}-?\d+@\w+)/g, '$1$2')
+    .replace(/\s+@\s+/g, '@')
+    .replace(/@\s+/g, '@');
+
+  const upiRe = /([a-zA-Z0-9._+-]+@[a-zA-Z0-9]+)/gi;
+  let m;
+  while ((m = upiRe.exec(spaceFixed)) !== null) {
+    const cleaned = m[1].replace(/\s+/g, '').trim();
+    if (cleaned.includes('@') && cleaned.length > 3) {
+      upis.add(normalizeUPI(cleaned));
+    }
+  }
+
   return [...upis];
 }
 
@@ -390,7 +439,94 @@ export async function runOCR(imageBuffer) {
 // reliably reads the dropped amount text — and returns ONLY the
 // extra amount tokens. It deliberately does not return UPI/UTR/date
 // data so the rest of the verification pipeline is untouched.
+//
+// The strip OCR output may contain bare numbers without currency
+// symbols (e.g. just "120" instead of "₹120").  A narrow fallback
+// is applied ONLY here — it is tighter than the old broad fallback:
+//   - Must be 1–10000 range
+//   - Must NOT be a 4-digit year (1900–2099)
+//   - Must NOT be in a line containing time patterns (HH:MM)
+//   - Must NOT be in a line containing date patterns (DD/MM/YYYY)
+//   - Must be ≥ 50 to avoid day/month/hour components
 // ─────────────────────────────────────────────────────────────
+function extractAmountsFromStrips(text) {
+  // First try the standard extraction (currency-prefixed / label-anchored).
+  const primary = extractAmounts(text);
+  if (primary.length > 0) return primary;
+
+  // Narrow fallback for bare numbers in image strips.
+  // Filter at the line level to avoid picking up time/date/UTR noise.
+  const lines = text.split(/\r?\n/);
+  const results = [];
+  for (const line of lines) {
+    // Skip lines containing time patterns (HH:MM or H:MM)
+    if (/\d{1,2}:\d{2}/.test(line)) continue;
+    // Skip lines that are clearly dates (DD/MM/YYYY or DD-MM-YYYY etc.)
+    if (/\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}/.test(line)) continue;
+    // Skip lines that look like month-name dates
+    if (/\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(line)) continue;
+    // Skip lines that look like UTR/reference labels followed by digits
+    if (/\b(?:UTR|Ref|Transaction|Reference)\b.*\d/i.test(line)) continue;
+
+    const nums = line.match(/\b(\d+(?:\.\d{1,2})?)\b/g);
+    if (!nums) continue;
+    for (const p of nums) {
+      const v = parseFloat(p);
+      if (v <= 0 || v > 10000) continue;
+      // Reject 4-digit years (1900–2099)
+      if (v >= 1900 && v <= 2099) continue;
+      // Reject small integers that are likely day/month/hour components.
+      // Payment amounts on our plans are ≥ 120, so anything < 50 is noise.
+      if (v >= 1 && v < 50) continue;
+      results.push(v);
+    }
+  }
+  return results;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Additional OCR preprocessing passes.
+//
+// Tesseract's default segmentation can drop large-font text
+// (amounts, UPI IDs) depending on preprocessing. Running extra
+// passes with different preprocessing pipelines increases recall
+// while keeping false positives low (the strict verification
+// gates handle those).
+//
+// Pass A — Upscaled (2×): better for small labels, UTRs.
+// Pass B — Thresholded: isolates high-contrast text, better for
+//          large-font amounts that standard preprocessing merges.
+//
+// Both run in parallel to minimize latency.
+// ─────────────────────────────────────────────────────────────
+export async function runAdditionalOCRPasses(imageBuffer) {
+  const { default: Tesseract } = await import('tesseract.js');
+
+  const [upscaledBuf, thresholdBuf] = await Promise.all([
+    sharp(imageBuffer)
+      .resize({ width: 2400, withoutEnlargement: false })
+      .grayscale()
+      .normalize()
+      .toBuffer(),
+    sharp(imageBuffer)
+      .resize({ width: 1200, withoutEnlargement: true })
+      .grayscale()
+      .normalize()
+      .threshold(145)
+      .toBuffer(),
+  ]);
+
+  const [upscaledResult, thresholdResult] = await Promise.all([
+    Tesseract.recognize(upscaledBuf, 'eng'),
+    Tesseract.recognize(thresholdBuf, 'eng'),
+  ]);
+
+  return [
+    { text: upscaledResult.data.text || '', confidence: upscaledResult.data.confidence || 0, pass: 'upscaled' },
+    { text: thresholdResult.data.text || '', confidence: thresholdResult.data.confidence || 0, pass: 'thresholded' },
+  ];
+}
+
 export async function runAmountRecoveryOCR(imageBuffer) {
   const { default: Tesseract } = await import('tesseract.js');
   const processed = await preprocessImage(imageBuffer);
@@ -408,7 +544,7 @@ export async function runAmountRecoveryOCR(imageBuffer) {
     const r = await Tesseract.recognize(strip, 'eng', {});
     if (r.data.text) recovered.push(r.data.text);
   }
-  return extractAmounts(recovered.join('\n'));
+  return extractAmountsFromStrips(recovered.join('\n'));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -441,6 +577,56 @@ export function matchAmount(extractedAmounts, expectedAmount) {
 export function matchUPI(extractedUPIs, receiverUPI) {
   const norm = normalizeUPI(receiverUPI);
   return extractedUPIs.some(u => normalizeUPI(u) === norm);
+}
+
+// ─────────────────────────────────────────────────────────────
+// UPI matching with OCR-truncation recovery.
+//
+// Tesseract commonly drops trailing characters from VPA domains
+// (e.g. "jayarajj126-3@okicici" → "jayarajj126-3@okicic").
+//
+// Recovery strategy — deliberately conservative:
+//   1. Exact normalized match → high confidence
+//   2. Candidate is a strict prefix of expected (missing 1–2 trailing
+//      chars) → high confidence (truncation recovery)
+//   3. Everything else → no match
+//
+// Substitutions, transpositions, mid-string errors are NEVER recovered.
+// The expected UPI is the authoritative reference; only when the OCR
+// evidence is overwhelmingly close (same prefix, trailing loss) do we
+// accept the candidate.
+// ─────────────────────────────────────────────────────────────
+export function matchUPIWithRecovery(extractedUPIs, receiverUPI) {
+  const norm = normalizeUPI(receiverUPI);
+  const allCandidates = extractedUPIs.map(u => normalizeUPI(u)).filter(Boolean);
+
+  // 1. Exact match (strongest evidence)
+  for (const c of allCandidates) {
+    if (c === norm) {
+      return {
+        match: true, method: 'exact', confidence: 'high',
+        candidate: c, allCandidates, originalCandidates: extractedUPIs,
+      };
+    }
+  }
+
+  // 2. OCR recovery: trailing-character truncation
+  //    Candidate must be a perfect prefix of expected, missing 1–2 chars.
+  for (const c of allCandidates) {
+    if (!c || c.length < 5) continue;
+    const missing = norm.length - c.length;
+    if (missing >= 1 && missing <= 2 && norm.startsWith(c)) {
+      return {
+        match: true, method: 'ocr_recovery_truncation', confidence: 'high',
+        candidate: c, allCandidates, originalCandidates: extractedUPIs,
+      };
+    }
+  }
+
+  return {
+    match: false, method: 'none', confidence: 'none',
+    candidate: null, allCandidates, originalCandidates: extractedUPIs,
+  };
 }
 
 export function isWithinTimeWindow(date, now, windowMinutes) {

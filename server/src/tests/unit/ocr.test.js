@@ -11,6 +11,7 @@ import {
   extractDates,
   matchAmount,
   matchUPI,
+  matchUPIWithRecovery,
   isWithinTimeWindow,
   runOCR,
   runAmountRecoveryOCR,
@@ -42,7 +43,7 @@ describe('OCR Service - Amount Extraction', () => {
     expect(result).toContain(500);
   });
 
-  it('extracts plain number amount between 50-10000', () => {
+  it('extracts amount from "Payment of" label', () => {
     const result = extractAmounts('Payment of 750 completed');
     expect(result).toContain(750);
   });
@@ -62,6 +63,109 @@ describe('OCR Service - Amount Extraction', () => {
     expect(normalizeAmount('Rs.500')).toBe(500);
     expect(normalizeAmount('1,000')).toBe(1000);
     expect(normalizeAmount('120.50')).toBe(120.5);
+  });
+});
+
+describe('OCR Service - Amount Extraction: noise rejection (BUG 2 fix)', () => {
+  it('does NOT treat year 2026 as amount', () => {
+    const result = extractAmounts('Date 26/08/2026, 5:56 PM');
+    expect(result).not.toContain(2026);
+  });
+
+  it('does NOT treat clock minutes as amount', () => {
+    const result = extractAmounts('Date 26/08/2026, 5:56 PM');
+    expect(result).not.toContain(56);
+  });
+
+  it('does NOT treat clock hours as amount', () => {
+    const result = extractAmounts('Date 26/08/2026, 5:56 PM');
+    expect(result).not.toContain(5);
+  });
+
+  it('does NOT treat 4-digit year from DD/MM/YYYY as amount', () => {
+    const result = extractAmounts('24/08/2026');
+    expect(result).not.toContain(2026);
+    expect(result).not.toContain(24);
+  });
+
+  it('does NOT treat UTR digits as amount', () => {
+    const result = extractAmounts('UPI Ref: 4110000000000');
+    expect(result).not.toContain(4110000000000);
+  });
+
+  it('does NOT treat phone number as amount', () => {
+    const result = extractAmounts('+91 9655234589');
+    expect(result).toEqual([]);
+  });
+
+  it('extracts ₹120 from a full receipt line', () => {
+    const result = extractAmounts('Payment Successful ₹120 Sent to jayarajj126-3@okicici');
+    expect(result).toContain(120);
+  });
+
+  it('extracts Rs. 120 from a full receipt line', () => {
+    const result = extractAmounts('Transferred Successfully Rs.120 To: jayarajj126-3@okicici');
+    expect(result).toContain(120);
+  });
+
+  it('extracts INR 500 from a receipt', () => {
+    const result = extractAmounts('Payment Successful INR 500');
+    expect(result).toContain(500);
+  });
+
+  it('extracts ₹1,200 with comma', () => {
+    const result = extractAmounts('Amount Paid ₹1,200');
+    expect(result).toContain(1200);
+  });
+
+  it('extracts ₹5,000.00 with decimal', () => {
+    const result = extractAmounts('Sent ₹5,000.00 to merchant');
+    expect(result).toContain(5000);
+  });
+
+  it('extracts ₹999 without comma', () => {
+    const result = extractAmounts('Paid ₹999');
+    expect(result).toContain(999);
+  });
+
+  it('ignores date+time and extracts only currency-prefixed amount', () => {
+    const text = [
+      'Payment Successful',
+      '₹120',
+      'To: jayarajj126-3@okicici',
+      'Date: 26/08/2026, 5:56 PM',
+      'UPI Ref: T7GHD240826',
+    ].join('\n');
+    const result = extractAmounts(text);
+    expect(result).toContain(120);
+    expect(result).not.toContain(2026);
+    expect(result).not.toContain(56);
+    expect(result).not.toContain(26);
+  });
+
+  it('extracts amount from "Sent ₹120" label', () => {
+    const result = extractAmounts('Sent ₹120 successfully');
+    expect(result).toContain(120);
+  });
+
+  it('extracts amount from "Total: ₹500" label', () => {
+    const result = extractAmounts('Total: ₹500');
+    expect(result).toContain(500);
+  });
+
+  it('extracts amount from "Debited: ₹1200" label', () => {
+    const result = extractAmounts('Debited: ₹1200');
+    expect(result).toContain(1200);
+  });
+
+  it('handles "You paid ₹120" with ₹ symbol', () => {
+    const result = extractAmounts('You paid ₹120');
+    expect(result).toContain(120);
+  });
+
+  it('handles "Payment of ₹120" with ₹ symbol', () => {
+    const result = extractAmounts('Payment of ₹120');
+    expect(result).toContain(120);
   });
 });
 
@@ -89,6 +193,109 @@ describe('OCR Service - UPI Extraction', () => {
   it('normalizes UPI string', () => {
     expect(normalizeUPI('JAYARAJJ126-3@OKICICI')).toBe('jayarajj126-3@okicici');
     expect(normalizeUPI('user @ upi')).toBe('user@upi');
+  });
+});
+
+describe('OCR Service - UPI Extraction: label-anchored + artifact handling (BUG 1 fix)', () => {
+  it('extracts UPI from "UPI ID:" label', () => {
+    const result = extractUPIs('UPI ID: jayarajj126-3@okicici');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('extracts UPI from "To:" label', () => {
+    const result = extractUPIs('To: jayarajj126-3@okicici');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('extracts UPI from "VPA:" label', () => {
+    const result = extractUPIs('VPA: jayarajj126-3@okicici');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('extracts UPI from "Receiver:" label', () => {
+    const result = extractUPIs('Receiver: jayarajj126-3@okicici');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('extracts UPI from "Paid to" label', () => {
+    const result = extractUPIs('Paid to jayarajj126-3@okicici');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('handles spaces around @', () => {
+    const result = extractUPIs('jayarajj126-3 @ okicici');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('handles space before @', () => {
+    const result = extractUPIs('jayarajj126-3 @okicici');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('handles space after @', () => {
+    const result = extractUPIs('jayarajj126-3@ okicici');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('normalizes uppercase to lowercase', () => {
+    const result = extractUPIs('JAYARAJJ126-3@OKICICI');
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('extracts UPI from multi-line receipt', () => {
+    const text = [
+      'Payment Successful',
+      '₹120',
+      'To: jayarajj126-3@okicici',
+      'UPI Ref: T7GHD240826',
+    ].join('\n');
+    const result = extractUPIs(text);
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('extracts UPI from PhonePe receipt format', () => {
+    const text = [
+      'PhonePe',
+      'Transaction Successful',
+      '₹120',
+      'Paid to jayarajj126-3@okicici',
+      '26 Aug 2026, 5:56 PM',
+    ].join('\n');
+    const result = extractUPIs(text);
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('extracts UPI from BHIM receipt format', () => {
+    const text = [
+      'BHIM',
+      'Payment Successful',
+      '₹120',
+      'To: jayarajj126-3@okicici',
+      'UPI Reference Number: BHIM260826001',
+    ].join('\n');
+    const result = extractUPIs(text);
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('extracts UPI from Bank UPI format', () => {
+    const text = [
+      'SBI UPI',
+      'Transferred Successfully',
+      'Rs.120',
+      'To: jayarajj126-3@okicici',
+      'Bank Ref No: SBIN260826123',
+    ].join('\n');
+    const result = extractUPIs(text);
+    expect(result).toContain('jayarajj126-3@okicici');
+  });
+
+  it('wrong UPI still does not match', () => {
+    expect(matchUPI(['attacker@paytm'], 'jayarajj126-3@okicici')).toBe(false);
+  });
+
+  it('truncated UPI (OCR error) does NOT match the expected UPI', () => {
+    // Simulates Tesseract dropping the trailing "i": okicic vs okicici
+    expect(matchUPI(['jayarajj126-3@okicic'], 'jayarajj126-3@okicici')).toBe(false);
   });
 });
 
@@ -290,4 +497,138 @@ describe('Regression: large-font amount recovery (false AMOUNT_MISMATCH)', () =>
     const merged = [...new Set([...mainAmounts, ...recovered])];
     expect(matchAmount(merged, 500)).toBe(false);
   }, timeout);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// UPI OCR Recovery: trailing-character truncation
+// ═══════════════════════════════════════════════════════════════
+describe('matchUPIWithRecovery — OCR truncation recovery', () => {
+  const RECEIVER = 'jayarajj126-3@okicici';
+
+  it('exact match → method exact, confidence high', () => {
+    const r = matchUPIWithRecovery(['jayarajj126-3@okicici'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('exact');
+    expect(r.confidence).toBe('high');
+    expect(r.candidate).toBe('jayarajj126-3@okicici');
+  });
+
+  it('trailing "i" dropped (okicic) → recovered via truncation', () => {
+    const r = matchUPIWithRecovery(['jayarajj126-3@okicic'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('ocr_recovery_truncation');
+    expect(r.confidence).toBe('high');
+    expect(r.candidate).toBe('jayarajj126-3@okicic');
+  });
+
+  it('trailing "ci" dropped (jayarajj126-3@oki, 6 chars missing) → no match (too much loss)', () => {
+    const r = matchUPIWithRecovery(['jayarajj126-3@oki'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('case difference after normalization → exact match', () => {
+    const r = matchUPIWithRecovery(['JAYARAJJ126-3@OKICICI'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('exact');
+  });
+
+  it('spaces around @ after normalization → exact match', () => {
+    const r = matchUPIWithRecovery(['jayarajj126-3 @ okicici'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('exact');
+  });
+
+  it('completely wrong UPI → no match', () => {
+    const r = matchUPIWithRecovery(['attacker@paytm'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('similar but different (substitution okocici) → no match', () => {
+    const r = matchUPIWithRecovery(['jayarajj126-3@okocici'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('mid-string character loss (okicci) → no match', () => {
+    const r = matchUPIWithRecovery(['jayarajj126-3@okicci'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('empty list → no match', () => {
+    const r = matchUPIWithRecovery([], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.allCandidates).toEqual([]);
+  });
+
+  it('allCandidates includes all normalized forms', () => {
+    const r = matchUPIWithRecovery(['BAD@UPI', 'jayarajj126-3@okicic'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.allCandidates).toContain('jayarajj126-3@okicic');
+    expect(r.allCandidates).toContain('bad@upi');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Amount extraction: date/time noise rejection
+// ═══════════════════════════════════════════════════════════════
+describe('Amount extraction — date/time noise must never become amount', () => {
+  it('bare 120.00 without context → empty', () => {
+    expect(extractAmounts('120.00')).toEqual([]);
+  });
+
+  it('year 2026 from date line → not extracted', () => {
+    expect(extractAmounts('26/08/2026')).not.toContain(2026);
+  });
+
+  it('clock minutes 56 from "5:56 PM" → not extracted', () => {
+    expect(extractAmounts('5:56 PM')).not.toContain(56);
+  });
+
+  it('clock hour 5 from "5:56 PM" → not extracted', () => {
+    expect(extractAmounts('5:56 PM')).not.toContain(5);
+  });
+
+  it('day 26 from date → not extracted', () => {
+    expect(extractAmounts('26/08/2026')).not.toContain(26);
+  });
+
+  it('month 08 from date → not extracted', () => {
+    expect(extractAmounts('26/08/2026')).not.toContain(8);
+  });
+
+  it('phone number digits → not extracted', () => {
+    expect(extractAmounts('+91 9655234589')).toEqual([]);
+  });
+
+  it('UTR digits → not extracted', () => {
+    expect(extractAmounts('UPI Ref: 4110000000000')).not.toContain(4110000000000);
+  });
+
+  it('currency prefix still works: ₹120', () => {
+    expect(extractAmounts('₹120')).toContain(120);
+  });
+
+  it('currency prefix with space: ₹ 120', () => {
+    expect(extractAmounts('₹ 120')).toContain(120);
+  });
+
+  it('label anchor: Amount: 120', () => {
+    expect(extractAmounts('Amount: 120')).toContain(120);
+  });
+
+  it('label anchor: Paid 500', () => {
+    expect(extractAmounts('Paid 500')).toContain(500);
+  });
+
+  it('full receipt: date+time noise ignored, ₹120 extracted', () => {
+    const text = 'Payment Successful\n₹120\nTo: user@bank\nDate: 26/08/2026, 5:56 PM\nUPI Ref: T7GHD240826';
+    const result = extractAmounts(text);
+    expect(result).toContain(120);
+    expect(result).not.toContain(2026);
+    expect(result).not.toContain(56);
+    expect(result).not.toContain(26);
+  });
 });

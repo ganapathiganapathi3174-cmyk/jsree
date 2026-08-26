@@ -6,14 +6,15 @@ import {
   applyPaymentUtrPolicy,
 } from '../../services/paymentService.js';
 
-const { runOCR, runAmountRecoveryOCR } = vi.hoisted(() => ({
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
   runOCR: vi.fn(),
   runAmountRecoveryOCR: vi.fn(),
+  runAdditionalOCRPasses: vi.fn(),
 }));
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
 });
 
 // Supabase mock whose approved_utrs.insert can be toggled between
@@ -65,6 +66,7 @@ async function expectApproved(text, expectedAmount = 120) {
 beforeEach(() => {
   vi.clearAllMocks();
   runAmountRecoveryOCR.mockResolvedValue([]);
+  runAdditionalOCRPasses.mockResolvedValue([]);
   supabaseMock.utrInsertResult = { data: { id: 'u1' }, error: null };
 });
 

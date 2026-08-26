@@ -2,11 +2,13 @@ import {
   runOCR,
   extractPaymentData,
   matchAmount,
-  matchUPI,
+  matchUPIWithRecovery,
   isWithinTimeWindow,
   isSameIstDay,
   dateTimeEntryToDate,
   isDemoScreenshot,
+  runAdditionalOCRPasses,
+  normalizeUPI,
 } from './ocrService.js';
 import {
   PAYMENT_TIME_WINDOW_MINUTES,
@@ -92,6 +94,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   let extractedDates = [];
   let extractedDateTimes = [];
   let transactionStatus = null;
+  let ocrPassInfo = { primaryConfidence: 0, additionalPassesRun: 0, additionalPassConfidences: [], candidatesFromPasses: { amounts: [], upis: [], utrs: [] } };
 
   try {
     if (!buffer && screenshotUrl) {
@@ -99,16 +102,60 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       if (!resp.ok) throw new Error('Failed to fetch screenshot');
       buffer = Buffer.from(await resp.arrayBuffer());
     }
+
+    // ── Primary OCR pass ──
     const ocr = await runOCR(buffer);
     ocrText = ocr.text;
     ocrConfidence = ocr.confidence;
-    const extracted = extractPaymentData(ocrText);
-    extractedAmounts = extracted.amounts;
-    extractedUPIs = extracted.upis;
-    extractedUTRs = extracted.utrs;
-    extractedDates = extracted.dates;
-    extractedDateTimes = extracted.dateTimes;
-    transactionStatus = extracted.transactionStatus;
+    ocrPassInfo.primaryConfidence = ocrConfidence;
+
+    const primaryExtracted = extractPaymentData(ocrText);
+    extractedAmounts = primaryExtracted.amounts;
+    extractedUPIs = primaryExtracted.upis;
+    extractedUTRs = primaryExtracted.utrs;
+    extractedDates = primaryExtracted.dates;
+    extractedDateTimes = primaryExtracted.dateTimes;
+    transactionStatus = primaryExtracted.transactionStatus;
+
+    // ── Additional OCR passes (upscaled + thresholded) ──
+    // Run when primary pass is missing key data to improve recall.
+    try {
+      const additionalPasses = await runAdditionalOCRPasses(buffer);
+      ocrPassInfo.additionalPassesRun = additionalPasses.length;
+      ocrPassInfo.additionalPassConfidences = additionalPasses.map(p => p.confidence);
+
+      for (const pass of additionalPasses) {
+        const passExtracted = extractPaymentData(pass.text);
+        // Merge candidates (union)
+        for (const a of passExtracted.amounts) {
+          if (!extractedAmounts.includes(a)) extractedAmounts.push(a);
+        }
+        for (const u of passExtracted.upis) {
+          const normalized = normalizeUPI(u);
+          if (!extractedUPIs.some(e => normalizeUPI(e) === normalized)) {
+            extractedUPIs.push(u);
+          }
+        }
+        for (const u of passExtracted.utrs) {
+          if (!extractedUTRs.includes(u)) extractedUTRs.push(u);
+        }
+        for (const dt of passExtracted.dateTimes) {
+          const key = `${dt.day}-${dt.month}-${dt.year}-${dt.hour}-${dt.minute}`;
+          if (!extractedDateTimes.some(e => `${e.day}-${e.month}-${e.year}-${e.hour}-${e.minute}` === key)) {
+            extractedDateTimes.push(dt);
+          }
+        }
+        if (!transactionStatus && passExtracted.transactionStatus) {
+          transactionStatus = passExtracted.transactionStatus;
+        }
+        // Check all passes for demo markers
+        if (isDemoScreenshot(pass.text)) {
+          ocrText = pass.text;
+        }
+      }
+      ocrPassInfo.candidatesFromPasses = { amounts: extractedAmounts, upis: extractedUPIs, utrs: extractedUTRs };
+    } catch (e) { /* additional passes are best-effort */ }
+
   } catch (ocrErr) {
     throw { message: 'OCR processing failed', code: 'OCR_FAILED', details: ocrErr.message };
   }
@@ -177,7 +224,8 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     } catch (e) { /* recovery is best-effort; keep original result */ }
   }
 
-  const upiMatch = matchUPI(extractedUPIs, receiverUpi);
+  const upiResult = matchUPIWithRecovery(extractedUPIs, receiverUpi);
+  const upiMatch = upiResult.match;
   const utr = extractedUTRs.length > 0 ? extractedUTRs[0]?.replace(/\s+/g, '').trim() || null : null;
 
   // Time-aware date resolution: prefer a receipt line that carries an exact
@@ -315,6 +363,15 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       checks,
       detected,
       fieldConfidence,
+      upiDiagnostics: {
+        originalCandidates: upiResult.originalCandidates || [],
+        normalizedCandidates: upiResult.allCandidates || [],
+        matchMethod: upiResult.method,
+        matchConfidence: upiResult.confidence,
+        matchedCandidate: upiResult.candidate,
+        expectedUpi: receiverUpi,
+      },
+      ocrPassInfo,
     },
     verificationTime,
     utr,

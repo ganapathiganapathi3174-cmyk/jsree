@@ -4,14 +4,15 @@ import { getUserPayments } from '../../services/paymentService.js';
 import { runScreenshotVerification } from '../../services/verificationService.js';
 import { applyTopupVerification, getTopupsForUser } from '../../services/topupService.js';
 
-const { runOCR, runAmountRecoveryOCR } = vi.hoisted(() => ({
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
   runOCR: vi.fn(),
   runAmountRecoveryOCR: vi.fn(),
+  runAdditionalOCRPasses: vi.fn(),
 }));
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -127,6 +128,7 @@ function resetDb(paymentRow) {
 beforeEach(() => {
   vi.clearAllMocks();
   runAmountRecoveryOCR.mockResolvedValue([]);
+  runAdditionalOCRPasses.mockResolvedValue([]);
   resetDb(seedPaymentRow());
 });
 

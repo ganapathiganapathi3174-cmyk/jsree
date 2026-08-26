@@ -13,14 +13,15 @@ import {
   extractTransactionStatus,
 } from '../../services/ocrService.js';
 
-const { runOCR, runAmountRecoveryOCR } = vi.hoisted(() => ({
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
   runOCR: vi.fn(),
   runAmountRecoveryOCR: vi.fn(),
+  runAdditionalOCRPasses: vi.fn(),
 }));
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
 });
 
 vi.mock('../../db/supabase.js', () => ({
@@ -48,7 +49,7 @@ function receipt(amount, upi, dateLine, utr = '12345678901234', extra = '') {
 beforeEach(() => {
   vi.clearAllMocks();
   runAmountRecoveryOCR.mockResolvedValue([]);
-  runOCR.mockResolvedValue({ text: '', confidence: 90 });
+  runAdditionalOCRPasses.mockResolvedValue([]);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -640,5 +641,147 @@ describe('Payment config', () => {
   it('PAYMENT_TIME_WINDOW_MINUTES is 30', async () => {
     const { PAYMENT_TIME_WINDOW_MINUTES } = await import('../../config/paymentConfig.js');
     expect(PAYMENT_TIME_WINDOW_MINUTES).toBe(30);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 16. UPI OCR TRUNCATION RECOVERY — end-to-end
+// ═══════════════════════════════════════════════════════════════
+describe('UPI OCR truncation recovery — full pipeline', () => {
+  it('truncated UPI (missing trailing "i") → recovered → APPROVED', async () => {
+    runOCR.mockResolvedValue({
+      text: receipt(120, 'jayarajj126-3@okicic', 'Date: 24/08/2026, 1:00 PM'),
+      confidence: 90,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+      now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.upiMatch).toBe(true);
+    expect(verificationResult.upiDiagnostics.matchMethod).toBe('ocr_recovery_truncation');
+    expect(verificationResult.upiDiagnostics.matchedCandidate).toBe('jayarajj126-3@okicic');
+  });
+
+  it('completely wrong UPI → no recovery → REJECTED', async () => {
+    runOCR.mockResolvedValue({
+      text: receipt(120, 'attacker@paytm', 'Date: 24/08/2026, 1:00 PM'),
+      confidence: 90,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+      now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('UPI_MISMATCH');
+    expect(verificationResult.upiDiagnostics.matchMethod).toBe('none');
+  });
+
+  it('similar but different UPI (substitution) → no recovery → REJECTED', async () => {
+    runOCR.mockResolvedValue({
+      text: receipt(120, 'jayarajj126-3@okocici', 'Date: 24/08/2026, 1:00 PM'),
+      confidence: 90,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+      now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.upiDiagnostics.matchMethod).toBe('none');
+  });
+
+  it('diagnostics include all candidate UPIs', async () => {
+    runOCR.mockResolvedValue({
+      text: receipt(120, 'jayarajj126-3@okicic', 'Date: 24/08/2026, 1:00 PM'),
+      confidence: 90,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+      now: NOW(),
+    });
+    expect(verificationResult.upiDiagnostics.originalCandidates).toContain('jayarajj126-3@okicic');
+    expect(verificationResult.upiDiagnostics.expectedUpi).toBe(RECEIVER_UPI);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 17. MULTI-PASS OCR — additional pass merging
+// ═══════════════════════════════════════════════════════════════
+describe('Multi-pass OCR — additional passes merge candidates', () => {
+  it('additional passes recover amount missed by primary → APPROVED', async () => {
+    runOCR.mockResolvedValue({
+      text: `Payment Successful\nTo: ${RECEIVER_UPI}\nDate: 24/08/2026, 1:00 PM\nUTR: 12345678901234`,
+      confidence: 90,
+    });
+    runAdditionalOCRPasses.mockResolvedValue([
+      { text: '₹120\nCompleted', confidence: 85, pass: 'upscaled' },
+      { text: '120', confidence: 78, pass: 'thresholded' },
+    ]);
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+      now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.amountMatch).toBe(true);
+    expect(verificationResult.ocrPassInfo.additionalPassesRun).toBe(2);
+  });
+
+  it('additional passes recover UPI missed by primary → APPROVED', async () => {
+    runOCR.mockResolvedValue({
+      text: `Payment Successful\n₹120\nDate: 24/08/2026, 1:00 PM\nUTR: 12345678901234`,
+      confidence: 90,
+    });
+    runAdditionalOCRPasses.mockResolvedValue([
+      { text: `To: ${RECEIVER_UPI}`, confidence: 85, pass: 'upscaled' },
+    ]);
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+      now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.upiMatch).toBe(true);
+  });
+
+  it('additional passes failure does not crash verification', async () => {
+    runOCR.mockResolvedValue({
+      text: receipt(120, RECEIVER_UPI, 'Date: 24/08/2026, 1:00 PM'),
+      confidence: 90,
+    });
+    runAdditionalOCRPasses.mockRejectedValue(new Error('Tesseract crash'));
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+      now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('approved');
+  });
+
+  it('no additional passes run when not mocked (backward compat)', async () => {
+    runOCR.mockResolvedValue({
+      text: receipt(120, RECEIVER_UPI, 'Date: 24/08/2026, 1:00 PM'),
+      confidence: 90,
+    });
+    runAdditionalOCRPasses.mockResolvedValue([]);
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'),
+      expectedAmount: 120,
+      receiverUpi: RECEIVER_UPI,
+      now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.ocrPassInfo.additionalPassesRun).toBe(0);
   });
 });

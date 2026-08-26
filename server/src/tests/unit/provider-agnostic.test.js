@@ -16,14 +16,15 @@ import {
   isWithinForwardWindow,
 } from '../../services/ocrService.js';
 
-const { runOCR, runAmountRecoveryOCR } = vi.hoisted(() => ({
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
   runOCR: vi.fn(),
   runAmountRecoveryOCR: vi.fn(),
+  runAdditionalOCRPasses: vi.fn(),
 }));
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
 });
 
 vi.mock('../../db/supabase.js', () => ({
@@ -38,6 +39,7 @@ const NOW = () => new Date('2026-08-24T07:30:00.000Z'); // 2026-08-24 13:00 IST
 beforeEach(() => {
   vi.clearAllMocks();
   runAmountRecoveryOCR.mockResolvedValue([]);
+  runAdditionalOCRPasses.mockResolvedValue([]);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -144,8 +146,11 @@ describe('Extraction: Amounts from different formats', () => {
   it('extracts INR 1000', () => {
     expect(extractAmounts('INR 1000')).toContain(1000);
   });
-  it('extracts 120.00', () => {
-    expect(extractAmounts('120.00')).toContain(120);
+  it('does NOT extract bare 120.00 without currency/label context', () => {
+    expect(extractAmounts('120.00')).toEqual([]);
+  });
+  it('extracts ₹120.00 with currency prefix', () => {
+    expect(extractAmounts('₹120.00')).toContain(120);
   });
   it('extracts "You paid ₹500"', () => {
     expect(extractAmounts('You paid ₹500')).toContain(500);
