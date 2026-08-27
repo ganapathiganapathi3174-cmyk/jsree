@@ -128,6 +128,10 @@ export async function login(email, password, ipAddress = null, userAgent = null)
     throw { message: 'Invalid email or password', code: 'INVALID_CREDENTIALS' };
   }
 
+  if (user.role === 'admin') {
+    throw { message: 'Invalid email or password', code: 'INVALID_CREDENTIALS' };
+  }
+
   // A user whose initial registration payment is pending / processing / rejected
   // must NOT receive a normal authenticated dashboard session. Only the payment
   // status endpoints remain reachable via a token obtained at registration.
@@ -192,12 +196,17 @@ export async function adminLogin(email, password, ipAddress = null, userAgent = 
     throw { message: 'Invalid admin credentials', code: 'INVALID_CREDENTIALS' };
   }
 
-  let { data: adminUser } = await supabase
+  const { data: existingUser } = await supabase
     .from('users')
     .select('id, full_name, email, role, status')
     .eq('email', adminEmail.toLowerCase())
-    .eq('role', 'admin')
     .single();
+
+  if (existingUser && existingUser.role !== 'admin') {
+    throw { message: 'Account is not an admin account', code: 'ADMIN_REQUIRED' };
+  }
+
+  let adminUser = existingUser;
 
   if (!adminUser) {
     const { data: newAdmin } = await supabase
