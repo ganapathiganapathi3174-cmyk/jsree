@@ -618,10 +618,111 @@ export async function runAmountRecoveryOCR(imageBuffer) {
       .extract({ left: 0, top: y, width: W, height: h })
       .png()
       .toBuffer();
+
     const r = await Tesseract.recognize(strip, 'eng', {});
     if (r.data.text) recovered.push(r.data.text);
+
+    try {
+      const thresholdBuf = await sharp(strip).threshold(145).png().toBuffer();
+      const r2 = await Tesseract.recognize(thresholdBuf, 'eng', {});
+      if (r2.data.text) recovered.push(r2.data.text);
+    } catch (_) { /* best-effort */ }
+
+    try {
+      const thresholdBuf = await sharp(strip).threshold(100).png().toBuffer();
+      const r3 = await Tesseract.recognize(thresholdBuf, 'eng', {});
+      if (r3.data.text) recovered.push(r3.data.text);
+    } catch (_) { /* best-effort */ }
+
+    try {
+      const invertedBuf = await sharp(strip).negate().normalize().png().toBuffer();
+      const r4 = await Tesseract.recognize(invertedBuf, 'eng', {});
+      if (r4.data.text) recovered.push(r4.data.text);
+    } catch (_) { /* best-effort */ }
   }
   return extractAmountsFromStrips(recovered.join('\n'));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Deep amount recovery for currency-symbol corruption.
+//
+// Some providers (e.g. Google Pay) render the amount as a large
+// stylized header where Tesseract misreads the ₹ symbol as "2"
+// (e.g. ₹120 → "2120").  Standard strip recovery picks up the
+// corrupted number but it doesn't match the expected amount.
+//
+// This function applies aggressive, targeted preprocessing to the
+// amount region of the image to try to get Tesseract to read the
+// currency symbol correctly.  It is only called when standard
+// recovery has already failed.
+//
+// Returns additional amount candidates (may be empty).
+// ─────────────────────────────────────────────────────────────
+export async function runDeepAmountRecovery(imageBuffer) {
+  const { default: Tesseract } = await import('tesseract.js');
+  const processed = await preprocessImage(imageBuffer);
+  const meta = await sharp(processed).metadata();
+  const W = meta.width, H = meta.height;
+  const candidates = [];
+
+  const TOP_REGION_H = Math.floor(H * 0.45);
+  try {
+    const topBuf = await sharp(processed)
+      .extract({ left: 0, top: 0, width: W, height: TOP_REGION_H })
+      .png()
+      .toBuffer();
+
+    const strategies = [
+      sharp(topBuf).threshold(80).png().toBuffer(),
+      sharp(topBuf).threshold(120).png().toBuffer(),
+      sharp(topBuf).threshold(160).png().toBuffer(),
+      sharp(topBuf).threshold(200).png().toBuffer(),
+      sharp(topBuf).negate().normalize().png().toBuffer(),
+      sharp(topBuf).sharpen({ sigma: 3 }).threshold(130).png().toBuffer(),
+      sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer(),
+    ];
+
+    const buffers = await Promise.all(strategies);
+    const results = await Promise.all(
+      buffers.map(buf => Tesseract.recognize(buf, 'eng', {}))
+    );
+
+    for (const r of results) {
+      if (r.data.text) candidates.push(r.data.text);
+    }
+  } catch (_) { /* best-effort */ }
+
+  const STRIP_H = 180;
+  const OVERLAP = 90;
+  for (let y = 0; y < TOP_REGION_H; y += (STRIP_H - OVERLAP)) {
+    const h = Math.min(STRIP_H, TOP_REGION_H - y);
+    try {
+      const stripBuf = await sharp(processed)
+        .extract({ left: 0, top: y, width: W, height: h })
+        .png()
+        .toBuffer();
+
+      const stripStrategies = [
+        sharp(stripBuf).threshold(80).png().toBuffer(),
+        sharp(stripBuf).threshold(120).png().toBuffer(),
+        sharp(stripBuf).threshold(160).png().toBuffer(),
+        sharp(stripBuf).threshold(200).png().toBuffer(),
+        sharp(stripBuf).negate().normalize().png().toBuffer(),
+        sharp(stripBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer(),
+      ];
+
+      const stripBuffers = await Promise.all(stripStrategies);
+      const stripResults = await Promise.all(
+        stripBuffers.map(buf => Tesseract.recognize(buf, 'eng', {}))
+      );
+
+      for (const r of stripResults) {
+        if (r.data.text) candidates.push(r.data.text);
+      }
+    } catch (_) { /* best-effort */ }
+  }
+
+  return extractAmountsFromStrips(candidates.join('\n'));
 }
 
 // ─────────────────────────────────────────────────────────────

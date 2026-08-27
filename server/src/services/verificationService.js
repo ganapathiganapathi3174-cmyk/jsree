@@ -8,6 +8,8 @@ import {
   dateTimeEntryToDate,
   isDemoScreenshot,
   runAdditionalOCRPasses,
+  runAmountRecoveryOCR,
+  runDeepAmountRecovery,
   normalizeUPI,
 } from './ocrService.js';
 import {
@@ -222,6 +224,18 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
         extractedAmounts = merged;
       }
     } catch (e) { /* recovery is best-effort; keep original result */ }
+  }
+
+  if (!amountMatch) {
+    try {
+      const deepRecovered = await runDeepAmountRecovery(buffer);
+      const merged = [...new Set([...extractedAmounts, ...deepRecovered])];
+      if (matchAmount(merged, expectedAmount)) {
+        amountMatch = true;
+        recoveredFromBands = true;
+        extractedAmounts = merged;
+      }
+    } catch (e) { /* deep recovery is best-effort */ }
   }
 
   const upiResult = matchUPIWithRecovery(extractedUPIs, receiverUpi);
