@@ -749,23 +749,127 @@ export function extractPaymentData(ocrText) {
 }
 
 export function matchAmount(extractedAmounts, expectedAmount) {
-  if (extractedAmounts.some(a => Math.abs(a - expectedAmount) < 0.01)) return true;
+  return extractedAmounts.some(a => Math.abs(a - expectedAmount) < 0.01);
+}
 
-  // Tesseract commonly misreads the ₹ currency symbol as the digit "2"
-  // on large-font UPI receipt amounts (e.g. ₹120 → "2120", ₹500 → "2500").
-  // This occurs more frequently on dark-mode screenshots where the light-on-dark
-  // ₹ glyph is poorly segmented.  The corruption is always a single leading "2"
-  // prepended to the correct digits.  Check for this specific pattern so that
-  // recovery-OCR candidates corrupted by this known Tesseract defect still match.
+// ─────────────────────────────────────────────────────────────
+// Currency-symbol corruption recovery via targeted region OCR.
+//
+// Tesseract misreads the ₹ symbol as "2" on large-font GPay
+// amounts (e.g. ₹120 → "2120").  This function isolates the
+// amount region of the screenshot and runs multiple preprocessing
+// strategies to try to recover the correct reading.
+//
+// Returns: { verified: boolean, method: string, evidence: string }
+//
+// "verified" is true ONLY when at least one preprocessing strategy
+// produces the exact expected amount from the image.  This is
+// EVIDENCE-based — we never infer corruption from the numeric
+// string alone.
+// ─────────────────────────────────────────────────────────────
+export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmount) {
+  const { default: Tesseract } = await import('tesseract.js');
+  const processed = await preprocessImage(imageBuffer);
+  const meta = await sharp(processed).metadata();
+  const W = meta.width, H = meta.height;
+
   const expStr = String(Math.round(expectedAmount));
-  return extractedAmounts.some(a => {
-    const aStr = String(Math.round(a));
-    return (
-      aStr.length === expStr.length + 1 &&
-      aStr[0] === '2' &&
-      aStr.slice(1) === expStr
-    );
-  });
+
+  // Helper: check if OCR text contains the expected amount with or
+  // without a currency prefix.
+  function textContainsExpected(text) {
+    if (!text) return false;
+    const patterns = [
+      new RegExp(`(?:₹|Rs\\.?|INR)\\s*${expStr}\\b`, 'i'),
+      new RegExp(`\\b${expStr}\\s*(?:₹|Rs\\.?|INR)`, 'i'),
+      new RegExp(`\\b${expStr}\\b`),
+    ];
+    return patterns.some(re => re.test(text));
+  }
+
+  // Extract the top region where GPay renders the amount header.
+  const TOP_REGION_H = Math.floor(H * 0.45);
+  let topBuf;
+  try {
+    topBuf = await sharp(processed)
+      .extract({ left: 0, top: 0, width: W, height: TOP_REGION_H })
+      .png()
+      .toBuffer();
+  } catch (_) {
+    return { verified: false, method: 'extract_failed', evidence: '' };
+  }
+
+  // Multiple preprocessing strategies targeting different dark/light
+  // mode scenarios and ₹ symbol rendering variations.
+  const strategies = [
+    { name: 'upscale_2x_threshold_120', buf: sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(120).png().toBuffer() },
+    { name: 'upscale_2x_threshold_140', buf: sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer() },
+    { name: 'upscale_2x_threshold_100', buf: sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(100).png().toBuffer() },
+    { name: 'negate_normalize', buf: sharp(topBuf).negate().normalize().png().toBuffer() },
+    { name: 'negate_threshold_140', buf: sharp(topBuf).negate().normalize().threshold(140).png().toBuffer() },
+    { name: 'negate_threshold_120', buf: sharp(topBuf).negate().normalize().threshold(120).png().toBuffer() },
+    { name: 'sharpen_threshold_100', buf: sharp(topBuf).sharpen({ sigma: 3 }).threshold(100).png().toBuffer() },
+    { name: 'sharpen_threshold_160', buf: sharp(topBuf).sharpen({ sigma: 3 }).threshold(160).png().toBuffer() },
+    { name: 'high_threshold_200', buf: sharp(topBuf).threshold(200).png().toBuffer() },
+    { name: 'low_threshold_80', buf: sharp(topBuf).threshold(80).png().toBuffer() },
+    { name: 'negate_upscale', buf: sharp(topBuf).negate().normalize().resize({ width: W * 2, kernel: 'lanczos3' }).threshold(130).png().toBuffer() },
+    { name: 'linear_high_contrast', buf: sharp(topBuf).linear(2.0, -50).normalize().png().toBuffer() },
+  ];
+
+  const buffers = await Promise.all(strategies.map(s => s.buf));
+  const results = await Promise.all(
+    buffers.map(buf => Tesseract.recognize(buf, 'eng', {}))
+  );
+
+  // Check each strategy for evidence of the correct amount.
+  for (let i = 0; i < results.length; i++) {
+    const text = results[i].data.text || '';
+    if (textContainsExpected(text)) {
+      return {
+        verified: true,
+        method: strategies[i].name,
+        evidence: text.trim().substring(0, 200),
+      };
+    }
+  }
+
+  // Also run strip-based OCR on the amount region for additional evidence.
+  const STRIP_H = 180;
+  const OVERLAP = 90;
+  for (let y = 0; y < TOP_REGION_H; y += (STRIP_H - OVERLAP)) {
+    const h = Math.min(STRIP_H, TOP_REGION_H - y);
+    try {
+      const stripBuf = await sharp(processed)
+        .extract({ left: 0, top: y, width: W, height: h })
+        .png()
+        .toBuffer();
+
+      const stripStrategies = [
+        sharp(stripBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(120).png().toBuffer(),
+        sharp(stripBuf).negate().normalize().png().toBuffer(),
+        sharp(stripBuf).negate().normalize().threshold(130).png().toBuffer(),
+        sharp(stripBuf).sharpen({ sigma: 3 }).threshold(100).png().toBuffer(),
+      ];
+
+      const stripBuffers = await Promise.all(stripStrategies);
+      const stripResults = await Promise.all(
+        stripBuffers.map(buf => Tesseract.recognize(buf, 'eng', {}))
+      );
+
+      for (const r of stripResults) {
+        const text = r.data.text || '';
+        if (textContainsExpected(text)) {
+          return {
+            verified: true,
+            method: 'strip_region_recovery',
+            evidence: text.trim().substring(0, 200),
+          };
+        }
+      }
+    } catch (_) { /* best-effort */ }
+  }
+
+  return { verified: false, method: 'no_evidence', evidence: '' };
 }
 
 export function matchUPI(extractedUPIs, receiverUPI) {

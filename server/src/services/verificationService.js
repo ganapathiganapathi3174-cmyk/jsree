@@ -10,6 +10,7 @@ import {
   runAdditionalOCRPasses,
   runAmountRecoveryOCR,
   runDeepAmountRecovery,
+  verifyAmountWithCurrencyRecovery,
   normalizeUPI,
 } from './ocrService.js';
 import {
@@ -236,6 +237,26 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
         extractedAmounts = merged;
       }
     } catch (e) { /* deep recovery is best-effort */ }
+  }
+
+  // ── Currency-symbol corruption recovery ──
+  // When all OCR passes extract a candidate like "2120" but the expected
+  // amount is 120, Tesseract may have misread the ₹ symbol as "2".
+  // This step runs targeted region-specific OCR with multiple preprocessing
+  // strategies to recover evidence of the correct amount from the image.
+  // It ONLY accepts when a preprocessing strategy produces the exact expected
+  // amount — no numeric heuristics, no string inference.
+  if (!amountMatch) {
+    try {
+      const currencyResult = await verifyAmountWithCurrencyRecovery(buffer, expectedAmount);
+      if (currencyResult.verified) {
+        amountMatch = true;
+        recoveredFromBands = true;
+        if (!extractedAmounts.includes(expectedAmount)) {
+          extractedAmounts.push(expectedAmount);
+        }
+      }
+    } catch (e) { /* currency recovery is best-effort */ }
   }
 
   const upiResult = matchUPIWithRecovery(extractedUPIs, receiverUpi);

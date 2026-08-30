@@ -15,16 +15,17 @@ import {
   decidePaymentVerification,
 } from '../../services/verificationService.js';
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery } = vi.hoisted(() => ({
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery, verifyAmountWithCurrencyRecovery } = vi.hoisted(() => ({
   runOCR: vi.fn(),
   runAmountRecoveryOCR: vi.fn(),
   runAdditionalOCRPasses: vi.fn(),
   runDeepAmountRecovery: vi.fn(),
+  verifyAmountWithCurrencyRecovery: vi.fn(),
 }));
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery, verifyAmountWithCurrencyRecovery };
 });
 
 vi.mock('../../db/supabase.js', () => ({
@@ -140,8 +141,8 @@ describe('matchAmount: exact monetary comparison', () => {
   it('120 does NOT match 121', () => expect(matchAmount([121], 120)).toBe(false));
   it('500 does NOT match 5000', () => expect(matchAmount([5000], 500)).toBe(false));
   it('1000 does NOT match 100', () => expect(matchAmount([100], 1000)).toBe(false));
-  it('2120 matches 120 (₹ misread as "2" by Tesseract on GPay dark-mode)', () => expect(matchAmount([2120], 120)).toBe(true));
-  it('2500 matches 500 (₹ misread as "2" by Tesseract on GPay dark-mode)', () => expect(matchAmount([2500], 500)).toBe(true));
+  it('2120 does NOT match 120 (no evidence — pure numeric string)', () => expect(matchAmount([2120], 120)).toBe(false));
+  it('2500 does NOT match 500 (no evidence — pure numeric string)', () => expect(matchAmount([2500], 500)).toBe(false));
   it('2100 does NOT match 120 (2-prefix but remainder differs)', () => expect(matchAmount([2100], 120)).toBe(false));
   it('2120 does NOT match 500 (2-prefix remainder is 120, not 500)', () => expect(matchAmount([2120], 500)).toBe(false));
   it('empty list does NOT match any amount', () => expect(matchAmount([], 120)).toBe(false));
@@ -647,5 +648,103 @@ describe('Field-level confidence', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.fieldConfidence.amount.confidence).toBe('none');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 20: CURRENCY-SYMBOL CORRUPTION RECOVERY (evidence-based)
+//
+// When Tesseract reads ₹120 as "2120" (₹ misread as "2"), the
+// pipeline runs targeted region OCR to recover evidence of the
+// correct amount. This section tests that:
+// - Recovery SUCCEEDS when image evidence supports ₹120
+// - Recovery FAILS when image genuinely shows ₹2120 or ₹2500
+// - matchAmount() alone never accepts2120 as 120
+// ═══════════════════════════════════════════════════════════════
+describe('Currency-symbol corruption recovery (evidence-based)', () => {
+  it('matchAmount: 2120 does NOT match 120 (no image evidence)', () => {
+    expect(matchAmount([2120], 120)).toBe(false);
+  });
+
+  it('matchAmount: 2500 does NOT match 500 (no image evidence)', () => {
+    expect(matchAmount([2500], 500)).toBe(false);
+  });
+
+  it('matchAmount: genuine 120 matches 120', () => {
+    expect(matchAmount([120], 120)).toBe(true);
+  });
+
+  it('matchAmount: genuine 2120 does NOT match 120', () => {
+    expect(matchAmount([2120], 120)).toBe(false);
+  });
+
+  it('matchAmount: genuine 2120 matches 2120', () => {
+    expect(matchAmount([2120], 2120)).toBe(true);
+  });
+
+  it('matchAmount: genuine 2500 matches 2500', () => {
+    expect(matchAmount([2500], 2500)).toBe(true);
+  });
+
+  it('pipeline: OCR corruption + currency recovery verifies → APPROVED', async () => {
+    // Primary OCR reads "2120" (₹ misread as 2), but recovery finds ₹120
+    runOCR.mockResolvedValue({
+      text: 'Google Pay\nPayment Successful\n2120\nTo Jayaraj\nCompleted\n27/08/2026, 9:25 AM\nUPI transaction ID\nT7GHD123456\njayarajj126-3@okicici',
+      confidence: 85,
+    });
+    // Currency recovery finds ₹120 in the image
+    verifyAmountWithCurrencyRecovery.mockResolvedValue({
+      verified: true, method: 'negate_upscale', evidence: '₹120',
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.amountMatch).toBe(true);
+  });
+
+  it('pipeline: genuine ₹2120 + no recovery evidence → REJECTED', async () => {
+    // OCR reads "2120", no currency recovery evidence
+    runOCR.mockResolvedValue({
+      text: 'Google Pay\nPayment Successful\n2120\nTo Jayaraj\nCompleted\n27/08/2026, 9:25 AM\nUPI transaction ID\nT7GHD123456\njayarajj126-3@okicici',
+      confidence: 85,
+    });
+    // Currency recovery finds NO evidence of ₹120
+    verifyAmountWithCurrencyRecovery.mockResolvedValue({
+      verified: false, method: 'no_evidence', evidence: '',
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    expect(verificationResult.amountMatch).toBe(false);
+  });
+
+  it('pipeline: genuine ₹2500 + no recovery evidence → REJECTED for ₹500 plan', async () => {
+    runOCR.mockResolvedValue({
+      text: 'Google Pay\nPayment Successful\n2500\nTo Jayaraj\nCompleted\n27/08/2026, 9:25 AM\nUPI transaction ID\nT7GHD123456\njayarajj126-3@okicici',
+      confidence: 85,
+    });
+    verifyAmountWithCurrencyRecovery.mockResolvedValue({
+      verified: false, method: 'no_evidence', evidence: '',
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 500, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+  });
+
+  it('pipeline: exact ₹120 match → APPROVED (no recovery needed)', async () => {
+    runOCR.mockResolvedValue({
+      text: gpayText(120, RECEIVER_UPI, '27/08/2026, 9:25 AM'),
+      confidence: 85,
+    });
+    const { verificationResult } = await runScreenshotVerification({
+      imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
+    });
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.amountMatch).toBe(true);
   });
 });
