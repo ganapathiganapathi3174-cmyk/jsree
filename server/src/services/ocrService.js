@@ -749,7 +749,23 @@ export function extractPaymentData(ocrText) {
 }
 
 export function matchAmount(extractedAmounts, expectedAmount) {
-  return extractedAmounts.some(a => Math.abs(a - expectedAmount) < 0.01);
+  if (extractedAmounts.some(a => Math.abs(a - expectedAmount) < 0.01)) return true;
+
+  // Tesseract commonly misreads the ₹ currency symbol as the digit "2"
+  // on large-font UPI receipt amounts (e.g. ₹120 → "2120", ₹500 → "2500").
+  // This occurs more frequently on dark-mode screenshots where the light-on-dark
+  // ₹ glyph is poorly segmented.  The corruption is always a single leading "2"
+  // prepended to the correct digits.  Check for this specific pattern so that
+  // recovery-OCR candidates corrupted by this known Tesseract defect still match.
+  const expStr = String(Math.round(expectedAmount));
+  return extractedAmounts.some(a => {
+    const aStr = String(Math.round(a));
+    return (
+      aStr.length === expStr.length + 1 &&
+      aStr[0] === '2' &&
+      aStr.slice(1) === expStr
+    );
+  });
 }
 
 export function matchUPI(extractedUPIs, receiverUPI) {

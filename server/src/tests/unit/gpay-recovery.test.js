@@ -140,8 +140,10 @@ describe('matchAmount: exact monetary comparison', () => {
   it('120 does NOT match 121', () => expect(matchAmount([121], 120)).toBe(false));
   it('500 does NOT match 5000', () => expect(matchAmount([5000], 500)).toBe(false));
   it('1000 does NOT match 100', () => expect(matchAmount([100], 1000)).toBe(false));
-  it('2120 does NOT match 120 (currency corruption)', () => expect(matchAmount([2120], 120)).toBe(false));
-  it('2500 does NOT match 500 (currency corruption)', () => expect(matchAmount([2500], 500)).toBe(false));
+  it('2120 matches 120 (₹ misread as "2" by Tesseract on GPay dark-mode)', () => expect(matchAmount([2120], 120)).toBe(true));
+  it('2500 matches 500 (₹ misread as "2" by Tesseract on GPay dark-mode)', () => expect(matchAmount([2500], 500)).toBe(true));
+  it('2100 does NOT match 120 (2-prefix but remainder differs)', () => expect(matchAmount([2100], 120)).toBe(false));
+  it('2120 does NOT match 500 (2-prefix remainder is 120, not 500)', () => expect(matchAmount([2120], 500)).toBe(false));
   it('empty list does NOT match any amount', () => expect(matchAmount([], 120)).toBe(false));
   it('list without matching amount', () => expect(matchAmount([500, 1000], 120)).toBe(false));
 });
