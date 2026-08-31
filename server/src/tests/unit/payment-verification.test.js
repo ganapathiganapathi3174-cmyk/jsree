@@ -79,11 +79,12 @@ describe('Payment Verification Decision Engine', () => {
     expect(reason).toBe('LOW_OCR_CONFIDENCE');
   });
 
-  it('TEST 8: OCR confidence undefined -> APPROVED (treated as confident)', () => {
-    const { decision } = decidePaymentVerification({
+  it('TEST 8: OCR confidence undefined -> REJECTED (fail closed)', () => {
+    const { decision, reason } = decidePaymentVerification({
       ...ALL_GATES_PASS, ocrConfidence: undefined,
     });
-    expect(decision).toBe('approved');
+    expect(decision).toBe('rejected');
+    expect(reason).toBe('LOW_OCR_CONFIDENCE');
   });
 
   it('TEST 9: any single gate failing always rejects', () => {

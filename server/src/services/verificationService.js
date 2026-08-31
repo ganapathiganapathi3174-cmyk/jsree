@@ -69,8 +69,9 @@ export function decidePaymentVerification({
   // Gate 5: UTR must be present
   if (utrPresent !== true) return { decision: 'rejected', reason: 'MISSING_UTR' };
 
-  // Gate 6: OCR confidence must meet the approval floor
-  const confident = ocrConfidence === undefined || ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE;
+  // Gate 6: OCR confidence must meet the approval floor.
+  // Undefined confidence fails closed — never silently bypass the gate.
+  const confident = ocrConfidence !== undefined && ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE;
   if (!confident) return { decision: 'rejected', reason: 'LOW_OCR_CONFIDENCE' };
 
   // All gates passed — approve.

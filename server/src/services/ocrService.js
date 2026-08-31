@@ -775,14 +775,18 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
 
   const expStr = String(Math.round(expectedAmount));
 
-  // Helper: check if OCR text contains the expected amount with or
-  // without a currency prefix.
+  // Helper: check if OCR text contains the expected amount with a
+  // currency symbol adjacent.  The bare-digit pattern is INTENTIONALLY
+  // REMOVED: matching the expected amount anywhere in the text (e.g. in
+  // a phone number, date, or UTR fragment) would create a false-positive
+  // verification when the image genuinely shows a different amount.
+  // Currency-prefixed/suffixed patterns provide strong evidence that the
+  // OCR text refers to a payment amount.
   function textContainsExpected(text) {
     if (!text) return false;
     const patterns = [
       new RegExp(`(?:₹|Rs\\.?|INR)\\s*${expStr}\\b`, 'i'),
       new RegExp(`\\b${expStr}\\s*(?:₹|Rs\\.?|INR)`, 'i'),
-      new RegExp(`\\b${expStr}\\b`),
     ];
     return patterns.some(re => re.test(text));
   }

@@ -343,12 +343,13 @@ describe('OCR confidence threshold', () => {
     expect(result.reason).toBe('LOW_OCR_CONFIDENCE');
   });
 
-  it('undefined confidence → pass (gate skipped)', () => {
+  it('undefined confidence -> rejected (fail closed)', () => {
     const result = decidePaymentVerification({
       upiMatch: true, amountMatch: true, dateValid: true,
       utrPresent: true, transactionStatusOk: true, ocrConfidence: undefined,
     });
-    expect(result.decision).toBe('approved');
+    expect(result.decision).toBe('rejected');
+    expect(result.reason).toBe('LOW_OCR_CONFIDENCE');
   });
 });
 
