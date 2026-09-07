@@ -44,6 +44,8 @@ export async function submitProof(req, res) {
     const status = error.code === 'TOPUP_NOT_FOUND' ? 404
       : error.code === 'UNAUTHORIZED' ? 403
       : error.code === 'TOPUP_NOT_SUBMITTABLE' ? 400
+      : error.code === 'PAYMENT_EXPIRED' ? 410
+      : error.code === 'DUPLICATE_SCREENSHOT' ? 409
       : error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE' ? 400
       : 500;
     res.status(status).json({ success: false, message: error.message || 'Failed to submit proof', code: error.code || 'SUBMIT_FAILED' });
@@ -85,9 +87,13 @@ export async function directTopup(req, res) {
         ? 404
         : error.code === 'UNAUTHORIZED'
           ? 403
-          : error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE'
-            ? 400
-            : 500;
+          : error.code === 'PAYMENT_EXPIRED'
+            ? 410
+            : error.code === 'DUPLICATE_SCREENSHOT'
+              ? 409
+              : error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE'
+                ? 400
+                : 500;
     res.status(status).json({ success: false, message: error.message || 'Failed to process top-up', code: error.code || 'DIRECT_TOPUP_FAILED' });
   }
 }

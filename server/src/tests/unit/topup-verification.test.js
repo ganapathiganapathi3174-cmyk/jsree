@@ -40,7 +40,7 @@ function makeWalletChain(limitResult) {
   return obj;
 }
 
-const topup = { id: 'topup-1', sender_id: 'sender-1', receiver_id: 'receiver-1', amount: 120 };
+const topup = { id: 'topup-1', sender_id: 'sender-1', receiver_id: 'receiver-1', amount: 120, expires_at: new Date(Date.now() + 30 * 60000).toISOString() };
 const approved = { decision: 'approved', reason: null };
 const time = new Date('2026-08-18T12:00:00.000Z');
 
@@ -183,8 +183,13 @@ describe('Top-up balance credit', () => {
     expect(walletCredit).toHaveBeenCalledTimes(2);
 
     // Second submission (concurrent/retry): guarded UPDATE returns 0 rows
-    // because the record is already 'completed' -> no credit.
+    // because the record is already 'completed'. The ledger already holds
+    // both credit rows from the first submit, so the reconcile path credits
+    // nothing further. (If the ledger were MISSING rows — e.g. a crash
+    // between the status flip and the credit — reconcile would backfill
+    // them; that recovery path is covered in topup-hardening.test.js.)
     chains.topups = makeTopupsChain({ data: [], error: null });
+    chains.wallet_transactions = makeWalletChain({ data: [{ id: 'tx-s' }, { id: 'tx-r' }], error: null });
     const second = await applyTopupVerification(topup, approved, time);
     expect(second.alreadyProcessed).toBe(true);
     expect(second.credited).toBe(false);

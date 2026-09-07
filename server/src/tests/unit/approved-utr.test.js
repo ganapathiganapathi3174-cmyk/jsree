@@ -171,7 +171,9 @@ describe('B: payment UTR policy (applyPaymentUtrPolicy)', () => {
 });
 
 describe('C: top-up flow (applyTopupVerification)', () => {
-  const topup = { id: 'topup-1', sender_id: 'sender-1', receiver_id: 'receiver-1', amount: 120 };
+  // expires_at is mandatory since the shared 30-minute window applies to
+  // top-ups too; production rows always carry it (set at creation).
+  const topup = { id: 'topup-1', sender_id: 'sender-1', receiver_id: 'receiver-1', amount: 120, expires_at: new Date(Date.now() + 30 * 60000).toISOString() };
 
   it('C11: approved + NEW UTR -> approved + sender credited exactly once + UTR reserved', async () => {
     chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'completed' }], error: null });
@@ -215,10 +217,15 @@ describe('C: top-up flow (applyTopupVerification)', () => {
     expect(first.credited).toBe(true);
     expect(walletCredit).toHaveBeenCalledTimes(2);
 
-    // Second submit: guarded transition returns 0 rows (already approved) ->
-    // alreadyProcessed, no credit, and no additional reservation attempt.
+    // Second submit: guarded transition returns 0 rows (already approved).
+    // The ledger already holds both credit rows from the first submit, so
+    // the reconcile path credits nothing further and attempts no new
+    // reservation. (If the ledger were MISSING rows — e.g. a crash between
+    // the status flip and the credit — reconcile would backfill them; that
+    // recovery path is covered in topup-hardening.test.js.)
     chains.approved_utrs.insert.mockClear();
     chains.topups = makeTopupsChain({ data: [], error: null });
+    chains.wallet_transactions = makeWalletChain({ data: [{ id: 'tx-s' }, { id: 'tx-r' }], error: null });
     const second = await applyTopupVerification(topup, { decision: 'approved', reason: null, utr: 'DBL1' }, time);
     expect(second.alreadyProcessed).toBe(true);
     expect(second.credited).toBe(false);
@@ -227,7 +234,7 @@ describe('C: top-up flow (applyTopupVerification)', () => {
   });
 
   it('C14: same UTR used by a SECOND top-up -> second rejected DUPLICATE_UTR, no credit', async () => {
-    const topup2 = { id: 'topup-2', sender_id: 'sender-2', amount: 120 };
+    const topup2 = { id: 'topup-2', sender_id: 'sender-2', amount: 120, expires_at: new Date(Date.now() + 30 * 60000).toISOString() };
 
     chains.topups = makeTopupsChain({ data: [{ id: topup2.id, status: 'completed' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [], error: null });

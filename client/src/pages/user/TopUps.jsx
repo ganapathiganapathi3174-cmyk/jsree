@@ -204,6 +204,11 @@ export default function TopUps() {
       <Modal isOpen={!!proofModal} onClose={() => setProofModal(null)} title="Submit Payment Proof">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">Upload your payment screenshot for ₹{proofModal?.amount}</p>
+          {proofModal?.expires_at && (
+            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              This top-up request expires at {new Date(proofModal.expires_at).toLocaleString()}. Expired requests are rejected automatically — the server clock decides, not this display.
+            </p>
+          )}
           <input type="file" accept="image/*" className="input-field" onChange={e => setScreenshot(e.target.files[0])} />
           <input className="input-field" placeholder="Transaction/Reference ID" value={refId} onChange={e => setRefId(e.target.value)} />
           <button onClick={handleProof} disabled={submitting} className="btn-primary w-full">{submitting ? 'Submitting...' : 'Submit Proof'}</button>

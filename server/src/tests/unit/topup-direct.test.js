@@ -48,7 +48,9 @@ function makeTopupsChain({ singles = [], approvalSelect } = {}) {
     insert: vi.fn(() => obj),
     select: vi.fn(() => obj),
     eq: vi.fn(() => obj),
+    neq: vi.fn(() => obj),
     in: vi.fn(() => obj),
+    limit: vi.fn(() => Promise.resolve({ data: [], error: null })),
     single: vi.fn(),
     update: vi.fn(() => updateObj),
   };
@@ -65,8 +67,9 @@ function makeWalletChain(limitResult) {
 const SENDER = { data: { id: 'sender-1', referred_by: 'sponsor-1', current_plan: 120 }, error: null };
 const RECEIVER = { data: { id: 'sponsor-1', full_name: 'Sponsor', status: 'active' }, error: null };
 const NO_PENDING = { data: null, error: { code: 'PGRST116' } };
-const CREATED_TOPUP = { data: { id: 'topup-new-1', sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, plan: 120, status: 'created' }, error: null };
-const PENDING_TOPUP = { data: { id: 'pending-1', sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, plan: 120, status: 'created' }, error: null };
+const FUTURE_EXPIRY = new Date(Date.now() + 30 * 60000).toISOString();
+const CREATED_TOPUP = { data: { id: 'topup-new-1', sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, plan: 120, status: 'created', expires_at: FUTURE_EXPIRY }, error: null };
+const PENDING_TOPUP = { data: { id: 'pending-1', sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, plan: 120, status: 'created', expires_at: FUTURE_EXPIRY }, error: null };
 const fakeFile = { buffer: Buffer.from('img'), mimetype: 'image/png', originalname: 'proof.png' };
 const APPROVED_VERIFICATION = { verificationResult: { decision: 'approved', reason: null, utr: null }, verificationTime: new Date('2026-08-18T12:00:00.000Z'), utr: null };
 

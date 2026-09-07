@@ -235,6 +235,7 @@ describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
     amount: 120,
     plan: 120,
     status: 'created',
+    expires_at: new Date(Date.now() + 30 * 60000).toISOString(),
     ...overrides,
   });
 

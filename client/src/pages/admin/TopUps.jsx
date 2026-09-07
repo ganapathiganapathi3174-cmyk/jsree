@@ -63,7 +63,7 @@ export default function AdminTopUps() {
           </table>
         </div>
       )}
-      <ConfirmDialog isOpen={!!confirmDelete} onClose={() => setConfirmDelete(null)} onConfirm={() => handleDelete(confirmDelete?.id)} title="Delete this top-up permanently?" message="Only this top-up and its related data will be removed." confirmText="Delete" confirmVariant="danger" />
+      <ConfirmDialog isOpen={!!confirmDelete} onClose={() => setConfirmDelete(null)} onConfirm={() => handleDelete(confirmDelete?.id)} title="Delete this top-up permanently?" message="Only this top-up payment record and its own verification data will be removed. The user account, wallet, wallet balance, referrals and all other top-ups will remain." confirmText="Delete" confirmVariant="danger" />
     </div>
   );
 }

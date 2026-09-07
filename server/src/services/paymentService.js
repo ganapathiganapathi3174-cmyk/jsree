@@ -575,16 +575,20 @@ export async function deletePayment(paymentId, adminId) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Automatic payment expiry — background sweep.
+// Automatic payment expiry — background sweep (SHARED by membership
+// payments and top-ups; both use the same server-authoritative
+// 30-minute window).
 //
-// Finds all pending/manual_review payments whose expires_at has passed
-// and marks them as rejected with PAYMENT_EXPIRED. Idempotent: already
-// rejected/approved rows are never touched (the WHERE clause only
-// matches actionable statuses). Does NOT interfere with UTR logic because
-// UTRs are only reserved on approval, not on expiry.
+// Finds all pending/manual_review payments AND all created/payment_pending
+// top-ups whose expires_at has passed and marks them rejected with
+// PAYMENT_EXPIRED. Idempotent: approved/completed/rejected rows are never
+// touched. Does NOT interfere with UTR logic (reserved only on approval)
+// and NEVER credits wallets (credit happens only on verified approval).
 //
 // Called periodically from the server startup interval AND on-demand.
 // ─────────────────────────────────────────────────────────────
+const TOPUP_EXPIRABLE_STATUSES = ['created', 'payment_pending'];
+
 export async function autoExpireStalePayments() {
   const now = new Date().toISOString();
   const { data: expiredPayments, error: fetchError } = await supabase
@@ -594,12 +598,12 @@ export async function autoExpireStalePayments() {
     .lt('expires_at', now)
     .limit(50);
 
-  if (fetchError || !expiredPayments || expiredPayments.length === 0) {
+  if (fetchError) {
     return { expired: 0 };
   }
 
   let expiredCount = 0;
-  for (const payment of expiredPayments) {
+  for (const payment of expiredPayments || []) {
     try {
       const { error: updateError } = await supabase
         .from('payments')
@@ -632,6 +636,50 @@ export async function autoExpireStalePayments() {
       }
     } catch (e) { /* individual expiry failure is non-blocking */ }
   }
+
+  // ── Top-up sweep: same rule, top-up table and statuses ──
+  try {
+    const { data: expiredTopups } = await supabase
+      .from('topups')
+      .select('id, sender_id, amount, expires_at')
+      .in('status', TOPUP_EXPIRABLE_STATUSES)
+      .lt('expires_at', now)
+      .limit(50);
+
+    for (const topup of expiredTopups || []) {
+      try {
+        const { error: updateError } = await supabase
+          .from('topups')
+          .update({
+            status: 'rejected',
+            rejection_reason: 'PAYMENT_EXPIRED',
+            verified_at: now,
+          })
+          .eq('id', topup.id)
+          .in('status', TOPUP_EXPIRABLE_STATUSES);
+
+        if (!updateError) {
+          expiredCount++;
+          try {
+            await notificationService.createNotification(
+              topup.sender_id,
+              'payment_rejected',
+              'Top-up Expired',
+              `Your top-up of ₹${topup.amount} has expired. The 30-minute payment window has ended. Please create a new top-up request.`,
+              { topupId: topup.id, amount: topup.amount, reason: 'PAYMENT_EXPIRED' }
+            );
+          } catch (e) { /* notification failure is non-blocking */ }
+
+          await logAction(topup.sender_id, 'system', 'auto_expire_topup', topup.id, 'topup', {
+            senderId: topup.sender_id,
+            amount: topup.amount,
+            expires_at: topup.expires_at,
+            reason: 'PAYMENT_EXPIRED',
+          });
+        }
+      } catch (e) { /* individual expiry failure is non-blocking */ }
+    }
+  } catch (e) { /* top-up sweep failure must not break the payment sweep */ }
 
   return { expired: expiredCount };
 }

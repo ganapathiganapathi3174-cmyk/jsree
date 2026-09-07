@@ -1,11 +1,17 @@
+import crypto from 'crypto';
 import { supabase } from '../db/supabase.js';
 import { generateUniqueFilename } from '../utils/helpers.js';
 import { logAction } from './auditService.js';
 import { checkAndDeactivateReferrer } from './referralService.js';
 import walletService from './walletService.js';
 import { runScreenshotVerification, reserveApprovedUtr } from './verificationService.js';
+// Shared server-authoritative payment configuration and expiry helper —
+// the SAME values and the SAME fail-closed check the membership flow uses.
+// There is exactly one verification engine (verificationService) and one
+// expiry rule; top-ups only add their own post-verification business action.
+import { RECEIVER_UPI, PAYMENT_TIME_WINDOW_MINUTES } from '../config/paymentConfig.js';
+import { isPaymentExpired } from './paymentService.js';
 
-const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
 const SUBMITTABLE_STATUSES = ['created', 'payment_pending'];
 const PLAN_AMOUNTS = { 120: 120, 500: 500, 1000: 1000 };
 export const TOPUP_RECEIVED_REQUIRED = 2;
@@ -26,8 +32,14 @@ export async function createTopup(senderId, receiverId, amount) {
     .in('status', ['created', 'payment_pending', 'proof_submitted', 'verification_pending']).single();
   if (existingTopup) throw { message: 'A pending topup already exists for this receiver', code: 'TOPUP_EXISTS' };
 
+  // Server-generated payment request: immutable 30-minute window, server
+  // receiver UPI, explicit payment type. The client only selects the plan.
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PAYMENT_TIME_WINDOW_MINUTES * 60 * 1000);
+
   const { data: topup, error } = await supabase.from('topups').insert({
-    sender_id: senderId, receiver_id: receiverId, amount, plan: amount, status: 'created'
+    sender_id: senderId, receiver_id: receiverId, amount, plan: amount, status: 'created',
+    payment_type: 'TOPUP', receiver_upi: RECEIVER_UPI, expires_at: expiresAt.toISOString(),
   }).select('*').single();
   if (error) throw { message: 'Failed to create topup', code: 'TOPUP_CREATE_FAILED' };
 
@@ -139,6 +151,34 @@ export async function computeTopupSummary(receivedTopups, userId) {
 // direct sponsor top-up flow (identical behavior, no duplicated logic).
 async function uploadAndVerifyTopupProof(topup, file, userId) {
   const topupId = topup.id;
+
+  // ── Payment expiry gate (pre-upload) ──
+  // Same server-authoritative 30-minute rule as membership payments.
+  // Rejects BEFORE storage upload / expensive OCR when the window passed.
+  if (isPaymentExpired(topup)) {
+    throw {
+      message: 'Payment request expired. The 30-minute payment window has ended. Please create a new payment request.',
+      code: 'PAYMENT_EXPIRED',
+    };
+  }
+
+  // ── Screenshot duplicate gate (mirrors membership DUPLICATE_SCREENSHOT) ──
+  // The SAME proof image may not back two COMPLETED top-ups. Rejected or
+  // still-pending screenshots can always be resubmitted.
+  const screenshotHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+  const { data: reuse } = await supabase.from('topups')
+    .select('id')
+    .eq('screenshot_hash', screenshotHash)
+    .eq('status', 'completed')
+    .neq('id', topupId)
+    .limit(1);
+  if (reuse && reuse.length > 0) {
+    throw {
+      message: 'This screenshot was already used for a completed top-up',
+      code: 'DUPLICATE_SCREENSHOT',
+    };
+  }
+
   const filename = generateUniqueFilename(file.originalname);
   const filePath = `topups/${topupId}/${filename}`;
 
@@ -148,7 +188,7 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
   const { data: urlData } = supabase.storage.from('payments').getPublicUrl(filePath);
   const screenshotUrl = urlData.publicUrl;
 
-  const { error: saveError } = await supabase.from('topups').update({ screenshot_url: screenshotUrl }).eq('id', topupId);
+  const { error: saveError } = await supabase.from('topups').update({ screenshot_url: screenshotUrl, screenshot_hash: screenshotHash }).eq('id', topupId);
   if (saveError) throw { message: 'Failed to update topup', code: 'UPDATE_FAILED' };
 
   // Same OCR verification engine as registration payments.
@@ -229,7 +269,36 @@ export async function applyTopupVerification(topup, verificationResult, verifica
     if (error) throw { message: error.message || 'Failed to complete topup', code: 'COMPLETE_FAILED', detail: error.details || error.hint || null };
 
     if (!updated || updated.length === 0) {
-      return { credited: false, alreadyProcessed: true };
+      // Another caller already completed this top-up (double submit, retry
+      // after timeout, concurrent verification). Reconcile instead of
+      // trusting the flag: if the crash happened between the status flip
+      // and the wallet credit, the ledger is missing a row and we complete
+      // it now. The per-user existence checks + the DB unique index make
+      // this safe to run any number of times.
+      const senderCredited = await creditSenderOnce(topup).catch(() => false);
+      const receiverCredited = await creditReceiverOnce(topup).catch(() => false);
+      return { credited: senderCredited || receiverCredited, alreadyProcessed: true };
+    }
+
+    // ── Payment expiry gate (post-OCR, pre-commit) ──
+    // Re-check the server window AFTER the (slow) OCR run, BEFORE the UTR
+    // reservation and wallet credit. An approval that expired mid-OCR must
+    // revert to rejected — never credited, never left completed.
+    // NOTE: expires_at is server-set and IMMUTABLE for the life of the
+    // request (set at creation, never updated), so the already-fetched
+    // record carries the authoritative value — no re-read needed.
+    if (isPaymentExpired(topup)) {
+      await supabase
+        .from('topups')
+        .update({
+          status: 'rejected',
+          rejection_reason: 'PAYMENT_EXPIRED',
+          verified_at: verificationTime.toISOString(),
+          verification_result: { ...verificationResult, decision: 'rejected', reason: 'PAYMENT_EXPIRED' },
+        })
+        .eq('id', topup.id)
+        .eq('status', 'completed');
+      return { credited: false, alreadyProcessed: false, reason: 'PAYMENT_EXPIRED' };
     }
 
     // Approved-UTR duplicate gate (AFTER the atomic transition).
@@ -273,7 +342,9 @@ export async function applyTopupVerification(topup, verificationResult, verifica
 }
 
 // Credit the SENDER's wallet once (their payment was verified).
-// Idempotent: checks for an existing wallet_transaction with this topup's id + user_id.
+// Idempotent at two levels: the existence check below, plus the partial
+// UNIQUE index on wallet_transactions(user_id, reference_type, reference_id).
+// A 23505 from a true concurrent race is treated as "already credited".
 async function creditSenderOnce(topup) {
   const { data: existing, error: checkError } = await supabase
     .from('wallet_transactions')
@@ -285,7 +356,12 @@ async function creditSenderOnce(topup) {
   if (checkError) throw { message: 'Failed to check existing sender credit', code: 'CREDIT_CHECK_FAILED' };
   if (existing && existing.length > 0) return false;
 
-  await walletService.credit(topup.sender_id, topup.amount, 'Top-up payment verified', topup.id, 'topup');
+  try {
+    await walletService.credit(topup.sender_id, topup.amount, 'Top-up payment verified', topup.id, 'topup');
+  } catch (e) {
+    if (e && e.code === '23505') return false;
+    throw e;
+  }
   return true;
 }
 
@@ -302,7 +378,12 @@ async function creditReceiverOnce(topup) {
   if (checkError) throw { message: 'Failed to check existing receiver credit', code: 'CREDIT_CHECK_FAILED' };
   if (existing && existing.length > 0) return false;
 
-  await walletService.credit(topup.receiver_id, topup.amount, 'Top-up completed', topup.id, 'topup');
+  try {
+    await walletService.credit(topup.receiver_id, topup.amount, 'Top-up completed', topup.id, 'topup');
+  } catch (e) {
+    if (e && e.code === '23505') return false;
+    throw e;
+  }
   return true;
 }
 
