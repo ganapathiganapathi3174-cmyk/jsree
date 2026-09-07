@@ -52,6 +52,7 @@ export async function uploadScreenshot(req, res) {
   } catch (error) {
     const status = error.code === 'PAYMENT_NOT_FOUND' ? 404 :
                    error.code === 'PAYMENT_NOT_PENDING' ? 400 :
+                   error.code === 'PAYMENT_EXPIRED' ? 410 :
                    error.code === 'UNAUTHORIZED' ? 403 :
                    error.code === 'DUPLICATE_SCREENSHOT' ? 409 : 500;
     res.status(status).json({
@@ -106,6 +107,7 @@ export async function verifyPaymentManual(req, res) {
   } catch (error) {
     const status = error.code === 'PAYMENT_NOT_FOUND' ? 404 :
                    error.code === 'PAYMENT_NOT_PENDING' ? 400 :
+                   error.code === 'PAYMENT_EXPIRED' ? 410 :
                    error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE' ? 422 : 500;
     res.status(status).json({
       success: false,

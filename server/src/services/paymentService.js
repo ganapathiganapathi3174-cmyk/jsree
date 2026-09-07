@@ -7,7 +7,7 @@ import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
 import { runScreenshotVerification, decidePaymentVerification, reserveApprovedUtr, releaseApprovedUtr } from './verificationService.js';
-import { RECEIVER_UPI } from '../config/paymentConfig.js';
+import { RECEIVER_UPI, PAYMENT_TIME_WINDOW_MINUTES } from '../config/paymentConfig.js';
 
 // Re-exported for callers/tests that import the decision engine here.
 export { decidePaymentVerification };
@@ -15,6 +15,30 @@ export { decidePaymentVerification };
 const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
 // Statuses an admin can act on (approve / reject / re-verify).
 const ACTABLE_STATUSES = ['pending', 'manual_review'];
+
+// ─────────────────────────────────────────────────────────────
+// Payment expiry helpers.
+//
+// Every payment request gets an immutable expires_at = created_at + 30 min.
+// Expiry is enforced at MULTIPLE points:
+//   1. uploadScreenshot  – reject expired uploads
+//   2. verifyPayment     – re-check before final approval commit
+//   3. autoExpireStalePayments – background sweep marks stale rows
+//
+// The frontend countdown is informational only; all security decisions
+// use the server-stored expires_at value.
+// ─────────────────────────────────────────────────────────────
+export function isPaymentExpired(payment) {
+  if (!payment || !payment.expires_at) return true;
+  return new Date() > new Date(payment.expires_at);
+}
+
+function isWithinExpiryWindow(payment) {
+  if (!payment || !payment.expires_at) return false;
+  const now = new Date();
+  const expiresAt = new Date(payment.expires_at);
+  return now <= expiresAt;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Atomic approval of an initial registration payment.
@@ -144,8 +168,18 @@ export async function createPayment(userId, planData) {
   const { data: existingApproved } = await supabase.from('payments').select('id').eq('user_id', userId).eq('status', 'approved').single();
   if (existingApproved) throw { message: 'You already have an approved payment', code: 'PAYMENT_EXISTS' };
 
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PAYMENT_TIME_WINDOW_MINUTES * 60 * 1000);
+
   const { data: payment, error } = await supabase.from('payments').insert({
-    user_id: userId, selected_plan: parseInt(plan), expected_amount: amount, upi_id: RECEIVER_UPI, status: 'pending'
+    user_id: userId,
+    selected_plan: parseInt(plan),
+    expected_amount: amount,
+    upi_id: RECEIVER_UPI,
+    receiver_upi: RECEIVER_UPI,
+    status: 'pending',
+    payment_request_created_at: now.toISOString(),
+    expires_at: expiresAt.toISOString(),
   }).select('*').single();
 
   if (error) throw { message: 'Failed to create payment', code: 'PAYMENT_CREATE_FAILED' };
@@ -154,7 +188,7 @@ export async function createPayment(userId, planData) {
 }
 
 export async function uploadScreenshot(paymentId, file, userId) {
-  const { data: payment } = await supabase.from('payments').select('id, user_id, status').eq('id', paymentId).single();
+  const { data: payment } = await supabase.from('payments').select('id, user_id, status, expires_at').eq('id', paymentId).single();
   if (!payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
   if (payment.user_id !== userId) throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
   // Accept the same statuses verification acts on. Legacy rows stuck in
@@ -162,6 +196,16 @@ export async function uploadScreenshot(paymentId, file, userId) {
   // are resolved by the current binary engine on this upload.
   const SUBMITTABLE = ['pending', 'manual_review'];
   if (!SUBMITTABLE.includes(payment.status)) throw { message: 'Payment is not in pending status', code: 'PAYMENT_NOT_PENDING' };
+
+  // ── Payment expiry gate ──
+  // Reject screenshots for expired payment requests. This is an ADDITIONAL
+  // security layer; the existing verification pipeline is untouched.
+  if (isPaymentExpired(payment)) {
+    throw {
+      message: 'Payment request expired. The 30-minute payment window has ended. Please create a new payment request.',
+      code: 'PAYMENT_EXPIRED',
+    };
+  }
 
   // Screenshot content hash — used to detect the SAME proof image being
   // reused for multiple registrations (duplicate-proof rule). Only an
@@ -238,6 +282,15 @@ export async function verifyPayment(paymentId, imageBuffer) {
   if (!payment.screenshot_url && !imageBuffer) throw { message: 'No screenshot uploaded', code: 'NO_SCREENSHOT' };
   if (!payment.status || !ACTABLE_STATUSES.includes(payment.status)) throw { message: 'Payment is not in a verifiable status', code: 'PAYMENT_NOT_PENDING' };
 
+  // ── Payment expiry gate (pre-OCR) ──
+  // Reject before running expensive OCR if the payment window has passed.
+  if (isPaymentExpired(payment)) {
+    throw {
+      message: 'Payment request expired. The 30-minute payment window has ended. Please create a new payment request.',
+      code: 'PAYMENT_EXPIRED',
+    };
+  }
+
   const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
     imageBuffer: imageBuffer || null,
     screenshotUrl: payment.screenshot_url || null,
@@ -260,6 +313,34 @@ export async function verifyPayment(paymentId, imageBuffer) {
     verificationResult.decision = 'rejected';
     verificationResult.reason = 'DUPLICATE_UTR';
     verificationResult.checks = { ...verificationResult.checks, duplicate: { passed: false, utr } };
+  }
+
+  // ── Payment expiry gate (post-OCR, pre-commit) ──
+  // Re-check expiry after OCR processing completes. This catches the race
+  // condition where payment expires DURING the OCR pipeline. Even if the
+  // OCR says "approved", we must not activate the user for an expired request.
+  if (newStatus === 'approved') {
+    const { data: currentPayment } = await supabase.from('payments').select('expires_at').eq('id', paymentId).single();
+    if (currentPayment && isPaymentExpired(currentPayment)) {
+      // Release any UTR reservation and reject with expiry reason.
+      if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
+      const expiryUpdateData = {
+        verification_result: { ...verificationResult, decision: 'rejected', reason: 'PAYMENT_EXPIRED' },
+        verified_at: verificationTime.toISOString(),
+        status: 'rejected',
+        rejected_at: verificationTime.toISOString(),
+        rejection_reason: 'PAYMENT_EXPIRED',
+      };
+      await supabase.from('payments').update(expiryUpdateData).eq('id', paymentId).in('status', ACTABLE_STATUSES);
+      return {
+        paymentId,
+        status: 'rejected',
+        decision: 'rejected',
+        reason: 'PAYMENT_EXPIRED',
+        verificationResult: { ...verificationResult, decision: 'rejected', reason: 'PAYMENT_EXPIRED' },
+        elapsed: Date.now() - t0,
+      };
+    }
   }
 
   const updateData = {
@@ -330,7 +411,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
 }
 
 export async function getPaymentStatus(paymentId) {
-  const { data: payment, error } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, created_at, verified_at, verification_result, rejection_reason').eq('id', paymentId).single();
+  const { data: payment, error } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, created_at, expires_at, payment_request_created_at, receiver_upi, verified_at, verification_result, rejection_reason').eq('id', paymentId).single();
   if (error || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
   if (payment.status === 'manual_review') payment.status = 'pending';
   return payment;
@@ -338,7 +419,7 @@ export async function getPaymentStatus(paymentId) {
 
 export async function getUserPayments(userId) {
   const { data: payments, error } = await supabase.from('payments')
-    .select('id, selected_plan, expected_amount, status, screenshot_url, rejection_reason, verification_result, submitted_at, verified_at, approved_at, rejected_at, created_at')
+    .select('id, selected_plan, expected_amount, status, screenshot_url, rejection_reason, verification_result, submitted_at, verified_at, approved_at, rejected_at, created_at, expires_at, payment_request_created_at, receiver_upi')
     .eq('user_id', userId).order('created_at', { ascending: false });
   if (error) throw { message: 'Failed to fetch payments', code: 'FETCH_FAILED' };
   // Legacy manual_review rows are never exposed to the frontend.
@@ -491,4 +572,66 @@ export async function deletePayment(paymentId, adminId) {
   });
 
   return { message: 'Pending registration deleted', paymentId, userId, deleted: true };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Automatic payment expiry — background sweep.
+//
+// Finds all pending/manual_review payments whose expires_at has passed
+// and marks them as rejected with PAYMENT_EXPIRED. Idempotent: already
+// rejected/approved rows are never touched (the WHERE clause only
+// matches actionable statuses). Does NOT interfere with UTR logic because
+// UTRs are only reserved on approval, not on expiry.
+//
+// Called periodically from the server startup interval AND on-demand.
+// ─────────────────────────────────────────────────────────────
+export async function autoExpireStalePayments() {
+  const now = new Date().toISOString();
+  const { data: expiredPayments, error: fetchError } = await supabase
+    .from('payments')
+    .select('id, user_id, expected_amount, expires_at')
+    .in('status', ACTABLE_STATUSES)
+    .lt('expires_at', now)
+    .limit(50);
+
+  if (fetchError || !expiredPayments || expiredPayments.length === 0) {
+    return { expired: 0 };
+  }
+
+  let expiredCount = 0;
+  for (const payment of expiredPayments) {
+    try {
+      const { error: updateError } = await supabase
+        .from('payments')
+        .update({
+          status: 'rejected',
+          rejected_at: now,
+          rejection_reason: 'PAYMENT_EXPIRED',
+        })
+        .eq('id', payment.id)
+        .in('status', ACTABLE_STATUSES);
+
+      if (!updateError) {
+        expiredCount++;
+        try {
+          await notificationService.createNotification(
+            payment.user_id,
+            'payment_rejected',
+            'Payment Expired',
+            `Your payment of ₹${payment.expected_amount} has expired. The 30-minute payment window has ended. Please create a new payment request.`,
+            { paymentId: payment.id, amount: payment.expected_amount, reason: 'PAYMENT_EXPIRED' }
+          );
+        } catch (e) { /* notification failure is non-blocking */ }
+
+        await logAction(payment.user_id, 'system', 'auto_expire_payment', payment.id, 'payment', {
+          userId: payment.user_id,
+          amount: payment.expected_amount,
+          expires_at: payment.expires_at,
+          reason: 'PAYMENT_EXPIRED',
+        });
+      }
+    } catch (e) { /* individual expiry failure is non-blocking */ }
+  }
+
+  return { expired: expiredCount };
 }

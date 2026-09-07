@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Copy, ScanLine, Smartphone, Upload, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { Copy, ScanLine, Smartphone, Upload, CheckCircle2, ShieldCheck, Clock, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import QRCodeImage from './QRCodeImage';
 import { ADMIN_UPI } from '../utils/constants';
@@ -9,6 +9,37 @@ import { formatCurrency } from '../utils/helpers';
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const MAX_SIZE = 5 * 1024 * 1024;
 const QR_SIZE = 240;
+
+function useCountdown(expiresAt) {
+  const [remaining, setRemaining] = useState(() => {
+    if (!expiresAt) return null;
+    const diff = new Date(expiresAt).getTime() - Date.now();
+    return diff > 0 ? diff : 0;
+  });
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const tick = () => {
+      const diff = new Date(expiresAt).getTime() - Date.now();
+      setRemaining(diff > 0 ? diff : 0);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [expiresAt]);
+
+  if (remaining === null) return { expired: false, minutes: null, seconds: null, totalSeconds: null, low: false };
+  const totalSeconds = Math.ceil(remaining / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return {
+    expired: remaining <= 0,
+    minutes,
+    seconds,
+    totalSeconds,
+    low: totalSeconds > 0 && totalSeconds <= 5 * 60,
+  };
+}
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
@@ -40,10 +71,13 @@ export default function QRPaymentSection({
   verifySubmitting = false,
   disabled = false,
   onVerify,
+  expiresAt = null,
 }) {
   const isMobile = useIsMobile();
   const [screenshot, setScreenshot] = useState(null);
   const [preview, setPreview] = useState(null);
+  const countdown = useCountdown(expiresAt);
+  const isExpired = countdown.expired;
 
   const validAmount = Number(amount) > 0 && amountOptions.includes(Number(amount));
   const upiUri = useMemo(
@@ -102,6 +136,30 @@ export default function QRPaymentSection({
           <span className="text-xs text-gray-500">Secure UPI Payment</span>
         </div>
 
+        {expiresAt && (
+          <div className={`mb-4 flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium ${
+            isExpired
+              ? 'bg-red-50 text-red-700 border border-red-200'
+              : countdown.low
+                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                : 'bg-gray-50 text-gray-700 border border-gray-200'
+          }`}>
+            {isExpired ? (
+              <>
+                <AlertTriangle className="h-4 w-4" />
+                <span>Payment window expired. Please create a new payment request.</span>
+              </>
+            ) : (
+              <>
+                <Clock className="h-4 w-4" />
+                <span>
+                  Payment window: {countdown.minutes}:{String(countdown.seconds).padStart(2, '0')} remaining
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
         <p className="text-sm text-gray-500">Payment Amount</p>
         <p className="text-3xl font-bold text-gray-900">Pay {formatCurrency(amount || 0)}</p>
 
@@ -150,21 +208,27 @@ export default function QRPaymentSection({
           <CheckCircle2 className="h-4 w-4 text-green-600" /> Payment completed?
         </h3>
         <p className="text-sm text-gray-600 mt-1">
-          Completed the payment in your UPI app? Upload the payment screenshot below and it will be verified.
+          {isExpired
+            ? 'This payment request has expired. Please create a new payment request to continue.'
+            : 'Completed the payment in your UPI app? Upload the payment screenshot below and it will be verified.'}
         </p>
 
         <div className="mt-3">
           <label className="label">Upload Payment Screenshot</label>
-          <label className="block border-2 border-dashed border-gray-300 rounded-xl p-5 text-center cursor-pointer hover:border-primary-400 transition-colors">
+          <label className={`block border-2 border-dashed rounded-xl p-5 text-center transition-colors ${
+            isExpired
+              ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
+              : 'border-gray-300 cursor-pointer hover:border-primary-400'
+          }`}>
             {preview ? (
               <img src={preview} alt="Payment screenshot preview" className="max-h-48 mx-auto rounded-lg" />
             ) : (
               <div>
                 <Upload className="h-10 w-10 text-gray-400 mx-auto mb-2" />
-                <p className="text-sm text-gray-500">Click to upload JPG, PNG, WEBP</p>
+                <p className="text-sm text-gray-500">{isExpired ? 'Payment window expired' : 'Click to upload JPG, PNG, WEBP'}</p>
               </div>
             )}
-            <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" className="hidden" onChange={handleFile} />
+            {!isExpired && <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" className="hidden" onChange={handleFile} />}
           </label>
           <p className="text-xs text-gray-400 mt-1">Accepted formats: JPG, PNG, WEBP · max 5MB</p>
         </div>
@@ -172,7 +236,7 @@ export default function QRPaymentSection({
         <button
           type="button"
           onClick={handleVerify}
-          disabled={verifySubmitting || !screenshot}
+          disabled={verifySubmitting || !screenshot || isExpired}
           className="btn-primary mt-4 w-full py-3 text-base flex items-center justify-center gap-2"
         >
           <ShieldCheck className="h-4 w-4" /> {verifySubmitting ? 'Verifying...' : verifyLabel}

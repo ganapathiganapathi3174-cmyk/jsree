@@ -106,6 +106,7 @@ function seedPaymentRow(overrides = {}) {
     screenshot_url: 'https://x/s.png',
     upi_id: RECEIVER_UPI,
     status: 'pending',
+    expires_at: new Date(Date.now() + 30 * 60000).toISOString(),
     ...overrides,
   };
 }
@@ -315,8 +316,8 @@ describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
 // ═══════════════════════════════════════════════════════════════
 describe('USER-FACING API: getUserPayments maps manual_review -> pending', () => {
   it('legacy manual_review row returned as pending to the user', async () => {
-    db.state.paymentRow = { id: 'pay-lr', status: 'manual_review', selected_plan: 120, expected_amount: 120 };
-    db.state.results.payments = { data: [{ id: 'pay-lr', status: 'manual_review', selected_plan: 120, expected_amount: 120 }], error: null };
+    db.state.paymentRow = { id: 'pay-lr', status: 'manual_review', selected_plan: 120, expected_amount: 120, expires_at: new Date(Date.now() + 30 * 60000).toISOString() };
+    db.state.results.payments = { data: [{ id: 'pay-lr', status: 'manual_review', selected_plan: 120, expected_amount: 120, expires_at: new Date(Date.now() + 30 * 60000).toISOString() }], error: null };
     const payments = await getUserPayments('user-1');
     const statuses = payments.map(p => p.status);
     console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ case: 'legacy-manual_review-to-user', statuses }));

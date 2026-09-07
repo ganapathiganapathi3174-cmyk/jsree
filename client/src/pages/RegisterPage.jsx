@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { User, Mail, Phone, ArrowRight, ArrowLeft, CreditCard, CheckCircle, Shield } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
@@ -12,11 +12,19 @@ export default function RegisterPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [paymentData, setPaymentData] = useState(null);
+  const [serverUpi, setServerUpi] = useState(ADMIN_UPI);
   const [form, setForm] = useState({
     name: '', email: '', mobile: '', password: '', confirmPassword: '',
     referral_code: searchParams.get('ref') || '',
     plan: parseInt(searchParams.get('plan')) || null
   });
+
+  useEffect(() => {
+    api.get('/config/public').then(res => {
+      if (res.data?.data?.receiver_upi) setServerUpi(res.data.data.receiver_upi);
+    }).catch(() => {});
+  }, []);
 
   const set = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
 
@@ -61,6 +69,7 @@ export default function RegisterPage() {
 
       const payRes = await api.post('/payments', { plan: String(form.plan) });
       const paymentId = payRes.data.data.id;
+      setPaymentData(payRes.data.data);
 
       const fd = new FormData();
       fd.append('screenshot', file);
@@ -84,7 +93,13 @@ export default function RegisterPage() {
         navigate('/payment-status');
       }
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Registration failed');
+      const code = err.response?.data?.code;
+      if (code === 'PAYMENT_EXPIRED') {
+        toast.error('Payment request expired. Please go back and create a new payment request.');
+        setPaymentData(null);
+      } else {
+        toast.error(err.response?.data?.message || 'Registration failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -174,10 +189,11 @@ export default function RegisterPage() {
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Complete Payment</h2>
               <QRPaymentSection
                 amount={form.plan}
-                upiId={ADMIN_UPI}
+                upiId={serverUpi}
                 verifyLabel="Submit Registration"
                 verifySubmitting={loading}
                 onVerify={handleSubmit}
+                expiresAt={paymentData?.expires_at || null}
               />
               <button onClick={() => setStep(2)} className="btn-secondary w-full"><ArrowLeft className="h-4 w-4" /> Back</button>
             </div>
