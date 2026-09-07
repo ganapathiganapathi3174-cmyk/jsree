@@ -28,6 +28,33 @@ export default function RegisterPage() {
 
   const set = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
 
+  // Human-readable payment rejection messages. Internal verification
+  // reason codes are never shown to normal users.
+  const friendlyRejectionMessage = (reason) => {
+    switch (reason) {
+      case 'AMOUNT_MISMATCH':
+        return 'The screenshot amount does not match your plan amount. Please pay the exact amount and upload that screenshot.';
+      case 'UPI_MISMATCH':
+        return 'The screenshot shows a different recipient. Please pay to the UPI ID shown on this screen.';
+      case 'INVALID_PAYMENT_DATE':
+        return 'This screenshot is too old or its date could not be read. Please upload the screenshot from your current payment.';
+      case 'TRANSACTION_FAILED':
+        return 'The screenshot shows a failed or pending transaction. Only completed payments can be verified.';
+      case 'MISSING_UTR':
+        return 'No transaction ID was found in the screenshot. Please upload the full confirmation screen.';
+      case 'LOW_OCR_CONFIDENCE':
+        return 'The screenshot was not clear enough to verify. Please upload a sharper, uncropped screenshot.';
+      case 'DUPLICATE_UTR':
+        return 'This payment has already been used. Please complete a fresh payment and upload its screenshot.';
+      case 'DEMO_SCREENSHOT':
+        return 'Sample or demo screenshots are not accepted. Please upload your real payment confirmation.';
+      case 'PAYMENT_EXPIRED':
+        return 'This payment request has expired. Please create a new payment request.';
+      default:
+        return 'Payment could not be verified. Please resubmit a valid screenshot from your current payment.';
+    }
+  };
+
   const validateStep1 = () => {
     if (!form.name || !form.email || !form.mobile || !form.password || !form.confirmPassword) {
       toast.error('All fields are required'); return false;
@@ -86,7 +113,7 @@ export default function RegisterPage() {
         toast.success('Registration and payment approved!');
         navigate('/dashboard');
       } else if (verification?.status === 'rejected') {
-        toast.error(`Payment could not be verified (${verification.reason || 'details in payment status'}). Please resubmit a valid screenshot.`);
+        toast.error(friendlyRejectionMessage(verification.reason));
         navigate('/payment-status');
       } else {
         toast.success('Registration complete! Payment verification could not finish — please resubmit your screenshot.');
@@ -190,7 +217,7 @@ export default function RegisterPage() {
               <QRPaymentSection
                 amount={form.plan}
                 upiId={serverUpi}
-                verifyLabel="Submit Registration"
+                verifyLabel="Verify Payment & Continue"
                 verifySubmitting={loading}
                 onVerify={handleSubmit}
                 expiresAt={paymentData?.expires_at || null}

@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Copy, ScanLine, Smartphone, Upload, CheckCircle2, ShieldCheck, Clock, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Copy, ScanLine, Smartphone, Upload, CheckCircle2, ShieldCheck, Clock, AlertTriangle, X, RefreshCw, LockKeyhole, BadgeCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import QRCodeImage from './QRCodeImage';
 import { ADMIN_UPI } from '../utils/constants';
@@ -9,6 +9,35 @@ import { formatCurrency } from '../utils/helpers';
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const MAX_SIZE = 5 * 1024 * 1024;
 const QR_SIZE = 240;
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext !== false) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) { /* fall through to legacy copy */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_) {
+    return false;
+  }
+}
 
 function useCountdown(expiresAt) {
   const [remaining, setRemaining] = useState(() => {
@@ -67,7 +96,7 @@ export default function QRPaymentSection({
   amountOptions = [120, 500, 1000],
   upiId = ADMIN_UPI,
   recipientName = PAYEE_NAME,
-  verifyLabel = 'Verify Payment',
+  verifyLabel = 'Verify Payment & Continue',
   verifySubmitting = false,
   disabled = false,
   onVerify,
@@ -76,6 +105,8 @@ export default function QRPaymentSection({
   const isMobile = useIsMobile();
   const [screenshot, setScreenshot] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [fileKey, setFileKey] = useState(0);
+  const fileInputRef = useRef(null);
   const countdown = useCountdown(expiresAt);
   const isExpired = countdown.expired;
 
@@ -98,13 +129,26 @@ export default function QRPaymentSection({
   };
 
   const handleVerify = () => {
-    if (!screenshot) { toast.error('Please upload payment screenshot first'); return; }
+    if (isExpired) { toast.error('This payment request has expired. Please create a new payment request.'); return; }
+    if (!screenshot) { toast.error('Please upload your payment screenshot first'); return; }
     if (typeof onVerify === 'function') onVerify(screenshot);
   };
 
-  const copyUPI = () => {
-    if (navigator.clipboard) navigator.clipboard.writeText(upiId);
-    toast.success('UPI ID copied!');
+  const copyUPI = async () => {
+    const ok = await copyText(upiId);
+    if (ok) toast.success('UPI ID copied!');
+    else toast.error('Could not copy automatically — please copy the UPI ID manually.');
+  };
+
+  const clearScreenshot = () => {
+    setScreenshot(null);
+    if (preview) URL.revokeObjectURL(preview);
+    setPreview(null);
+    setFileKey(k => k + 1);
+  };
+
+  const replaceScreenshot = () => {
+    if (fileInputRef.current) fileInputRef.current.click();
   };
 
   return (
@@ -146,22 +190,44 @@ export default function QRPaymentSection({
           }`}>
             {isExpired ? (
               <>
-                <AlertTriangle className="h-4 w-4" />
-                <span>Payment window expired. Please create a new payment request.</span>
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>Payment request expired. Please create a new payment request to continue.</span>
               </>
             ) : (
               <>
-                <Clock className="h-4 w-4" />
+                <Clock className="h-4 w-4 shrink-0" />
                 <span>
-                  Payment window: {countdown.minutes}:{String(countdown.seconds).padStart(2, '0')} remaining
+                  Payment request expires in {countdown.minutes}:{String(countdown.seconds).padStart(2, '0')}
                 </span>
               </>
             )}
           </div>
         )}
 
-        <p className="text-sm text-gray-500">Payment Amount</p>
-        <p className="text-3xl font-bold text-gray-900">Pay {formatCurrency(amount || 0)}</p>
+        <div className="rounded-lg bg-gray-50 border border-gray-200 divide-y divide-gray-200">
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <span className="text-sm text-gray-500">Amount</span>
+            <span className="text-xl font-bold text-gray-900">{formatCurrency(amount || 0)}</span>
+          </div>
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <span className="text-sm text-gray-500">Recipient</span>
+            <span className="flex items-center gap-1 text-sm font-semibold text-gray-900">
+              <BadgeCheck className="h-4 w-4 text-primary-600" /> {recipientName}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 px-3 py-2.5">
+            <span className="text-sm text-gray-500 shrink-0">UPI ID</span>
+            <span className="flex-1 min-w-0 font-mono text-sm font-semibold text-gray-900 break-all text-right">{upiId}</span>
+            <button
+              type="button"
+              onClick={copyUPI}
+              className="flex items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-primary-700 hover:bg-primary-50 shrink-0"
+              aria-label="Copy UPI ID"
+            >
+              <Copy className="h-3.5 w-3.5" /> Copy
+            </button>
+          </div>
+        </div>
 
         <div className="mt-5 text-center">
           <p className="flex items-center justify-center gap-2 font-semibold text-gray-900">
@@ -185,15 +251,6 @@ export default function QRPaymentSection({
             </a>
           )}
 
-          <div className="mt-4 flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2.5 text-left">
-            <div className="flex-1 min-w-0">
-              <p className="text-xs text-gray-500">UPI ID</p>
-              <p className="font-mono text-sm font-semibold text-gray-900 truncate">{upiId}</p>
-            </div>
-            <button type="button" onClick={copyUPI} className="text-primary-600 hover:text-primary-700 shrink-0" aria-label="Copy UPI ID">
-              <Copy className="h-4 w-4" />
-            </button>
-          </div>
         </div>
 
         {!validAmount && (
@@ -213,6 +270,20 @@ export default function QRPaymentSection({
             : 'Completed the payment in your UPI app? Upload the payment screenshot below and it will be verified.'}
         </p>
 
+        {!isExpired && (
+          <div className="mt-3 rounded-lg bg-primary-50/60 border border-primary-100 px-3 py-2.5">
+            <p className="text-xs font-semibold text-gray-900">Upload the ORIGINAL payment confirmation screenshot from your UPI app.</p>
+            <ul className="mt-1.5 space-y-1 text-xs text-gray-600">
+              <li>• The amount must match {formatCurrency(amount || 0)} exactly</li>
+              <li>• The recipient must match {recipientName} ({upiId})</li>
+              <li>• Payment status must show Completed / Success</li>
+              <li>• Date and time must be visible</li>
+              <li>• Transaction / reference ID must be visible</li>
+              <li>• The screenshot must be from this current payment request</li>
+            </ul>
+          </div>
+        )}
+
         <div className="mt-3">
           <label className="label">Upload Payment Screenshot</label>
           <label className={`block border-2 border-dashed rounded-xl p-5 text-center transition-colors ${
@@ -220,27 +291,63 @@ export default function QRPaymentSection({
               ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
               : 'border-gray-300 cursor-pointer hover:border-primary-400'
           }`}>
-            {preview ? (
-              <img src={preview} alt="Payment screenshot preview" className="max-h-48 mx-auto rounded-lg" />
+            {preview && screenshot ? (
+              <div>
+                <img src={preview} alt="Payment screenshot preview" className="max-h-48 mx-auto rounded-lg" />
+                <p className="mt-2 text-sm font-medium text-gray-900 break-all">{screenshot.name}</p>
+                <p className="text-xs text-gray-500">{formatFileSize(screenshot.size)}</p>
+              </div>
             ) : (
               <div>
                 <Upload className="h-10 w-10 text-gray-400 mx-auto mb-2" />
-                <p className="text-sm text-gray-500">{isExpired ? 'Payment window expired' : 'Click to upload JPG, PNG, WEBP'}</p>
+                <p className="text-sm text-gray-500">{isExpired ? 'Payment request expired' : 'Click to upload JPG, PNG, WEBP'}</p>
               </div>
             )}
-            {!isExpired && <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" className="hidden" onChange={handleFile} />}
+            {!isExpired && (
+              <input
+                key={fileKey}
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/jpg,image/png,image/webp"
+                className="hidden"
+                onChange={handleFile}
+              />
+            )}
           </label>
           <p className="text-xs text-gray-400 mt-1">Accepted formats: JPG, PNG, WEBP · max 5MB</p>
+          {!isExpired && screenshot && (
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={replaceScreenshot}
+                className="btn-secondary flex-1 py-2 text-sm flex items-center justify-center gap-1.5"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Replace file
+              </button>
+              <button
+                type="button"
+                onClick={clearScreenshot}
+                className="btn-secondary flex-1 py-2 text-sm flex items-center justify-center gap-1.5"
+                aria-label="Remove selected screenshot"
+              >
+                <X className="h-3.5 w-3.5" /> Remove
+              </button>
+            </div>
+          )}
         </div>
 
         <button
           type="button"
           onClick={handleVerify}
-          disabled={verifySubmitting || !screenshot || isExpired}
+          disabled={verifySubmitting || disabled || !screenshot || isExpired}
           className="btn-primary mt-4 w-full py-3 text-base flex items-center justify-center gap-2"
         >
           <ShieldCheck className="h-4 w-4" /> {verifySubmitting ? 'Verifying...' : verifyLabel}
         </button>
+
+        <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-gray-500">
+          <LockKeyhole className="h-3.5 w-3.5" /> Never share your UPI PIN or OTP.
+        </p>
       </div>
     </div>
   );
