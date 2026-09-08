@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
+    "seed:qa-users": "node src/scripts/seedDefaultUsers.js",
     "vercel-build": "echo 'No build needed'"
   },
   "dependencies": {
