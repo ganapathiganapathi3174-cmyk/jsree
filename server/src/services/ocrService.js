@@ -339,10 +339,26 @@ export function extractDateTimes(text) {
   const results = [];
   const lines = String(text).split(/\r?\n/);
 
+  const pairTimeInto = (entry, hour, minute, second, ampm, raw) => {
+    const paired = buildDateTimeEntry(
+      raw, entry.day, entry.month, entry.year, hour, minute, second, ampm, true);
+    results.push(paired);
+    entry.hasTime = true;
+    entry.hour = hour;
+    entry.minute = minute;
+    entry.second = second;
+    entry.ampm = ampm;
+  };
+
   let lastDateEntry = null;
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
+  // Backward pairing slot: a lone time-only line immediately followed by a
+  // date-only line (bank-receipt layout "09:36 AM\n08 Sep 2026"). Strictly
+  // adjacent lines only, so unrelated timestamps can never attach.
+  let pendingTime = null;
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx].trim();
     if (!line) continue;
+    if (pendingTime && idx > pendingTime.idx + 1) pendingTime = null;
 
     // Try date+time patterns first (time on same line).
     // Paytm time-before-date format: "7:50 PM, 26/8/2026"
@@ -413,6 +429,7 @@ export function extractDateTimes(text) {
     }
 
     // Date-only patterns (no time) — record for cross-line pairing.
+    // A lone time on the IMMEDIATELY preceding line pairs backward.
     m = line.match(DATE_ONLY_DDMMYYYY);
     if (m && !/@/.test(line)) {
       const entry = buildDateTimeEntry(line,
@@ -420,6 +437,11 @@ export function extractDateTimes(text) {
         null, null, null, null, false);
       results.push(entry);
       lastDateEntry = entry;
+      if (pendingTime && pendingTime.idx === idx - 1) {
+        pairTimeInto(entry, pendingTime.hour, pendingTime.minute, pendingTime.second, pendingTime.ampm, `${lines[pendingTime.idx].trim()} ${line}`);
+        pendingTime = null;
+        lastDateEntry = null;
+      }
       continue;
     }
 
@@ -430,6 +452,11 @@ export function extractDateTimes(text) {
         null, null, null, null, false);
       results.push(entry);
       lastDateEntry = entry;
+      if (pendingTime && pendingTime.idx === idx - 1) {
+        pairTimeInto(entry, pendingTime.hour, pendingTime.minute, pendingTime.second, pendingTime.ampm, `${lines[pendingTime.idx].trim()} ${line}`);
+        pendingTime = null;
+        lastDateEntry = null;
+      }
       continue;
     }
 
@@ -440,11 +467,17 @@ export function extractDateTimes(text) {
         null, null, null, null, false);
       results.push(entry);
       lastDateEntry = entry;
+      if (pendingTime && pendingTime.idx === idx - 1) {
+        pairTimeInto(entry, pendingTime.hour, pendingTime.minute, pendingTime.second, pendingTime.ampm, `${lines[pendingTime.idx].trim()} ${line}`);
+        pendingTime = null;
+        lastDateEntry = null;
+      }
       continue;
     }
 
-    // Standalone time-only line — pair with the most recent date-only entry.
-    if (lastDateEntry && !lastDateEntry.hasTime) {
+    // Standalone time-only line — pair forward with the most recent
+    // date-only entry, otherwise stash for one line for backward pairing.
+    {
       const timeOnly = line.match(new RegExp(String.raw`^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$`, 'i'));
       if (timeOnly) {
         const hour = parseInt(timeOnly[1], 10);
@@ -452,21 +485,18 @@ export function extractDateTimes(text) {
         const second = timeOnly[3] !== undefined ? parseInt(timeOnly[3], 10) : 0;
         const ampm = timeOnly[4] || null;
         if (hour <= 23 && minute <= 59 && second <= 59) {
-          const paired = buildDateTimeEntry(
-            `${lastDateEntry.raw} ${line}`,
-            lastDateEntry.day, lastDateEntry.month, lastDateEntry.year,
-            hour, minute, second, ampm, true);
-          results.push(paired);
-          // Update the date-only entry to reflect the paired time.
-          lastDateEntry.hasTime = true;
-          lastDateEntry.hour = hour;
-          lastDateEntry.minute = minute;
-          lastDateEntry.second = second;
-          lastDateEntry.ampm = ampm;
-          lastDateEntry = null;
+          if (lastDateEntry && !lastDateEntry.hasTime) {
+            pairTimeInto(lastDateEntry, hour, minute, second, ampm, `${lastDateEntry.raw} ${line}`);
+            lastDateEntry = null;
+          } else {
+            pendingTime = { hour, minute, second, ampm, idx };
+          }
+          continue;
         }
       }
     }
+    // Any other content breaks backward-pairing adjacency.
+    pendingTime = null;
   }
   return results;
 }
