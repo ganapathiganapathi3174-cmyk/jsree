@@ -321,6 +321,15 @@ const TIME_BEFORE_DATE_DDMMYYYY = new RegExp(
   String.raw`(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?\s*,?\s*(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})\s*[\/\-\.]\s*(\d{2,4})`, 'i'
 );
 
+// Time-before-date with month name — Paytm also renders
+// "09:36 AM, 08 Sep 2026". Neither DATE_TIME_MONTHNAME (date-first) nor
+// TIME_BEFORE_DATE_DDMMYYYY (numeric date) matches this layout, so the
+// line fell through to DATE_ONLY_MONTHNAME and the time was silently
+// lost, producing INVALID_PAYMENT_DATE for genuinely valid receipts.
+const TIME_BEFORE_DATE_MONTHNAME = new RegExp(
+  String.raw`(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?\s*,?\s*(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{2,4})`, 'i'
+);
+
 function buildDateTimeEntry(raw, day, month, year, hour, minute, second, ampm, hasTime) {
   return { raw, day, month, year, hour, minute, second, ampm, hasTime };
 }
@@ -341,6 +350,20 @@ export function extractDateTimes(text) {
     if (m && !/@/.test(line)) {
       const entry = buildDateTimeEntry(line,
         parseInt(m[5], 10), parseInt(m[6], 10), parseInt(m[7], 10),
+        m[1] !== undefined ? parseInt(m[1], 10) : null,
+        m[2] !== undefined ? parseInt(m[2], 10) : null,
+        m[3] !== undefined ? parseInt(m[3], 10) : null,
+        m[4] || null, m[1] !== undefined);
+      results.push(entry);
+      lastDateEntry = entry.hasTime ? null : entry;
+      continue;
+    }
+
+    // Paytm time-before-date with month name: "09:36 AM, 08 Sep 2026"
+    m = line.match(TIME_BEFORE_DATE_MONTHNAME);
+    if (m && !/@/.test(line)) {
+      const entry = buildDateTimeEntry(line,
+        parseInt(m[5], 10), monthNumber(m[6]), parseInt(m[7], 10),
         m[1] !== undefined ? parseInt(m[1], 10) : null,
         m[2] !== undefined ? parseInt(m[2], 10) : null,
         m[3] !== undefined ? parseInt(m[3], 10) : null,
