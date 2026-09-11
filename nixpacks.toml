@@ -1,0 +1,10 @@
+# Root Nixpacks plan so Railway works when the service Root Directory is the
+# repo root (which has no dependencies of its own — the real app is server/).
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["npm --prefix server ci || npm --prefix server install"]
+
+[start]
+cmd = "npm --prefix server start"

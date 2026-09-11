@@ -1,0 +1,13 @@
+{
+  "name": "jsree",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Root shim so Railway/Nixpacks can build from the repo root (real app lives in server/)",
+  "scripts": {
+    "start": "npm --prefix server start",
+    "install:all": "npm --prefix server install"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
