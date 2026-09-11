@@ -1,0 +1,41 @@
+# Render blueprint for the EXISTING JSREE backend (infrastructure only).
+# ONE Free Web Service, native Node runtime (no Docker, no database, no workers).
+# Runs the existing start command against the existing entry point (server/src/index.js).
+# Secrets are NEVER stored here: all production values are entered in the
+# Render dashboard (Environment tab). Keys below use `sync: false` so Render
+# prompts for them instead of reading values from this file.
+services:
+  - type: web
+    name: jsree-backend
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm ci || npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # PORT is injected automatically by Render; the app reads process.env.PORT.
+      - key: CLIENT_URL
+        value: https://jsree.vercel.app
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: ADMIN_UPI_ID
+        sync: false
+      - key: DATABASE_URL
+        sync: false
