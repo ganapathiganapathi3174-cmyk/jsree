@@ -1,0 +1,7 @@
+# Caddy reverse proxy (infrastructure only).
+# BACKEND_HOST is injected from the environment (see deploy/.env.example).
+# Caddy obtains and renews the HTTPS certificate automatically via ACME.
+{$BACKEND_HOST} {
+	encode gzip
+	reverse_proxy api:5000
+}
