@@ -10,6 +10,70 @@ import { TIMEZONE as _TIMEZONE, IST_UTC_OFFSET_MS } from '../config/paymentConfi
 
 export const IST_TIMEZONE = _TIMEZONE;
 
+// ─────────────────────────────────────────────────────────────
+// Shared Tesseract scheduler (resource hardening ONLY).
+//
+// Same engine, same language ('eng'), same default job options, same
+// input buffers, same result order — only the execution is bounded:
+// every recognize call in this module queues through ONE reused
+// worker instead of spawning (and CDN-loading) a fresh worker per
+// call and running up to 12 of them concurrently. This caps OCR
+// peak memory on small instances without changing any OCR output,
+// extraction, threshold, or verification semantics.
+//
+// Workers are created lazily on first use and released deterministically
+// via closeOCRWorkers() / process exit hooks below.
+// ─────────────────────────────────────────────────────────────
+let __ocrScheduler = null;
+let __ocrSchedulerPromise = null;
+let __ocrExitHooksInstalled = false;
+
+export async function closeOCRWorkers() {
+  const sched = __ocrScheduler;
+  __ocrScheduler = null;
+  __ocrSchedulerPromise = null;
+  if (sched) {
+    try { await sched.terminate(); } catch { /* best-effort */ }
+  }
+}
+
+function installOCRExitHooks() {
+  if (__ocrExitHooksInstalled) return;
+  __ocrExitHooksInstalled = true;
+  for (const sig of ['SIGTERM', 'SIGINT']) {
+    try {
+      process.once(sig, () => { closeOCRWorkers().catch(() => {}); });
+    } catch { /* non-Node runtimes */ }
+  }
+}
+
+async function getOCRScheduler() {
+  if (__ocrScheduler) return __ocrScheduler;
+  if (!__ocrSchedulerPromise) {
+    installOCRExitHooks();
+    __ocrSchedulerPromise = (async () => {
+      const { default: Tesseract } = await import('tesseract.js');
+      const scheduler = Tesseract.createScheduler();
+      const worker = await Tesseract.createWorker('eng');
+      scheduler.addWorker(worker);
+      __ocrScheduler = scheduler;
+      return scheduler;
+    })().catch((err) => {
+      __ocrSchedulerPromise = null;
+      throw err;
+    });
+  }
+  return __ocrSchedulerPromise;
+}
+
+// Drop-in replacement for `Tesseract.recognize(buffer, 'eng', {})`.
+// Returns the identical { text, confidence } shape.
+async function recognizeWithSharedWorker(buffer) {
+  const scheduler = await getOCRScheduler();
+  const result = await scheduler.addJob('recognize', buffer, {});
+  return { text: result.data.text || '', confidence: result.data.confidence || 0 };
+}
+
 export async function preprocessImage(buffer) {
   return sharp(buffer)
     .resize({ width: 1200, withoutEnlargement: true })
@@ -207,9 +271,16 @@ export function extractUPIs(text) {
     .replace(/\s+@\s+/g, '@')
     .replace(/@\s+/g, '@');
 
+  // 2a. GPay leading ellipsis masking: ...26-3@okicici or …26-3@okicici
+  //     Strip leading ellipsis to expose the visible UPI portion for extraction.
+  //     Pattern: ellipsis followed by valid local-part (digits, hyphens) + @domain
+  const ellipsisFixed = spaceFixed
+    .replace(/\.\.\.(\d{2,}-?\d*@\w+)/g, '$1')
+    .replace(/…(\d{2,}-?\d*@\w+)/g, '$1');
+
   const upiRe = /([a-zA-Z0-9._+-]+@[a-zA-Z0-9]+)/gi;
   let m;
-  while ((m = upiRe.exec(spaceFixed)) !== null) {
+  while ((m = upiRe.exec(ellipsisFixed)) !== null) {
     const cleaned = m[1].replace(/\s+/g, '').trim();
     if (cleaned.includes('@') && cleaned.length > 3) {
       upis.add(normalizeUPI(cleaned));
@@ -551,10 +622,8 @@ export function extractTransactionStatus(text) {
 }
 
 export async function runOCR(imageBuffer) {
-  const { default: Tesseract } = await import('tesseract.js');
   const processed = await preprocessImage(imageBuffer);
-  const result = await Tesseract.recognize(processed, 'eng');
-  return { text: result.data.text || '', confidence: result.data.confidence || 0 };
+  return recognizeWithSharedWorker(processed);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -630,8 +699,6 @@ function extractAmountsFromStrips(text) {
 // Both run in parallel to minimize latency.
 // ─────────────────────────────────────────────────────────────
 export async function runAdditionalOCRPasses(imageBuffer) {
-  const { default: Tesseract } = await import('tesseract.js');
-
   const [upscaledBuf, thresholdBuf] = await Promise.all([
     sharp(imageBuffer)
       .resize({ width: 2400, withoutEnlargement: false })
@@ -646,19 +713,20 @@ export async function runAdditionalOCRPasses(imageBuffer) {
       .toBuffer(),
   ]);
 
+  // Queued through the single shared worker: same two results in the
+  // same order, but executed sequentially instead of concurrently.
   const [upscaledResult, thresholdResult] = await Promise.all([
-    Tesseract.recognize(upscaledBuf, 'eng'),
-    Tesseract.recognize(thresholdBuf, 'eng'),
+    recognizeWithSharedWorker(upscaledBuf),
+    recognizeWithSharedWorker(thresholdBuf),
   ]);
 
   return [
-    { text: upscaledResult.data.text || '', confidence: upscaledResult.data.confidence || 0, pass: 'upscaled' },
-    { text: thresholdResult.data.text || '', confidence: thresholdResult.data.confidence || 0, pass: 'thresholded' },
+    { text: upscaledResult.text, confidence: upscaledResult.confidence, pass: 'upscaled' },
+    { text: thresholdResult.text, confidence: thresholdResult.confidence, pass: 'thresholded' },
   ];
 }
 
 export async function runAmountRecoveryOCR(imageBuffer) {
-  const { default: Tesseract } = await import('tesseract.js');
   const processed = await preprocessImage(imageBuffer);
   const meta = await sharp(processed).metadata();
   const W = meta.width, H = meta.height;
@@ -672,25 +740,25 @@ export async function runAmountRecoveryOCR(imageBuffer) {
       .png()
       .toBuffer();
 
-    const r = await Tesseract.recognize(strip, 'eng', {});
-    if (r.data.text) recovered.push(r.data.text);
+    const r = await recognizeWithSharedWorker(strip);
+    if (r.text) recovered.push(r.text);
 
     try {
       const thresholdBuf = await sharp(strip).threshold(145).png().toBuffer();
-      const r2 = await Tesseract.recognize(thresholdBuf, 'eng', {});
-      if (r2.data.text) recovered.push(r2.data.text);
+      const r2 = await recognizeWithSharedWorker(thresholdBuf);
+      if (r2.text) recovered.push(r2.text);
     } catch (_) { /* best-effort */ }
 
     try {
       const thresholdBuf = await sharp(strip).threshold(100).png().toBuffer();
-      const r3 = await Tesseract.recognize(thresholdBuf, 'eng', {});
-      if (r3.data.text) recovered.push(r3.data.text);
+      const r3 = await recognizeWithSharedWorker(thresholdBuf);
+      if (r3.text) recovered.push(r3.text);
     } catch (_) { /* best-effort */ }
 
     try {
       const invertedBuf = await sharp(strip).negate().normalize().png().toBuffer();
-      const r4 = await Tesseract.recognize(invertedBuf, 'eng', {});
-      if (r4.data.text) recovered.push(r4.data.text);
+      const r4 = await recognizeWithSharedWorker(invertedBuf);
+      if (r4.text) recovered.push(r4.text);
     } catch (_) { /* best-effort */ }
   }
   return extractAmountsFromStrips(recovered.join('\n'));
@@ -712,7 +780,6 @@ export async function runAmountRecoveryOCR(imageBuffer) {
 // Returns additional amount candidates (may be empty).
 // ─────────────────────────────────────────────────────────────
 export async function runDeepAmountRecovery(imageBuffer) {
-  const { default: Tesseract } = await import('tesseract.js');
   const processed = await preprocessImage(imageBuffer);
   const meta = await sharp(processed).metadata();
   const W = meta.width, H = meta.height;
@@ -736,12 +803,14 @@ export async function runDeepAmountRecovery(imageBuffer) {
     ];
 
     const buffers = await Promise.all(strategies);
+    // Serialized through the shared worker: same texts, same order.
     const results = await Promise.all(
-      buffers.map(buf => Tesseract.recognize(buf, 'eng', {}))
+      buffers.map(buf => recognizeWithSharedWorker(buf))
     );
+    buffers.length = 0;
 
     for (const r of results) {
-      if (r.data.text) candidates.push(r.data.text);
+      if (r.text) candidates.push(r.text);
     }
   } catch (_) { /* best-effort */ }
 
@@ -766,11 +835,12 @@ export async function runDeepAmountRecovery(imageBuffer) {
 
       const stripBuffers = await Promise.all(stripStrategies);
       const stripResults = await Promise.all(
-        stripBuffers.map(buf => Tesseract.recognize(buf, 'eng', {}))
+        stripBuffers.map(buf => recognizeWithSharedWorker(buf))
       );
+      stripBuffers.length = 0;
 
       for (const r of stripResults) {
-        if (r.data.text) candidates.push(r.data.text);
+        if (r.text) candidates.push(r.text);
       }
     } catch (_) { /* best-effort */ }
   }
@@ -821,7 +891,6 @@ export function matchAmount(extractedAmounts, expectedAmount) {
 // string alone.
 // ─────────────────────────────────────────────────────────────
 export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmount) {
-  const { default: Tesseract } = await import('tesseract.js');
   const processed = await preprocessImage(imageBuffer);
   const meta = await sharp(processed).metadata();
   const W = meta.width, H = meta.height;
@@ -874,13 +943,15 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
   ];
 
   const buffers = await Promise.all(strategies.map(s => s.buf));
+  // Serialized through the shared worker: same texts, same order.
   const results = await Promise.all(
-    buffers.map(buf => Tesseract.recognize(buf, 'eng', {}))
+    buffers.map(buf => recognizeWithSharedWorker(buf))
   );
+  buffers.length = 0;
 
   // Check each strategy for evidence of the correct amount.
   for (let i = 0; i < results.length; i++) {
-    const text = results[i].data.text || '';
+    const text = results[i].text;
     if (textContainsExpected(text)) {
       return {
         verified: true,
@@ -910,11 +981,12 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
 
       const stripBuffers = await Promise.all(stripStrategies);
       const stripResults = await Promise.all(
-        stripBuffers.map(buf => Tesseract.recognize(buf, 'eng', {}))
+        stripBuffers.map(buf => recognizeWithSharedWorker(buf))
       );
+      stripBuffers.length = 0;
 
       for (const r of stripResults) {
-        const text = r.data.text || '';
+        const text = r.text || '';
         if (textContainsExpected(text)) {
           return {
             verified: true,
@@ -944,11 +1016,14 @@ export function matchUPI(extractedUPIs, receiverUPI) {
 //   1. Exact normalized match → high confidence
 //   2. Candidate is a strict prefix of expected (missing 1–2 trailing
 //      chars) → high confidence (truncation recovery)
-//   3. Everything else → no match
+//   3. Masked UPI suffix match → candidate is a meaningful suffix
+//      of expected UPI with same domain and sufficient local-part.
+//   4. Everything else → no match
 //
 // Substitutions, transpositions, mid-string errors are NEVER recovered.
 // The expected UPI is the authoritative reference; only when the OCR
-// evidence is overwhelmingly close (same prefix, trailing loss) do we
+// evidence is overwhelmingly close (same prefix, trailing loss) or
+// when GPay masking produces a verifiable suffix with domain do we
 // accept the candidate.
 // ─────────────────────────────────────────────────────────────
 export function matchUPIWithRecovery(extractedUPIs, receiverUPI) {
@@ -973,6 +1048,39 @@ export function matchUPIWithRecovery(extractedUPIs, receiverUPI) {
     if (missing >= 1 && missing <= 2 && norm.startsWith(c)) {
       return {
         match: true, method: 'ocr_recovery_truncation', confidence: 'high',
+        candidate: c, allCandidates, originalCandidates: extractedUPIs,
+      };
+    }
+  }
+
+  // 3. Masked UPI suffix match (GPay masking: ••••26-3@okicici → 26-3@okicici)
+  //    Candidate must:
+  //    - Have same domain as expected
+  //    - Have local-part that is a suffix of expected local-part
+  //    - Have local-part length >= MIN_MASKED_LOCAL_PART (4 chars)
+  //    - NOT be the full UPI (already handled by exact match)
+  //    - NOT be a trailing truncation (already handled above)
+  const MIN_MASKED_LOCAL_PART = 4;
+  const [expLocal, expDomain] = norm.split('@');
+  if (expLocal && expDomain) {
+    for (const c of allCandidates) {
+      if (!c || c.length < 5) continue;
+      const [candLocal, candDomain] = c.split('@');
+      if (!candLocal || !candDomain) continue;
+      // Domain must match exactly
+      if (candDomain !== expDomain) continue;
+      // Candidate local-part must be a suffix of expected local-part
+      if (!expLocal.endsWith(candLocal)) continue;
+      // Must have meaningful local-part length
+      if (candLocal.length < MIN_MASKED_LOCAL_PART) continue;
+      // Must not be the full UPI (exact match already handled)
+      if (c === norm) continue;
+      // Must not be a trailing truncation (already handled above)
+      const missing = norm.length - c.length;
+      if (missing >= 1 && missing <= 2 && norm.startsWith(c)) continue;
+      
+      return {
+        match: true, method: 'masked_suffix', confidence: 'medium',
         candidate: c, allCandidates, originalCandidates: extractedUPIs,
       };
     }

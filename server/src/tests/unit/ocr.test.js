@@ -301,6 +301,60 @@ describe('OCR Service - UPI Extraction: label-anchored + artifact handling (BUG 
     // Simulates Tesseract dropping the trailing "i": okicic vs okicici
     expect(matchUPI(['jayarajj126-3@okicic'], 'jayarajj126-3@okicici')).toBe(false);
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // GPay leading ellipsis masking extraction (Phase 1)
+  // ─────────────────────────────────────────────────────────────
+  describe('OCR Service - UPI Extraction: GPay leading ellipsis masking', () => {
+    it('extracts UPI with ASCII ellipsis prefix ...26-3@okicici', () => {
+      const result = extractUPIs('To Jayaraj\n...26-3@okicici\nCompleted');
+      expect(result).toContain('26-3@okicici');
+    });
+
+    it('extracts UPI with Unicode ellipsis prefix …26-3@okicici', () => {
+      const result = extractUPIs('To Jayaraj\n…26-3@okicici\nCompleted');
+      expect(result).toContain('26-3@okicici');
+    });
+
+    it('extracts UPI with ellipsis in multi-line GPay receipt', () => {
+      const text = [
+        'Payment Successful',
+        '₹120',
+        'To Jayaraj',
+        '...26-3@okicici',
+        'Completed',
+        '26/08/2026, 5:56 PM',
+        'UPI Ref: T7GHD240826',
+      ].join('\n');
+      const result = extractUPIs(text);
+      expect(result).toContain('26-3@okicici');
+    });
+
+    it('normal full UPI extraction remains unchanged', () => {
+      const result = extractUPIs('To: jayarajj126-3@okicici');
+      expect(result).toContain('jayarajj126-3@okicici');
+    });
+
+    it('masked candidate now matches with masked_suffix method', () => {
+      const upis = extractUPIs('...26-3@okicici');
+      const result = matchUPIWithRecovery(upis, 'jayarajj126-3@okicici');
+      expect(result.match).toBe(true);
+      expect(result.method).toBe('masked_suffix');
+      expect(result.confidence).toBe('medium');
+    });
+
+    it('adversarial: extraction does not cause approval - wrong masked UPI', () => {
+      const upis = extractUPIs('...attacker@okicici');
+      const result = matchUPIWithRecovery(upis, 'jayarajj126-3@okicici');
+      expect(result.match).toBe(false);
+    });
+
+    it('adversarial: extraction does not cause approval - short masked suffix', () => {
+      const upis = extractUPIs('...3@okicici');
+      const result = matchUPIWithRecovery(upis, 'jayarajj126-3@okicici');
+      expect(result.match).toBe(false);
+    });
+  });
 });
 
 describe('OCR Service - UTR Extraction', () => {
@@ -571,6 +625,121 @@ describe('matchUPIWithRecovery — OCR truncation recovery', () => {
     const r = matchUPIWithRecovery(['BAD@UPI', 'jayarajj126-3@okicic'], RECEIVER);
     expect(r.match).toBe(true);
     expect(r.allCandidates).toContain('jayarajj126-3@okicic');
+    expect(r.allCandidates).toContain('bad@upi');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Masked UPI suffix match (GPay masking: ••••26-3@okicici → 26-3@okicici)
+// ═══════════════════════════════════════════════════════════════
+describe('matchUPIWithRecovery — Masked UPI suffix match', () => {
+  const RECEIVER = 'jayarajj126-3@okicici';
+
+  it('exact match still takes priority → method exact', () => {
+    const r = matchUPIWithRecovery(['jayarajj126-3@okicici'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('exact');
+    expect(r.confidence).toBe('high');
+  });
+
+  it('126-3@okicici → masked suffix match', () => {
+    const r = matchUPIWithRecovery(['126-3@okicici'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('masked_suffix');
+    expect(r.confidence).toBe('medium');
+    expect(r.candidate).toBe('126-3@okicici');
+  });
+
+  it('26-3@okicici → masked suffix match (minimum local-part length 4)', () => {
+    const r = matchUPIWithRecovery(['26-3@okicici'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('masked_suffix');
+    expect(r.confidence).toBe('medium');
+    expect(r.candidate).toBe('26-3@okicici');
+  });
+
+  it('candidate with Unicode ellipsis already stripped by extractUPIs → masked suffix match', () => {
+    const r = matchUPIWithRecovery(['26-3@okicici'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('masked_suffix');
+  });
+
+  it('trailing truncation (okicic) takes priority over masked suffix', () => {
+    // jayarajj126-3@okicic is both a trailing truncation (missing 1 char)
+    // and a suffix match. Truncation should win.
+    const r = matchUPIWithRecovery(['jayarajj126-3@okicic'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('ocr_recovery_truncation');
+    expect(r.confidence).toBe('high');
+  });
+
+  // FAIL cases
+  it('wrong UPI ending with similar text → no match', () => {
+    const r = matchUPIWithRecovery(['attacker126-3@okicici'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('candidate only "okicici" (no local-part) → no match', () => {
+    const r = matchUPIWithRecovery(['okicici'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('candidate only "3@okicici" (local-part too short: 1 char) → no match', () => {
+    const r = matchUPIWithRecovery(['3@okicici'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('candidate "-3@okicici" (local-part 2 chars) → no match', () => {
+    const r = matchUPIWithRecovery(['-3@okicici'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('unrelated UPI with same short fragment → no match', () => {
+    const r = matchUPIWithRecovery(['random126-3@okicici'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('candidate not contained in expected UPI → no match', () => {
+    const r = matchUPIWithRecovery(['jayarajj126-3@oksbi'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('reverse-direction substring attempt → no match', () => {
+    // Expected is shorter than candidate - candidate cannot be suffix
+    const r = matchUPIWithRecovery(['jayarajj126-3@okicici'], '126-3@okicici');
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('candidate with different domain → no match', () => {
+    const r = matchUPIWithRecovery(['126-3@oksbi'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('candidate local-part not suffix of expected → no match', () => {
+    // 'xyz' is not a suffix of 'jayarajj126-3'
+    const r = matchUPIWithRecovery(['xyz@okicici'], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('empty list → no match', () => {
+    const r = matchUPIWithRecovery([], RECEIVER);
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('allCandidates includes all normalized forms', () => {
+    const r = matchUPIWithRecovery(['BAD@UPI', '126-3@okicici'], RECEIVER);
+    expect(r.match).toBe(true);
+    expect(r.allCandidates).toContain('126-3@okicici');
     expect(r.allCandidates).toContain('bad@upi');
   });
 });
