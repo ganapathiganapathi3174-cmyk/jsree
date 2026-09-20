@@ -173,6 +173,27 @@ describe('PHASE 8 — autoExpireStalePayments', () => {
     // The builder records .in() scope args; update path always constrains status.
     expect(db.state.updates.payments).toHaveLength(1);
   });
+
+  it('sets verification_result on auto-expired payments for traceability', async () => {
+    resetState();
+    db.state.paymentList = [
+      { id: 'pay-expired-1', user_id: 'u1', expected_amount: 120, expires_at: new Date(Date.now() - 60000).toISOString() },
+    ];
+    await autoExpireStalePayments();
+    const upd = db.state.updates.payments[0];
+    expect(upd.verification_result).toBeDefined();
+    expect(upd.verification_result.decision).toBe('rejected');
+    expect(upd.verification_result.reason).toBe('PAYMENT_EXPIRED');
+    expect(upd.verification_result.checks.autoExpired).toBe(true);
+  });
+
+  it('does NOT set verification_result on fresh (non-expired) payments', async () => {
+    resetState();
+    db.state.paymentList = [];
+    const result = await autoExpireStalePayments();
+    expect(result.expired).toBe(0);
+    expect(db.state.updates.payments || []).toHaveLength(0);
+  });
 });
 
 describe('PHASE 5 — server-authoritative binding (client values ignored)', () => {

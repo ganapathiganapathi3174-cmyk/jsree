@@ -611,6 +611,11 @@ export async function autoExpireStalePayments() {
           status: 'rejected',
           rejected_at: now,
           rejection_reason: 'PAYMENT_EXPIRED',
+          verification_result: {
+            decision: 'rejected',
+            reason: 'PAYMENT_EXPIRED',
+            checks: { autoExpired: true },
+          },
         })
         .eq('id', payment.id)
         .in('status', ACTABLE_STATUSES);

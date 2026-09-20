@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { User, Mail, Phone, ArrowRight, ArrowLeft, CreditCard, CheckCircle, Shield } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
@@ -76,8 +76,10 @@ export default function RegisterPage() {
     return true;
   };
 
-  const handleSubmit = async (file = null) => {
-    if (!file) { toast.error('Please upload payment screenshot'); return; }
+  const registeredRef = useRef(false);
+
+  const handleGoToPayment = async () => {
+    if (registeredRef.current) return;
     setLoading(true);
     try {
       const regPayload = {
@@ -93,14 +95,32 @@ export default function RegisterPage() {
       const token = regRes.data.data.token;
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(regRes.data.data.user));
+      registeredRef.current = true;
 
       const payRes = await api.post('/payments', { plan: String(form.plan) });
-      const paymentId = payRes.data.data.id;
       setPaymentData(payRes.data.data);
+      setStep(3);
+    } catch (err) {
+      const code = err.response?.data?.code;
+      if (code === 'EMAIL_EXISTS' || code === 'MOBILE_EXISTS') {
+        toast.error('An account with this email/mobile already exists. Please login.');
+        navigate('/login');
+      } else {
+        toast.error(err.response?.data?.message || 'Registration failed');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  const handleSubmit = async (file = null) => {
+    if (!file) { toast.error('Please upload payment screenshot'); return; }
+    if (!paymentData?.id) { toast.error('Payment request not found. Please go back and try again.'); return; }
+    setLoading(true);
+    try {
       const fd = new FormData();
       fd.append('screenshot', file);
-      const uploadRes = await api.post(`/payments/${paymentId}/screenshot`, fd);
+      const uploadRes = await api.post(`/payments/${paymentData.id}/screenshot`, fd);
 
       const verification = uploadRes.data.data?.verification;
       if (verification?.status === 'approved') {
@@ -108,7 +128,7 @@ export default function RegisterPage() {
           const profRes = await api.get('/users/profile');
           localStorage.setItem('user', JSON.stringify(profRes.data.data));
         } catch (err) {
-          localStorage.setItem('user', JSON.stringify(regRes.data.data.user));
+          // keep existing localStorage user
         }
         toast.success('Registration and payment approved!');
         navigate('/dashboard');
@@ -122,10 +142,10 @@ export default function RegisterPage() {
     } catch (err) {
       const code = err.response?.data?.code;
       if (code === 'PAYMENT_EXPIRED') {
-        toast.error('Payment request expired. Please go back and create a new payment request.');
+        toast.error('Payment request expired. Please create a new payment request.');
         setPaymentData(null);
       } else {
-        toast.error(err.response?.data?.message || 'Registration failed');
+        toast.error(err.response?.data?.message || 'Verification failed');
       }
     } finally {
       setLoading(false);
@@ -206,7 +226,7 @@ export default function RegisterPage() {
               </div>
               <div className="flex gap-3 mt-4">
                 <button onClick={() => setStep(1)} className="btn-secondary flex-1"><ArrowLeft className="h-4 w-4" /> Back</button>
-                <button onClick={() => { if (validateStep2()) setStep(3); }} className="btn-primary flex-1">Next <ArrowRight className="h-4 w-4" /></button>
+                <button onClick={() => { if (validateStep2()) handleGoToPayment(); }} className="btn-primary flex-1" disabled={loading}>{loading ? 'Setting up...' : <><span>Next</span> <ArrowRight className="h-4 w-4" /></>}</button>
               </div>
             </div>
           )}
@@ -214,15 +234,22 @@ export default function RegisterPage() {
           {step === 3 && (
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Complete Payment</h2>
-              <QRPaymentSection
-                amount={form.plan}
-                upiId={serverUpi}
-                verifyLabel="Verify Payment & Continue"
-                verifySubmitting={loading}
-                onVerify={handleSubmit}
-                expiresAt={paymentData?.expires_at || null}
-              />
-              <button onClick={() => setStep(2)} className="btn-secondary w-full"><ArrowLeft className="h-4 w-4" /> Back</button>
+              {paymentData ? (
+                <QRPaymentSection
+                  amount={form.plan}
+                  upiId={serverUpi}
+                  verifyLabel="Verify Payment & Continue"
+                  verifySubmitting={loading}
+                  onVerify={handleSubmit}
+                  onRecreate={handleGoToPayment}
+                  expiresAt={paymentData?.expires_at || null}
+                />
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <p>Setting up payment request...</p>
+                </div>
+              )}
+              <button onClick={() => setStep(2)} className="btn-secondary w-full" disabled={loading}><ArrowLeft className="h-4 w-4" /> Back</button>
             </div>
           )}
         </div>

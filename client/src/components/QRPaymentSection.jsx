@@ -100,6 +100,7 @@ export default function QRPaymentSection({
   verifySubmitting = false,
   disabled = false,
   onVerify,
+  onRecreate,
   expiresAt = null,
 }) {
   const isMobile = useIsMobile();
@@ -348,6 +349,17 @@ export default function QRPaymentSection({
         <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-gray-500">
           <LockKeyhole className="h-3.5 w-3.5" /> Never share your UPI PIN or OTP.
         </p>
+
+        {isExpired && typeof onRecreate === 'function' && (
+          <button
+            type="button"
+            onClick={onRecreate}
+            disabled={verifySubmitting}
+            className="btn-primary mt-4 w-full py-3 text-base flex items-center justify-center gap-2"
+          >
+            <RefreshCw className="h-4 w-4" /> Create New Payment Request
+          </button>
+        )}
       </div>
     </div>
   );
