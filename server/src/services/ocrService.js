@@ -271,13 +271,12 @@ export function extractUPIs(text) {
     .replace(/\s+@\s+/g, '@')
     .replace(/@\s+/g, '@');
 
-  // 2a. GPay leading masking: ••••26-3@okicici or ...26-3@okicici or …26-3@okicici
+  // 2a. GPay leading masking: ••••26-3@okicici or ...26-3@okicici or …26-3@okicici or •26-3@okicici
   //     Strip leading masking chars (bullets, dots, ellipsis) to expose the visible UPI portion.
-  //     Pattern: 3+ masking chars followed by valid local-part (digits, hyphens) + @domain
+  //     Pattern: 1+ masking chars followed by valid local-part (digits, hyphens) + @domain.
+  //     The @domain requirement makes this specific enough to avoid false positives on normal text.
   const ellipsisFixed = spaceFixed
-    .replace(/\.{3,}(\d{2,}-?\d*@\w+)/g, '$1')       // 3+ ASCII dots
-    .replace(/…(\d{2,}-?\d*@\w+)/g, '$1')            // Unicode ellipsis
-    .replace(/•{3,}(\d{2,}-?\d*@\w+)/g, '$1');       // 3+ Unicode bullets (• U+2022)
+    .replace(/[\.•…]+(\d{2,}-?\d*@\w+)/g, '$1');    // 1+ masking chars (dots, bullets, ellipsis)
 
   const upiRe = /([a-zA-Z0-9._+-]+@[a-zA-Z0-9]+)/gi;
   let m;
