@@ -3,9 +3,13 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { User, Mail, Phone, ArrowRight, ArrowLeft, CreditCard, CheckCircle, Shield } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 import toast from 'react-hot-toast';
-import api from '../utils/api';
+import api, { isTimeoutError } from '../utils/api';
 import { PLANS, ADMIN_UPI } from '../utils/constants';
 import QRPaymentSection from '../components/QRPaymentSection';
+
+const debug = (...args) => {
+  if (import.meta.env.DEV) console.log('[register]', ...args);
+};
 
 export default function RegisterPage() {
   const [searchParams] = useSearchParams();
@@ -79,6 +83,7 @@ export default function RegisterPage() {
   const registeredRef = useRef(false);
 
   const handleGoToPayment = async () => {
+    debug('create-payment:called', { alreadyRegistered: registeredRef.current, step });
     if (registeredRef.current) return;
     setLoading(true);
     try {
@@ -91,15 +96,18 @@ export default function RegisterPage() {
         plan: form.plan,
       };
 
+      debug('create-payment:register-request');
       const regRes = await api.post('/auth/register', regPayload);
       const token = regRes.data.data.token;
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(regRes.data.data.user));
       registeredRef.current = true;
 
+      debug('create-payment:payment-request');
       const payRes = await api.post('/payments', { plan: String(form.plan) });
       setPaymentData(payRes.data.data);
       setStep(3);
+      debug('create-payment:done', { paymentId: payRes.data.data?.id });
     } catch (err) {
       const code = err.response?.data?.code;
       if (code === 'EMAIL_EXISTS' || code === 'MOBILE_EXISTS') {
@@ -114,13 +122,18 @@ export default function RegisterPage() {
   };
 
   const handleSubmit = async (file = null) => {
-    if (!file) { toast.error('Please upload payment screenshot'); return; }
-    if (!paymentData?.id) { toast.error('Payment request not found. Please go back and try again.'); return; }
+    // loading is set before the guards so every exit path below — validation,
+    // API failure, timeout or exception — lands in `finally` and clears it.
     setLoading(true);
     try {
+      if (!file) { toast.error('Please upload payment screenshot'); return; }
+      if (!paymentData?.id) { toast.error('Payment request not found. Please go back and try again.'); return; }
+
+      debug('verify:start', { paymentId: paymentData.id, fileName: file.name, size: file.size });
       const fd = new FormData();
       fd.append('screenshot', file);
       const uploadRes = await api.post(`/payments/${paymentData.id}/screenshot`, fd);
+      debug('verify:upload-response', { status: uploadRes.status });
 
       const verification = uploadRes.data.data?.verification;
       if (verification?.status === 'approved') {
@@ -144,6 +157,9 @@ export default function RegisterPage() {
       if (code === 'PAYMENT_EXPIRED') {
         toast.error('Payment request expired. Please create a new payment request.');
         setPaymentData(null);
+      } else if (isTimeoutError(err)) {
+        debug('verify:timeout', { paymentId: paymentData?.id });
+        toast.error('Verification is taking too long. Please check your connection and try again.');
       } else {
         toast.error(err.response?.data?.message || 'Verification failed');
       }
