@@ -39,7 +39,19 @@ export async function uploadScreenshot(req, res) {
     try {
       verificationResult = await paymentService.verifyPayment(paymentId, req.file.buffer);
     } catch (verifyErr) {
-      verificationResult = { error: verifyErr.message, code: verifyErr.code };
+      // Verification produced NO decision (OCR failure, or the process was
+      // killed before it could return). Persist that fact instead of dropping
+      // it: the payment stays pending and resubmittable, but is no longer an
+      // unexplained pending row. Never a silent success.
+      console.error('[payments] verification did not complete', {
+        paymentId,
+        code: verifyErr?.code,
+        message: verifyErr?.message,
+        details: verifyErr?.details
+      });
+      verificationResult = await paymentService
+        .recordVerificationFailure(paymentId, verifyErr)
+        .catch(() => null) || { error: verifyErr.message, code: verifyErr.code };
     }
 
     res.json({

@@ -410,6 +410,46 @@ export async function verifyPayment(paymentId, imageBuffer) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Fail-closed record for a verification attempt that never reached a decision.
+//
+// runScreenshotVerification throws (OCR_FAILED / OCR_UNREADABLE) or the host
+// dies mid-OCR (e.g. the process is OOM-killed before it can return). In both
+// cases verifyPayment never reaches its status commit, so the row would sit at
+// status=pending with verification_result=NULL and no explanation — an
+// orphaned payment indistinguishable from one still awaiting review.
+//
+// This writes WHY the attempt produced no decision. It is deliberately NOT a
+// decision:
+//   - decision stays null, so nothing can read it as an approval
+//   - status is left untouched, so the screenshot stays resubmittable
+//   - the .in('status', ACTABLE_STATUSES) guard stops a concurrent approval or
+//     rejection from being overwritten by this marker
+// ─────────────────────────────────────────────────────────────
+export async function recordVerificationFailure(paymentId, error) {
+  const record = {
+    decision: null,
+    inconclusive: true,
+    reason: error?.code || 'VERIFICATION_FAILED',
+    error: error?.message || 'Verification failed',
+    details: error?.details ?? null,
+    failed_at: new Date().toISOString()
+  };
+
+  await supabase.from('payments')
+    .update({ verification_result: record })
+    .eq('id', paymentId)
+    .in('status', ACTABLE_STATUSES);
+
+  await logAction(null, 'system', 'verification_failed', paymentId, 'payment', {
+    code: record.reason,
+    error: record.error,
+    details: record.details
+  });
+
+  return record;
+}
+
 export async function getPaymentStatus(paymentId) {
   const { data: payment, error } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, created_at, expires_at, payment_request_created_at, receiver_upi, verified_at, verification_result, rejection_reason').eq('id', paymentId).single();
   if (error || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };

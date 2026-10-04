@@ -19,6 +19,7 @@ import exportRoutes from './routes/export.js';
 import receiptRoutes from './routes/receipts.js';
 import securityRoutes from './routes/security.js';
 import configRoutes from './routes/config.js';
+import { buildCorsOptions } from './config/cors.js';
 import { cacheStats } from './middleware/cache.js';
 import { autoExpireStalePayments } from './services/paymentService.js';
 
@@ -30,41 +31,13 @@ const PORT = process.env.PORT || 5000;
 app.set('trust proxy', 1);
 
 app.use(helmet());
-// CORS: allow a configurable list of frontend origins.
-// CLIENT_URL may be a single origin or a comma-separated list, e.g.
-// CLIENT_URL=https://jsree.vercel.app,http://localhost:5173
-// Railway production MUST include https://jsree.vercel.app, otherwise browsers
-// block cross-origin POSTs (like /api/auth/admin-login) at the preflight stage
-// with "No 'Access-Control-Allow-Origin' header".
-const rawOrigins = process.env.CLIENT_URLS || process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
-const allowedOrigins = String(rawOrigins)
-  .split(',')
-  .map((o) => o.trim().replace(/\/$/, ''))
-  .filter(Boolean);
-
-// Always allow local dev + the known production frontend, even if the
-// Railway env var was left as localhost.
-for (const o of ['http://localhost:5173', 'http://localhost:3000', 'https://jsree.vercel.app']) {
-  if (!allowedOrigins.includes(o)) allowedOrigins.push(o);
-}
-
-const corsOptions = {
-  origin: (origin, callback) => {
-    // No Origin header (curl, mobile apps, server-to-server) -> allow
-    if (!origin) return callback(null, true);
-    const clean = origin.replace(/\/$/, '');
-    if (allowedOrigins.includes(clean)) return callback(null, true);
-    // Allow Vercel preview deployments (*.vercel.app)
-    try {
-      if (new URL(clean).hostname.endsWith('.vercel.app')) return callback(null, true);
-    } catch { /* ignore malformed origin */ }
-    return callback(null, false);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  optionsSuccessStatus: 204
-};
+// CORS: credentialed (Authorization/cookies) requests must echo the caller's
+// exact origin, so the allow-list is resolved once at boot from CLIENT_URLS /
+// CLIENT_URL / FRONTEND_URL plus the always-allowed production frontend.
+// See src/config/cors.js — do not inline this policy, and never use "*"
+// while credentials are enabled.
+const { allowedOrigins, options: corsOptions } = buildCorsOptions();
+console.log(`[cors] allowed origins: ${allowedOrigins.join(', ')}`);
 app.use(cors(corsOptions));
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
