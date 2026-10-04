@@ -11,6 +11,24 @@ import { TIMEZONE as _TIMEZONE, IST_UTC_OFFSET_MS } from '../config/paymentConfi
 export const IST_TIMEZONE = _TIMEZONE;
 
 // ─────────────────────────────────────────────────────────────
+// libvips memory budget (resource hardening ONLY).
+//
+// sharp's defaults are tuned for a workstation: an operation cache that holds
+// up to 50 MB of freed buffers plus one worker thread per CPU core. The amount
+// recovery chain renders ~125 OCR inputs from a single screenshot, so those
+// defaults are what pushed peak RSS past the 512 MB Render Free limit and got
+// the process OOM-killed mid-verification.
+//
+// concurrency(1) -> one libvips thread, so a pipeline is not duplicated per core
+// cache(false)   -> no retained operation cache
+//
+// Neither setting alters a single pixel or OCR argument: identical operations
+// are still applied, in the same order, to the same input buffers.
+// ─────────────────────────────────────────────────────────────
+sharp.concurrency(1);
+sharp.cache(false);
+
+// ─────────────────────────────────────────────────────────────
 // Shared Tesseract scheduler (resource hardening ONLY).
 //
 // Same engine, same language ('eng'), same default job options, same
@@ -699,26 +717,25 @@ function extractAmountsFromStrips(text) {
 // Both run in parallel to minimize latency.
 // ─────────────────────────────────────────────────────────────
 export async function runAdditionalOCRPasses(imageBuffer) {
-  const [upscaledBuf, thresholdBuf] = await Promise.all([
-    sharp(imageBuffer)
-      .resize({ width: 2400, withoutEnlargement: false })
-      .grayscale()
-      .normalize()
-      .toBuffer(),
-    sharp(imageBuffer)
-      .resize({ width: 1200, withoutEnlargement: true })
-      .grayscale()
-      .normalize()
-      .threshold(145)
-      .toBuffer(),
-  ]);
+  // Generated and recognized ONE AT A TIME, in this exact order. The shared
+  // worker already serialized these two jobs, so the recognized texts and their
+  // order are unchanged — but only one variant buffer is alive at a time
+  // instead of both, which is what keeps the recovery chain inside the
+  // instance's memory budget.
+  const upscaledBuf = await sharp(imageBuffer)
+    .resize({ width: 2400, withoutEnlargement: false })
+    .grayscale()
+    .normalize()
+    .toBuffer();
+  const upscaledResult = await recognizeWithSharedWorker(upscaledBuf);
 
-  // Queued through the single shared worker: same two results in the
-  // same order, but executed sequentially instead of concurrently.
-  const [upscaledResult, thresholdResult] = await Promise.all([
-    recognizeWithSharedWorker(upscaledBuf),
-    recognizeWithSharedWorker(thresholdBuf),
-  ]);
+  const thresholdBuf = await sharp(imageBuffer)
+    .resize({ width: 1200, withoutEnlargement: true })
+    .grayscale()
+    .normalize()
+    .threshold(145)
+    .toBuffer();
+  const thresholdResult = await recognizeWithSharedWorker(thresholdBuf);
 
   return [
     { text: upscaledResult.text, confidence: upscaledResult.confidence, pass: 'upscaled' },
@@ -792,24 +809,24 @@ export async function runDeepAmountRecovery(imageBuffer) {
       .png()
       .toBuffer();
 
+    // Thunks, not promises: each variant is rendered, recognized and released
+    // before the next one is built. Previously all 7 were materialized at once
+    // via Promise.all (one of them upscaled to W*2), which is the single
+    // largest allocation in this function. Order is preserved, so the joined
+    // candidate text is byte-identical.
     const strategies = [
-      sharp(topBuf).threshold(80).png().toBuffer(),
-      sharp(topBuf).threshold(120).png().toBuffer(),
-      sharp(topBuf).threshold(160).png().toBuffer(),
-      sharp(topBuf).threshold(200).png().toBuffer(),
-      sharp(topBuf).negate().normalize().png().toBuffer(),
-      sharp(topBuf).sharpen({ sigma: 3 }).threshold(130).png().toBuffer(),
-      sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer(),
+      () => sharp(topBuf).threshold(80).png().toBuffer(),
+      () => sharp(topBuf).threshold(120).png().toBuffer(),
+      () => sharp(topBuf).threshold(160).png().toBuffer(),
+      () => sharp(topBuf).threshold(200).png().toBuffer(),
+      () => sharp(topBuf).negate().normalize().png().toBuffer(),
+      () => sharp(topBuf).sharpen({ sigma: 3 }).threshold(130).png().toBuffer(),
+      () => sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer(),
     ];
 
-    const buffers = await Promise.all(strategies);
-    // Serialized through the shared worker: same texts, same order.
-    const results = await Promise.all(
-      buffers.map(buf => recognizeWithSharedWorker(buf))
-    );
-    buffers.length = 0;
-
-    for (const r of results) {
+    for (const build of strategies) {
+      const buf = await build();
+      const r = await recognizeWithSharedWorker(buf);
       if (r.text) candidates.push(r.text);
     }
   } catch (_) { /* best-effort */ }
@@ -825,21 +842,20 @@ export async function runDeepAmountRecovery(imageBuffer) {
         .toBuffer();
 
       const stripStrategies = [
-        sharp(stripBuf).threshold(80).png().toBuffer(),
-        sharp(stripBuf).threshold(120).png().toBuffer(),
-        sharp(stripBuf).threshold(160).png().toBuffer(),
-        sharp(stripBuf).threshold(200).png().toBuffer(),
-        sharp(stripBuf).negate().normalize().png().toBuffer(),
-        sharp(stripBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer(),
+        () => sharp(stripBuf).threshold(80).png().toBuffer(),
+        () => sharp(stripBuf).threshold(120).png().toBuffer(),
+        () => sharp(stripBuf).threshold(160).png().toBuffer(),
+        () => sharp(stripBuf).threshold(200).png().toBuffer(),
+        () => sharp(stripBuf).negate().normalize().png().toBuffer(),
+        () => sharp(stripBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer(),
       ];
 
-      const stripBuffers = await Promise.all(stripStrategies);
-      const stripResults = await Promise.all(
-        stripBuffers.map(buf => recognizeWithSharedWorker(buf))
-      );
-      stripBuffers.length = 0;
-
-      for (const r of stripResults) {
+      // One variant alive at a time — see the note on the region strategies
+      // above. The upscaled W*2 variant is the expensive one, so it is now the
+      // only strip-sized buffer in flight.
+      for (const build of stripStrategies) {
+        const buf = await build();
+        const r = await recognizeWithSharedWorker(buf);
         if (r.text) candidates.push(r.text);
       }
     } catch (_) { /* best-effort */ }
@@ -927,29 +943,33 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
 
   // Multiple preprocessing strategies targeting different dark/light
   // mode scenarios and ₹ symbol rendering variations.
+  // Thunks so each variant is rendered, recognized and released in turn instead
+  // of all 12 being materialized together (4 of them upscaled to W*2).
   const strategies = [
-    { name: 'upscale_2x_threshold_120', buf: sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(120).png().toBuffer() },
-    { name: 'upscale_2x_threshold_140', buf: sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer() },
-    { name: 'upscale_2x_threshold_100', buf: sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(100).png().toBuffer() },
-    { name: 'negate_normalize', buf: sharp(topBuf).negate().normalize().png().toBuffer() },
-    { name: 'negate_threshold_140', buf: sharp(topBuf).negate().normalize().threshold(140).png().toBuffer() },
-    { name: 'negate_threshold_120', buf: sharp(topBuf).negate().normalize().threshold(120).png().toBuffer() },
-    { name: 'sharpen_threshold_100', buf: sharp(topBuf).sharpen({ sigma: 3 }).threshold(100).png().toBuffer() },
-    { name: 'sharpen_threshold_160', buf: sharp(topBuf).sharpen({ sigma: 3 }).threshold(160).png().toBuffer() },
-    { name: 'high_threshold_200', buf: sharp(topBuf).threshold(200).png().toBuffer() },
-    { name: 'low_threshold_80', buf: sharp(topBuf).threshold(80).png().toBuffer() },
-    { name: 'negate_upscale', buf: sharp(topBuf).negate().normalize().resize({ width: W * 2, kernel: 'lanczos3' }).threshold(130).png().toBuffer() },
-    { name: 'linear_high_contrast', buf: sharp(topBuf).linear(2.0, -50).normalize().png().toBuffer() },
+    { name: 'upscale_2x_threshold_120', build: () => sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(120).png().toBuffer() },
+    { name: 'upscale_2x_threshold_140', build: () => sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(140).png().toBuffer() },
+    { name: 'upscale_2x_threshold_100', build: () => sharp(topBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(100).png().toBuffer() },
+    { name: 'negate_normalize', build: () => sharp(topBuf).negate().normalize().png().toBuffer() },
+    { name: 'negate_threshold_140', build: () => sharp(topBuf).negate().normalize().threshold(140).png().toBuffer() },
+    { name: 'negate_threshold_120', build: () => sharp(topBuf).negate().normalize().threshold(120).png().toBuffer() },
+    { name: 'sharpen_threshold_100', build: () => sharp(topBuf).sharpen({ sigma: 3 }).threshold(100).png().toBuffer() },
+    { name: 'sharpen_threshold_160', build: () => sharp(topBuf).sharpen({ sigma: 3 }).threshold(160).png().toBuffer() },
+    { name: 'high_threshold_200', build: () => sharp(topBuf).threshold(200).png().toBuffer() },
+    { name: 'low_threshold_80', build: () => sharp(topBuf).threshold(80).png().toBuffer() },
+    { name: 'negate_upscale', build: () => sharp(topBuf).negate().normalize().resize({ width: W * 2, kernel: 'lanczos3' }).threshold(130).png().toBuffer() },
+    { name: 'linear_high_contrast', build: () => sharp(topBuf).linear(2.0, -50).normalize().png().toBuffer() },
   ];
 
-  const buffers = await Promise.all(strategies.map(s => s.buf));
-  // Serialized through the shared worker: same texts, same order.
-  const results = await Promise.all(
-    buffers.map(buf => recognizeWithSharedWorker(buf))
-  );
-  buffers.length = 0;
+  // Every strategy is still rendered and recognized — the OCR call count is
+  // unchanged — but only one variant buffer is alive at a time. Texts are
+  // small, so collecting them costs nothing next to the buffers.
+  const results = [];
+  for (const strategy of strategies) {
+    const buf = await strategy.build();
+    results.push(await recognizeWithSharedWorker(buf));
+  }
 
-  // Check each strategy for evidence of the correct amount.
+  // Check each strategy for evidence of the correct amount (same order).
   for (let i = 0; i < results.length; i++) {
     const text = results[i].text;
     if (textContainsExpected(text)) {
@@ -973,17 +993,18 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
         .toBuffer();
 
       const stripStrategies = [
-        sharp(stripBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(120).png().toBuffer(),
-        sharp(stripBuf).negate().normalize().png().toBuffer(),
-        sharp(stripBuf).negate().normalize().threshold(130).png().toBuffer(),
-        sharp(stripBuf).sharpen({ sigma: 3 }).threshold(100).png().toBuffer(),
+        () => sharp(stripBuf).resize({ width: W * 2, kernel: 'lanczos3' }).threshold(120).png().toBuffer(),
+        () => sharp(stripBuf).negate().normalize().png().toBuffer(),
+        () => sharp(stripBuf).negate().normalize().threshold(130).png().toBuffer(),
+        () => sharp(stripBuf).sharpen({ sigma: 3 }).threshold(100).png().toBuffer(),
       ];
 
-      const stripBuffers = await Promise.all(stripStrategies);
-      const stripResults = await Promise.all(
-        stripBuffers.map(buf => recognizeWithSharedWorker(buf))
-      );
-      stripBuffers.length = 0;
+      // All four variants are still recognized; one buffer alive at a time.
+      const stripResults = [];
+      for (const build of stripStrategies) {
+        const buf = await build();
+        stripResults.push(await recognizeWithSharedWorker(buf));
+      }
 
       for (const r of stripResults) {
         const text = r.text || '';
