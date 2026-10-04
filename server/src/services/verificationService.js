@@ -210,13 +210,27 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     return { verificationResult: demoResult, verificationTime, utr: null };
   }
 
+  // ── UPI match is resolved BEFORE amount recovery ──
+  // decidePaymentVerification() evaluates Gate 1 (UPI) before Gate 2 (amount),
+  // so a UPI mismatch is already terminal: no amount candidate discovered later
+  // can change the decision or its reason. The three amount-recovery stages cost
+  // up to 125 extra OCR calls (~40s), so they are skipped when the outcome is
+  // already fixed. UPI matching never reads amount data, so this reorder is a
+  // no-op for the UPI-pass path — recovery still runs there exactly as before.
+  const upiResult = matchUPIWithRecovery(extractedUPIs, receiverUpi);
+  const upiMatch = upiResult.match;
+  // When UPI already failed, recovery is skipped and these fields keep their
+  // primary-pass values (checks.amount / extractedAmounts / fieldConfidence)
+  // — diagnostics only; decision and reason are unaffected.
+  const skipAmountRecovery = upiMatch !== true;
+
   // Full-page OCR may have dropped a large-font amount line (common on UPI
-  // receipts). Purely a recovery pass for the RECORD: the recovered tokens
-  // go into checks.amount / detected.amount for admin display. Amount never
-  // feeds the approval/rejection decision anymore, so failed recovery simply
-  // leaves the extracted-amount record empty — nothing to reject on.
+  // receipts). This recovery DOES feed the decision: amountMatch is Gate 2 of
+  // decidePaymentVerification() and also drives fieldConfidence.amount, which
+  // the allFieldsHighConfidence gate enforces. Recovery only runs when the
+  // outcome is still in play (Gate 1 passed).
   let amountMatch = matchAmount(extractedAmounts, expectedAmount);
-  if (!amountMatch) {
+  if (!amountMatch && !skipAmountRecovery) {
     try {
       const recovered = await runAmountRecoveryOCR(buffer);
       const merged = [...new Set([...extractedAmounts, ...recovered])];
@@ -228,7 +242,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     } catch (e) { /* recovery is best-effort; keep original result */ }
   }
 
-  if (!amountMatch) {
+  if (!amountMatch && !skipAmountRecovery) {
     try {
       const deepRecovered = await runDeepAmountRecovery(buffer);
       const merged = [...new Set([...extractedAmounts, ...deepRecovered])];
@@ -247,7 +261,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // strategies to recover evidence of the correct amount from the image.
   // It ONLY accepts when a preprocessing strategy produces the exact expected
   // amount — no numeric heuristics, no string inference.
-  if (!amountMatch) {
+  if (!amountMatch && !skipAmountRecovery) {
     try {
       const currencyResult = await verifyAmountWithCurrencyRecovery(buffer, expectedAmount);
       if (currencyResult.verified) {
@@ -260,8 +274,6 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     } catch (e) { /* currency recovery is best-effort */ }
   }
 
-  const upiResult = matchUPIWithRecovery(extractedUPIs, receiverUpi);
-  const upiMatch = upiResult.match;
   const utr = extractedUTRs.length > 0 ? extractedUTRs[0]?.replace(/\s+/g, '').trim() || null : null;
 
   // Time-aware date resolution: prefer a receipt line that carries an exact
