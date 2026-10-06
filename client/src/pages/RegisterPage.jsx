@@ -84,24 +84,30 @@ export default function RegisterPage() {
 
   const handleGoToPayment = async () => {
     debug('create-payment:called', { alreadyRegistered: registeredRef.current, step });
-    if (registeredRef.current) return;
+    // Re-entrancy guard is `loading`, not `registeredRef`: registration must
+    // only run once, but the payment request itself must stay re-runnable so
+    // "Create New Payment Request" and Back → Next keep working after a
+    // failed or expired payment attempt.
+    if (loading) return;
     setLoading(true);
     try {
-      const regPayload = {
-        name: form.name,
-        email: form.email,
-        mobile: form.mobile,
-        password: form.password,
-        referralCode: form.referral_code || undefined,
-        plan: form.plan,
-      };
+      if (!registeredRef.current) {
+        const regPayload = {
+          name: form.name,
+          email: form.email,
+          mobile: form.mobile,
+          password: form.password,
+          referralCode: form.referral_code || undefined,
+          plan: form.plan,
+        };
 
-      debug('create-payment:register-request');
-      const regRes = await api.post('/auth/register', regPayload);
-      const token = regRes.data.data.token;
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(regRes.data.data.user));
-      registeredRef.current = true;
+        debug('create-payment:register-request');
+        const regRes = await api.post('/auth/register', regPayload);
+        const token = regRes.data.data.token;
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(regRes.data.data.user));
+        registeredRef.current = true;
+      }
 
       debug('create-payment:payment-request');
       const payRes = await api.post('/payments', { plan: String(form.plan) });

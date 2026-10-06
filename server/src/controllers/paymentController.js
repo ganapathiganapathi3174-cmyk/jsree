@@ -78,13 +78,14 @@ export async function uploadScreenshot(req, res) {
 export async function getPaymentStatus(req, res) {
   try {
     const { paymentId } = req.params;
+    await paymentService.requirePaymentOwner(paymentId, req.user);
     const payment = await paymentService.getPaymentStatus(paymentId);
     res.json({
       success: true,
       data: payment
     });
   } catch (error) {
-    res.status(404).json({
+    res.status(error.code === 'UNAUTHORIZED' ? 403 : 404).json({
       success: false,
       message: error.message || 'Payment not found',
       code: error.code || 'PAYMENT_NOT_FOUND'
@@ -111,6 +112,7 @@ export async function getUserPayments(req, res) {
 export async function verifyPaymentManual(req, res) {
   try {
     const { paymentId } = req.params;
+    await paymentService.requirePaymentOwner(paymentId, req.user);
     const verificationResult = await paymentService.verifyPayment(paymentId);
     res.json({
       success: true,
@@ -118,6 +120,7 @@ export async function verifyPaymentManual(req, res) {
     });
   } catch (error) {
     const status = error.code === 'PAYMENT_NOT_FOUND' ? 404 :
+                   error.code === 'UNAUTHORIZED' ? 403 :
                    error.code === 'PAYMENT_NOT_PENDING' ? 400 :
                    error.code === 'PAYMENT_EXPIRED' ? 410 :
                    error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE' ? 422 : 500;

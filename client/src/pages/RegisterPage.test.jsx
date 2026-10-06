@@ -125,4 +125,20 @@ describe('RegisterPage payment verification — loading always resets', () => {
     await waitFor(() => expect(screen.getByText('Setting up payment request...')).toBeTruthy(), { timeout: 2000 });
     expect(post).toHaveBeenCalledTimes(3);
   });
+
+  it('recreates the payment request without re-registering (dead-button regression)', async () => {
+    const expired = { id: 'pay-123', expires_at: new Date(Date.now() - 60 * 1000).toISOString() };
+    post.mockImplementation((url) => {
+      if (url === '/auth/register') return Promise.resolve({ data: { data: { token: 't', user: { id: 'u1' } } } });
+      if (url === '/payments') return Promise.resolve({ data: { data: expired } });
+      return Promise.resolve({ data: { data: { verification: { status: 'pending' } } } });
+    });
+
+    await reachPaymentStep();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create New Payment Request/ }));
+
+    await waitFor(() => expect(post.mock.calls.filter(c => c[0] === '/payments')).toHaveLength(2));
+    expect(post.mock.calls.filter(c => c[0] === '/auth/register')).toHaveLength(1);
+  });
 });

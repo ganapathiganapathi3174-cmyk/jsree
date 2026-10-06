@@ -108,7 +108,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     }
 
     // ── Primary OCR pass ──
-    const ocr = await runOCR(buffer);
+    const _p=Date.now(); const ocr = await runOCR(buffer); console.log("PHASE primary", Date.now()-_p);
     ocrText = ocr.text;
     ocrConfidence = ocr.confidence;
     ocrPassInfo.primaryConfidence = ocrConfidence;
@@ -124,7 +124,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     // ── Additional OCR passes (upscaled + thresholded) ──
     // Run when primary pass is missing key data to improve recall.
     try {
-      const additionalPasses = await runAdditionalOCRPasses(buffer);
+      const _p2=Date.now(); const additionalPasses = await runAdditionalOCRPasses(buffer); console.log("PHASE additional", Date.now()-_p2);
       ocrPassInfo.additionalPassesRun = additionalPasses.length;
       ocrPassInfo.additionalPassConfidences = additionalPasses.map(p => p.confidence);
 
@@ -232,7 +232,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   let amountMatch = matchAmount(extractedAmounts, expectedAmount);
   if (!amountMatch && !skipAmountRecovery) {
     try {
-      const recovered = await runAmountRecoveryOCR(buffer);
+      const _p3=Date.now(); const recovered = await runAmountRecoveryOCR(buffer); console.log("PHASE stripRecovery", Date.now()-_p3, "found", recovered.length);
       const merged = [...new Set([...extractedAmounts, ...recovered])];
       if (matchAmount(merged, expectedAmount)) {
         amountMatch = true;
@@ -244,7 +244,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
 
   if (!amountMatch && !skipAmountRecovery) {
     try {
-      const deepRecovered = await runDeepAmountRecovery(buffer);
+      const _p4=Date.now(); const deepRecovered = await runDeepAmountRecovery(buffer); console.log("PHASE deepRecovery", Date.now()-_p4, "found", deepRecovered.length);
       const merged = [...new Set([...extractedAmounts, ...deepRecovered])];
       if (matchAmount(merged, expectedAmount)) {
         amountMatch = true;
@@ -263,7 +263,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // amount — no numeric heuristics, no string inference.
   if (!amountMatch && !skipAmountRecovery) {
     try {
-      const currencyResult = await verifyAmountWithCurrencyRecovery(buffer, expectedAmount);
+      const _p5=Date.now(); const currencyResult = await verifyAmountWithCurrencyRecovery(buffer, expectedAmount); console.log("PHASE currencyRecovery", Date.now()-_p5, "verified", currencyResult.verified);
       if (currencyResult.verified) {
         amountMatch = true;
         recoveredFromBands = true;

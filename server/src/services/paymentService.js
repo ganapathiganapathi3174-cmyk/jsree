@@ -117,7 +117,13 @@ async function completeApproval(payment, actorId, actorType, logActionType) {
     }
   }
 
-  // 4. Create payment_approved notification (part of activation).
+  // 4. Create payment_approved notification.
+  //    NON-BLOCKING: this is a post-commit side effect, not part of the
+  //    activation transaction. Rolling back here would discard a CORRECT,
+  //    already-persisted verification decision — the payment had already
+  //    passed every OCR gate and been written as approved — and leave a
+  //    valid payment stuck in `pending` forever. Activation (steps 1-3)
+  //    stays atomic and is still rolled back if it genuinely fails.
   try {
     await notificationService.createNotification(
       payment.user_id, 'payment_approved', 'Payment Approved',
@@ -125,8 +131,12 @@ async function completeApproval(payment, actorId, actorType, logActionType) {
       { paymentId: payment.id, amount: payment.expected_amount, plan: payment.selected_plan }
     );
   } catch (notifErr) {
-    await rollbackApproval(payment.id, payment.user_id);
-    throw { message: 'Failed to create approval notification', code: 'NOTIFICATION_FAILED' };
+    console.error('[completeApproval] approval notification failed', {
+      paymentId: payment.id,
+      userId: payment.user_id,
+      code: notifErr?.code,
+      message: notifErr?.message,
+    });
   }
 
   // 5. Side effects — non-blocking (referrer deactivation, wallet bonus, tiers).
@@ -448,6 +458,18 @@ export async function recordVerificationFailure(paymentId, error) {
   });
 
   return record;
+}
+
+// Ownership gate for payment endpoints that do not go through
+// uploadScreenshot (which already checks payment.user_id). Status polling and
+// manual re-verification must only ever touch the caller's own payment.
+export async function requirePaymentOwner(paymentId, requester) {
+  const { data: payment, error } = await supabase.from('payments').select('user_id').eq('id', paymentId).single();
+  if (error || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
+  if (payment.user_id !== requester?.id && requester?.role !== 'admin') {
+    throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
+  }
+  return payment;
 }
 
 export async function getPaymentStatus(paymentId) {

@@ -87,8 +87,10 @@ async function getOCRScheduler() {
 // Drop-in replacement for `Tesseract.recognize(buffer, 'eng', {})`.
 // Returns the identical { text, confidence } shape.
 async function recognizeWithSharedWorker(buffer) {
+  const _t0 = Date.now();
   const scheduler = await getOCRScheduler();
   const result = await scheduler.addJob('recognize', buffer, {});
+  (globalThis.__OCRSTATS ||= []).push(Date.now() - _t0);
   return { text: result.data.text || '', confidence: result.data.confidence || 0 };
 }
 

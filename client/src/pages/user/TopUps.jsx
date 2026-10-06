@@ -38,6 +38,15 @@ export default function TopUps() {
   const list = tab === 'received' ? received : sent;
   const eligibleForProof = topups.filter(t => t.sender_id === user.id && ['created', 'payment_pending'].includes(t.status));
 
+  // The server replies 200 for a verification that COMPLETED with a
+  // rejection — surfacing that as a success toast would tell the user the
+  // money was credited when it was refused.
+  const announceProofResult = (message, fallback) => {
+    const text = message || fallback;
+    if (/reject/i.test(text)) toast.error(text);
+    else toast.success(text);
+  };
+
   const handleProof = async () => {
     if (!screenshot) { toast.error('Upload screenshot'); return; }
     setSubmitting(true);
@@ -45,8 +54,8 @@ export default function TopUps() {
       const fd = new FormData();
       fd.append('screenshot', screenshot);
       fd.append('reference_id', refId);
-      await api.post(`/topups/${proofModal.id}/proof`, fd);
-      toast.success('Proof submitted!');
+      const res = await api.post(`/topups/${proofModal.id}/proof`, fd);
+      announceProofResult(res.data.message, 'Proof submitted!');
       setProofModal(null); setScreenshot(null); setRefId('');
       load();
     } catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
@@ -63,13 +72,13 @@ export default function TopUps() {
         fd.append('amount', payAmount);
         if (summary?.sponsorId) fd.append('receiverId', summary.sponsorId);
         const res = await api.post('/topups/direct', fd);
-        toast.success(res.data.message || 'Payment proof submitted!');
+        announceProofResult(res.data.message, 'Payment proof submitted!');
       } else {
         const targetId = payTarget || targets[0].id;
         const fd = new FormData();
         fd.append('screenshot', file);
-        await api.post(`/topups/${targetId}/proof`, fd);
-        toast.success('Payment proof submitted!');
+        const res = await api.post(`/topups/${targetId}/proof`, fd);
+        announceProofResult(res.data.message, 'Payment proof submitted!');
       }
       load();
     } catch (err) { toast.error(err.response?.data?.message || 'Failed to submit proof'); }
@@ -190,9 +199,6 @@ export default function TopUps() {
                   )}
                   {tab === 'received' && t.status === 'payment_pending' && (
                     <button onClick={() => setProofModal(t)} className="btn-primary text-sm"><Upload className="h-4 w-4" /> Submit Proof</button>
-                  )}
-                  {t.screenshot_url && (
-                    <a href={t.screenshot_url} target="_blank" rel="noopener noreferrer" className="btn-secondary text-sm"><Eye className="h-4 w-4" /> Screenshot</a>
                   )}
                 </div>
               </div>
