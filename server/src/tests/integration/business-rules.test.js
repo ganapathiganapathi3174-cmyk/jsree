@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { getAdminToken, ADMIN_TOKEN_SOURCE } from './_helpers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, '../../../.env') });
@@ -127,14 +128,16 @@ describe('Business Rule: Admin Approval Activates Account Atomically', () => {
   let pending, adminToken2;
 
   before(async () => {
-    const login = await api('POST', '/auth/admin-login', { email: process.env.ADMIN_EMAIL, password: 'Admin@123' });
-    adminToken2 = login.data?.token;
+    adminToken2 = await getAdminToken();
     pending = await createPendingUser();
   });
 
   after(async () => { await cleanup(); });
 
-  it('R10. Admin approve activates user (payment approved + user active + login works)', async () => {
+  it('R10. Admin approve activates user (payment approved + user active + login works)', async (t) => {
+    if (!adminToken2) {
+      return t.skip(`ENV: no admin token available (${ADMIN_TOKEN_SOURCE}) - R10 not exercised, not passed`);
+    }
     const res = await api('PUT', `/admin/payments/${pending.payment.id}/approve`, {}, adminToken2);
     assert.equal(res.success, true);
 
@@ -157,8 +160,7 @@ describe('Business Rule: Admin Delete Payment Registration', () => {
   let pending, adminToken3, target;
 
   before(async () => {
-    const login = await api('POST', '/auth/admin-login', { email: process.env.ADMIN_EMAIL, password: 'Admin@123' });
-    adminToken3 = login.data?.token;
+    adminToken3 = await getAdminToken();
     pending = await createPendingUser();
     target = { id: pending.payment.id, token: pending.token, email: pending.email };
   });
@@ -175,7 +177,8 @@ describe('Business Rule: Admin Delete Payment Registration', () => {
     assert.equal(res.status, 403);
   });
 
-  it('R13. Admin delete of pending registration removes payment + user', async () => {
+  it('R13. Admin delete of pending registration removes payment + user', async (t) => {
+    if (!adminToken3) return t.skip(`ENV: no admin token available (${ADMIN_TOKEN_SOURCE}) - R13 not exercised, not passed`);
     const res = await api('DELETE', `/admin/payments/${target.id}`, null, adminToken3);
     assert.equal(res.status, 200);
     assert.equal(res.success, true);
@@ -190,7 +193,8 @@ describe('Business Rule: Admin Delete Payment Registration', () => {
     assert.equal(login.status, 401);
   });
 
-  it('R14. Double-delete is idempotent (200, alreadyDeleted)', async () => {
+  it('R14. Double-delete is idempotent (200, alreadyDeleted)', async (t) => {
+    if (!adminToken3) return t.skip(`ENV: no admin token available (${ADMIN_TOKEN_SOURCE}) - R14 not exercised, not passed`);
     const res = await api('DELETE', `/admin/payments/${target.id}`, null, adminToken3);
     assert.equal(res.status, 200);
     assert.equal(res.data?.alreadyDeleted, true);
@@ -201,8 +205,7 @@ describe('Business Rule: Financial History Blocks Permanent Deletion', () => {
   let pending, adminToken4;
 
   before(async () => {
-    const login = await api('POST', '/auth/admin-login', { email: process.env.ADMIN_EMAIL, password: 'Admin@123' });
-    adminToken4 = login.data?.token;
+    adminToken4 = await getAdminToken();
     pending = await createPendingUser();
   });
 
@@ -210,7 +213,8 @@ describe('Business Rule: Financial History Blocks Permanent Deletion', () => {
     try { await supabase.from('users').update({ status: 'deleted' }).eq('id', pending.user.id); } catch { /* ignore */ }
   });
 
-  it('R15. Deleting an approved payment is blocked with FINANCIAL_HISTORY_EXISTS', async () => {
+  it('R15. Deleting an approved payment is blocked with FINANCIAL_HISTORY_EXISTS', async (t) => {
+    if (!adminToken4) return t.skip(`ENV: no admin token available (${ADMIN_TOKEN_SOURCE}) - R15 not exercised, not passed`);
     const ap = await api('PUT', `/admin/payments/${pending.payment.id}/approve`, {}, adminToken4);
     assert.equal(ap.success, true);
 
