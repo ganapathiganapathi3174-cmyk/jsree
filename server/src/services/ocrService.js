@@ -284,10 +284,15 @@ export function extractUPIs(text) {
 
   // 2. Global scan with aggressive space-artifact cleanup.
   //    Collapse whitespace around @, across the entire text.
+  //    The digit-leading glue (rule 3) must NOT cross line breaks: a masked
+  //    UPI on its own line ("26-3@okicici") follows the UTR line, and joining
+  //    across the newline produced "…123456" + "26-3@okicici" as ONE token,
+  //    which can never match the receiver UPI → genuine payments rejected as
+  //    UPI_MISMATCH. Same hazard already documented in extractUTRs.
   const spaceFixed = text
     .replace(/(\w)\s+(@\w)/g, '$1$2')
     .replace(/(\w-?\w*)\s+(@\w)/g, '$1$2')
-    .replace(/(\w{2,})\s+(\d{2,}-?\d+@\w+)/g, '$1$2')
+    .replace(/(\w{2,})[ \t]+(\d{2,}-?\d+@\w+)/g, '$1$2')
     .replace(/\s+@\s+/g, '@')
     .replace(/@\s+/g, '@');
 
@@ -327,7 +332,12 @@ export function extractUTRs(text) {
   // Longest-first label alternatives + trailing \b so a short label like
   // "Ref" can never terminate inside "Reference" (which previously let the
   // capture swallow label letters, e.g. extracting "ERENCE").
-  const labeledRe = /\b(upi\s*transaction\s*(?:id|ref(?:erence)?(?:\s*(?:no|number))?|ref(?:\s*(?:no|number))?)|transaction\s*(?:id|reference(?:\s*(?:no|number))?|ref(?:\s*(?:no|number))?)|upi\s*ref(?:erence)?(?:\s*(?:no|number))?|bank\s*ref(?:erence)?(?:\s*(?:no|number))?|payment\s*ref(?:erence)?(?:\s*(?:no|number))?|reference\s*(?:no|number|id)|ref(?:erence)?\s*(?:no|number|id)|order\s*id|utr(?:\s*(?:no|number|id))?|ref(?:erence)?(?=\s*[:\-]))\b\s*[:\-]?\s*([A-Za-z0-9_]{6,30})/gi;
+  // The value capture allows SINGLE spaces/tabs inside the token: OCR splits
+  // alphanumeric references at letter↔digit boundaries ("T7GHD 123456"), and
+  // only digit↔digit gaps were rejoined before — an OCR-split alphanumeric UTR
+  // was silently dropped and the payment rejected as MISSING_UTR. Spaces are
+  // stripped by normalizeUTR below; newlines are still not crossed.
+  const labeledRe = /\b(upi\s*transaction\s*(?:id|ref(?:erence)?(?:\s*(?:no|number))?|ref(?:\s*(?:no|number))?)|transaction\s*(?:id|reference(?:\s*(?:no|number))?|ref(?:\s*(?:no|number))?)|upi\s*ref(?:erence)?(?:\s*(?:no|number))?|bank\s*ref(?:erence)?(?:\s*(?:no|number))?|payment\s*ref(?:erence)?(?:\s*(?:no|number))?|reference\s*(?:no|number|id)|ref(?:erence)?\s*(?:no|number|id)|order\s*id|utr(?:\s*(?:no|number|id))?|ref(?:erence)?(?=\s*[:\-]))\b\s*[:\-]?\s*([A-Za-z0-9_](?:[ \t]?[A-Za-z0-9_]){5,29})/gi;
   let m;
   while ((m = labeledRe.exec(spaceNormalized)) !== null) {
     const v = normalizeUTR(m[2]).toUpperCase();
