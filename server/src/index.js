@@ -20,6 +20,7 @@ import receiptRoutes from './routes/receipts.js';
 import securityRoutes from './routes/security.js';
 import configRoutes from './routes/config.js';
 import { buildCorsOptions } from './config/cors.js';
+import { authenticateToken, requireAdmin } from './middleware/auth.js';
 import { cacheStats } from './middleware/cache.js';
 import { autoExpireStalePayments } from './services/paymentService.js';
 
@@ -79,7 +80,12 @@ app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Server is running', timestamp: new Date().toISOString() });
 });
 
-app.get('/api/cache-stats', (req, res) => {
+// Cache introspection is an admin/ops endpoint only. Keys are of the form
+// `${userId}:${originalUrl}`, so an unauthenticated response would expose
+// active user ids and the paths they visited. No in-app client consumes it.
+// (Revert to `app.get('/api/cache-stats', (req, res) => ...)` if a public
+// consumer is ever introduced.)
+app.get('/api/cache-stats', authenticateToken, requireAdmin, (req, res) => {
   res.json(cacheStats());
 });
 
