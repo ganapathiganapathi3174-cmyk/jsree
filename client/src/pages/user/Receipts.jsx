@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import { Receipt, Download, RefreshCw } from 'lucide-react';
 
@@ -20,8 +21,19 @@ export default function Receipts() {
     setLoading(false);
   };
 
-  const viewReceipt = (paymentId) => {
-    window.open(`/api/receipts/${paymentId}/html`, '_blank');
+  const viewReceipt = async (paymentId) => {
+    // The receipt HTML endpoint requires a Bearer token, which a plain
+    // window.open() cannot send (nor can it honour a non-relative API base
+    // URL), so fetch it through the shared axios instance and open the
+    // resulting document as a blob.
+    try {
+      const res = await api.get(`/receipts/${paymentId}/html`, { responseType: 'text' });
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'text/html' }));
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      toast.error('Failed to load receipt');
+    }
   };
 
   return (
