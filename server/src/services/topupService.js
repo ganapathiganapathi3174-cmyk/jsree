@@ -202,6 +202,8 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
       imageBuffer: file.buffer,
       expectedAmount: topup.amount,
       receiverUpi: RECEIVER_UPI,
+      referenceType: 'topup',
+      referenceId: topup.id,
     });
     outcome = await applyTopupVerification(topup, verificationResult, verificationTime);
 

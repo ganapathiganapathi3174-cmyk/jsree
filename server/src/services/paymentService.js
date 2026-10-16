@@ -306,6 +306,8 @@ export async function verifyPayment(paymentId, imageBuffer) {
     screenshotUrl: payment.screenshot_url || null,
     expectedAmount: payment.expected_amount,
     receiverUpi: RECEIVER_UPI,
+    referenceType: 'payment',
+    referenceId: payment.id,
   });
   const { decision } = verificationResult;
 

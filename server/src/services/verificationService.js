@@ -4,7 +4,6 @@ import {
   matchAmount,
   matchUPIWithRecovery,
   isWithinTimeWindow,
-  isSameIstDay,
   dateTimeEntryToDate,
   isDemoScreenshot,
   runAdditionalOCRPasses,
@@ -33,17 +32,18 @@ import { supabase } from '../db/supabase.js';
 // APPROVE conditions (ALL must pass):
 //   1. Receiver UPI matches expected
 //   2. Transaction amount exactly matches expected amount
-//   3. Transaction date is server current date
-//   4. Transaction time is server time → server time + 30 min
-//   5. Payment status explicitly indicates success/completed/paid
-//   6. A valid UTR/reference ID is detected
-//   7. OCR confidence >= MIN_OCR_CONFIDENCE_APPROVE
-//   8. All field-level confidences are "high"
+//   3. Transaction timestamp within ±30 min of the SERVER-SIDE upload time
+//      (complete timestamp required — a date-only reading fails the window)
+//   4. Payment status explicitly indicates success/completed/paid
+//   5. A valid UTR/reference ID is detected
+//   6. OCR confidence >= MIN_OCR_CONFIDENCE_APPROVE
+//   7. All field-level confidences are "high"
 //
 // REJECT conditions (ANY triggers rejection):
 //   - Wrong UPI
 //   - Wrong amount
-//   - Date/time outside forward window
+//   - Date/time outside the ±30-minute window (older than 30 min OR more than
+//     30 min in the future) — including date-only / missing timestamps
 //   - Missing or non-success transaction status
 //   - Missing UTR
 //   - Low OCR confidence
@@ -60,7 +60,7 @@ export function decidePaymentVerification({
   // Gate 2: Amount must match
   if (amountMatch !== true) return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
 
-  // Gate 3: Date/time must be within forward window
+  // Gate 3: Date/time must be within the ±30-minute freshness window
   if (dateValid !== true) return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
 
   // Gate 4: Transaction status must explicitly indicate success
@@ -87,7 +87,15 @@ export function decidePaymentVerification({
 // structured ({ decision, reason, checks, detected, ... }) for admin
 // debugging; decision/reason remain the primary contract.
 // ─────────────────────────────────────────────────────────────
-export async function runScreenshotVerification({ imageBuffer, screenshotUrl, expectedAmount, receiverUpi, now }) {
+export async function runScreenshotVerification({ imageBuffer, screenshotUrl, expectedAmount, receiverUpi, now, referenceId = null, referenceType = null }) {
+  // Server-side upload/receipt time — captured BEFORE the OCR run starts.
+  // The ±30-minute freshness window is measured from this instant (spec:
+  // "within ±30 min of the SERVER-SIDE upload time"). Capturing it after OCR
+  // would erode the window by the OCR duration (30-75 s in production), so a
+  // payment made 29:45 before upload could be rejected as >30 min old.
+  const receivedAt = now instanceof Date ? now : new Date();
+  const ocrStart = Date.now();
+
   let buffer = imageBuffer;
   let ocrText = '';
   let ocrConfidence = 0;
@@ -161,10 +169,25 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     } catch (e) { /* additional passes are best-effort */ }
 
   } catch (ocrErr) {
+    console.log('[VERIFICATION DEBUG]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      receivedAt: receivedAt.toISOString(),
+      ocrMs: Date.now() - ocrStart,
+      decision: 'inconclusive',
+      reason: 'OCR_FAILED',
+      detail: ocrErr.message,
+    }));
     throw { message: 'OCR processing failed', code: 'OCR_FAILED', details: ocrErr.message };
   }
 
   if (!ocrText || ocrText.trim().length < 5) {
+    console.log('[VERIFICATION DEBUG]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      receivedAt: receivedAt.toISOString(),
+      ocrMs: Date.now() - ocrStart,
+      decision: 'inconclusive',
+      reason: 'OCR_UNREADABLE',
+    }));
     throw { message: 'OCR could not read the screenshot', code: 'OCR_UNREADABLE' };
   }
 
@@ -207,6 +230,14 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
         transactionStatus: { confidence: 'none', reason: 'Demo screenshot detected' },
       },
     };
+    console.log('[VERIFICATION DEBUG]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      receivedAt: receivedAt.toISOString(),
+      verificationTime: verificationTime.toISOString(),
+      ocrMs: Date.now() - ocrStart,
+      reason: 'DEMO_SCREENSHOT',
+      decision: 'rejected',
+    }));
     return { verificationResult: demoResult, verificationTime, utr: null };
   }
 
@@ -284,16 +315,20 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   const date = dateEntry ? dateTimeEntryToDate(dateEntry) : (extractedDates[0] || null);
 
   const windowMinutes = PAYMENT_TIME_WINDOW_MINUTES;
-  // Same-IST-day + symmetric freshness window:
-  //   - transaction must be on the SERVER's current date (Asia/Kolkata)
-  //   - transaction time within [serverNow - 30 min, serverNow + 30 min]
+  // Symmetric freshness window measured from the SERVER-SIDE upload instant:
+  //   transaction time within [uploadTime - 30 min, uploadTime + 30 min]
   // A real payment always happens shortly BEFORE the screenshot is uploaded,
   // so requiring transaction >= serverNow rejected every genuine receipt.
-  // Replays (previous day) and stale screenshots (>30 min old) still reject.
-  const dateValid =
-    !!date &&
-    isSameIstDay(date, verificationTime) &&
-    isWithinTimeWindow(date, verificationTime, windowMinutes);
+  //
+  // NOTE: this is intentionally ONLY the ±30-minute window. An extra
+  // "same IST calendar day" condition used to be ANDed in here, which
+  // rejected genuine payments that straddle midnight (paid 23:50 IST,
+  // uploaded 00:10 IST — a 20-minute-old payment inside the window).
+  // It is redundant for replay protection: a receipt from an earlier day is
+  // always more than 30 minutes old, so the window alone excludes it, and the
+  // payment-request expiry gate (expires_at = createdAt + 30 min) independently
+  // blocks stale requests on both flows.
+  const dateValid = !!date && isWithinTimeWindow(date, receivedAt, windowMinutes);
   const hasTimeComponent = !!(timeEntry || anyEntry)?.hasTime;
 
   // Transaction status must explicitly indicate success.
@@ -390,6 +425,42 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     dateTimeMs: date && hasTimeComponent ? date.getTime() : null,
     status: transactionStatus ? transactionStatus.matched : null,
   };
+
+  // One structured line per verification request — every gate, its inputs and
+  // the final decision. This is the audit trail used to explain WHY a
+  // screenshot was approved or rejected (register payments AND top-ups).
+  // Contains no secrets, tokens or credentials.
+  console.log('[VERIFICATION DEBUG]', JSON.stringify({
+    reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+    receivedAt: receivedAt.toISOString(),
+    verificationTime: verificationTime.toISOString(),
+    ocrMs: Date.now() - ocrStart,
+    transactionDateTime: date ? date.toISOString() : null,
+    differenceMinutes: date ? Number(((receivedAt.getTime() - date.getTime()) / 60000).toFixed(2)) : null,
+    windowMinutes,
+    upiExpected: receiverUpi,
+    upiDetected: detectedUpi,
+    upiMatch,
+    upiMethod: upiResult.method,
+    amountExpected: expectedAmount,
+    amountDetected: detectedAmount,
+    amountMatch,
+    utr: utr || null,
+    utrPresent,
+    transactionDateTimeValid: dateValid,
+    hasTimeComponent,
+    transactionStatus: transactionStatus ? transactionStatus.status : null,
+    ocrConfidence,
+    fieldConfidence: {
+      amount: fieldConfidence.amount.confidence,
+      receiverUpi: fieldConfidence.receiverUpi.confidence,
+      utr: fieldConfidence.utr.confidence,
+      transactionDate: fieldConfidence.transactionDate.confidence,
+      transactionStatus: fieldConfidence.transactionStatus.confidence,
+    },
+    decision: effectiveDecision,
+    reason: effectiveReason,
+  }));
 
   return {
     verificationResult: {
