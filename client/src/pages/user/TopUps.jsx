@@ -40,10 +40,12 @@ export default function TopUps() {
 
   // The server replies 200 for a verification that COMPLETED with a
   // rejection — surfacing that as a success toast would tell the user the
-  // money was credited when it was refused.
-  const announceProofResult = (message, fallback) => {
+  // money was credited when it was refused. A verification parked for manual
+  // review is neither credited nor rejected, so it gets an informational toast.
+  const announceProofResult = (message, fallback, manualReview) => {
     const text = message || fallback;
-    if (/reject/i.test(text)) toast.error(text);
+    if (manualReview || /review/i.test(text)) toast(text, { icon: '\u23F3' });
+    else if (/reject/i.test(text)) toast.error(text);
     else toast.success(text);
   };
 
@@ -55,7 +57,7 @@ export default function TopUps() {
       fd.append('screenshot', screenshot);
       fd.append('reference_id', refId);
       const res = await api.post(`/topups/${proofModal.id}/proof`, fd);
-      announceProofResult(res.data.message, 'Proof submitted!');
+      announceProofResult(res.data.message, 'Proof submitted!', res.data.data?.manualReview);
       setProofModal(null); setScreenshot(null); setRefId('');
       load();
     } catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
@@ -72,13 +74,13 @@ export default function TopUps() {
         fd.append('amount', payAmount);
         if (summary?.sponsorId) fd.append('receiverId', summary.sponsorId);
         const res = await api.post('/topups/direct', fd);
-        announceProofResult(res.data.message, 'Payment proof submitted!');
+        announceProofResult(res.data.message, 'Payment proof submitted!', res.data.data?.manualReview);
       } else {
         const targetId = payTarget || targets[0].id;
         const fd = new FormData();
         fd.append('screenshot', file);
         const res = await api.post(`/topups/${targetId}/proof`, fd);
-        announceProofResult(res.data.message, 'Payment proof submitted!');
+        announceProofResult(res.data.message, 'Payment proof submitted!', res.data.data?.manualReview);
       }
       load();
     } catch (err) { toast.error(err.response?.data?.message || 'Failed to submit proof'); }

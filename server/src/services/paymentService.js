@@ -7,6 +7,7 @@ import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
 import { runScreenshotVerification, decidePaymentVerification, reserveApprovedUtr, releaseApprovedUtr } from './verificationService.js';
+import { getPaymentConfig } from './configService.js';
 import { RECEIVER_UPI, PAYMENT_TIME_WINDOW_MINUTES } from '../config/paymentConfig.js';
 
 // Re-exported for callers/tests that import the decision engine here.
@@ -267,7 +268,11 @@ export async function uploadScreenshot(paymentId, file, userId) {
 // Returns { newStatus, reason, reservedUtr }.
 // ─────────────────────────────────────────────────────────────
 export async function applyPaymentUtrPolicy(paymentId, { decision, utr }) {
-  let newStatus = decision === 'approved' ? 'approved' : 'rejected';
+  // manual_review is a NON-terminal, non-approval outcome: no UTR is reserved
+  // and the row is left for a human. Only an APPROVED decision reserves a UTR.
+  let newStatus = decision === 'approved' ? 'approved'
+    : decision === 'manual_review' ? 'manual_review'
+      : 'rejected';
   let reason = null;
   let reservedUtr = null;
 
@@ -301,11 +306,18 @@ export async function verifyPayment(paymentId, imageBuffer) {
     };
   }
 
+  // Receiver (payee) name is the SECONDARY identity gate. Resolved from the
+  // admin-configurable payment config (DB, env fallback). An empty/absent name
+  // makes the engine fail safe into manual_review — never a silent approve.
+  const paymentConfig = await getPaymentConfig();
+  const receiverName = paymentConfig.receiver_name || '';
+
   const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
     imageBuffer: imageBuffer || null,
     screenshotUrl: payment.screenshot_url || null,
     expectedAmount: payment.expected_amount,
     receiverUpi: RECEIVER_UPI,
+    receiverName,
     referenceType: 'payment',
     referenceId: payment.id,
   });
@@ -317,7 +329,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
   const { newStatus, reason, reservedUtr } = await applyPaymentUtrPolicy(payment.id, { decision, utr });
 
   let effectiveReason = reason;
-  if (!effectiveReason && newStatus === 'rejected') {
+  if (!effectiveReason && newStatus !== 'approved') {
     effectiveReason = verificationResult.reason || 'REJECTED';
   }
   if (effectiveReason === 'DUPLICATE_UTR') {
@@ -330,8 +342,10 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // ── Payment expiry gate (post-OCR, pre-commit) ──
   // Re-check expiry after OCR processing completes. This catches the race
   // condition where payment expires DURING the OCR pipeline. Even if the
-  // OCR says "approved", we must not activate the user for an expired request.
-  if (newStatus === 'approved') {
+  // OCR says "approved" (or the request would only be parked for manual
+  // review), we must never keep an expired request alive: expiry is
+  // authoritative and fails closed to a rejection.
+  if (newStatus === 'approved' || newStatus === 'manual_review') {
     const { data: currentPayment } = await supabase.from('payments').select('expires_at').eq('id', paymentId).single();
     if (currentPayment && isPaymentExpired(currentPayment)) {
       // Release any UTR reservation and reject with expiry reason.

@@ -5,6 +5,7 @@ import { logAction } from './auditService.js';
 import { checkAndDeactivateReferrer } from './referralService.js';
 import walletService from './walletService.js';
 import { runScreenshotVerification, reserveApprovedUtr } from './verificationService.js';
+import { getPaymentConfig } from './configService.js';
 // Shared server-authoritative payment configuration and expiry helper —
 // the SAME values and the SAME fail-closed check the membership flow uses.
 // There is exactly one verification engine (verificationService) and one
@@ -198,10 +199,14 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
   // rejects with DUPLICATE_UTR (handled inside applyTopupVerification).
   let outcome;
   try {
+    // Same shared receiver-name secondary gate as the membership flow.
+    const paymentConfig = await getPaymentConfig();
+    const receiverName = paymentConfig.receiver_name || '';
     const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
       imageBuffer: file.buffer,
       expectedAmount: topup.amount,
       receiverUpi: RECEIVER_UPI,
+      receiverName,
       referenceType: 'topup',
       referenceId: topup.id,
     });
@@ -229,11 +234,14 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
   return {
     message: outcome.credited
       ? 'Topup approved and amount credited to your balance'
-      : outcome.reason === 'DUPLICATE_UTR'
-        ? 'Topup rejected: duplicate UTR detected'
-        : 'Topup rejected',
+      : outcome.manualReview
+        ? 'Topup submitted for manual review. An administrator will verify it shortly.'
+        : outcome.reason === 'DUPLICATE_UTR'
+          ? 'Topup rejected: duplicate UTR detected'
+          : 'Topup rejected',
     topupId,
     credited: outcome.credited || false,
+    manualReview: outcome.manualReview || false,
     reason: outcome.reason || null,
   };
 }
@@ -326,6 +334,41 @@ export async function applyTopupVerification(topup, verificationResult, verifica
     const senderCredited = await creditSenderOnce(topup);
     const receiverCredited = await creditReceiverOnce(topup);
     return { credited: senderCredited || receiverCredited, alreadyProcessed: false, pendingClaim: false };
+  }
+
+  if (decision === 'manual_review') {
+    // Expiry is authoritative: an expired request must never be parked for
+    // review. Fail closed to a rejection instead.
+    if (isPaymentExpired(topup)) {
+      await supabase
+        .from('topups')
+        .update({
+          status: 'rejected',
+          rejection_reason: 'PAYMENT_EXPIRED',
+          verified_at: verificationTime.toISOString(),
+          verification_result: { ...verificationResult, decision: 'rejected', reason: 'PAYMENT_EXPIRED' },
+        })
+        .eq('id', topup.id)
+        .in('status', SUBMITTABLE_STATUSES);
+      return { credited: false, alreadyProcessed: false, reason: 'PAYMENT_EXPIRED' };
+    }
+
+    // Non-terminal outcome: the row is flagged for a human. No wallet credit,
+    // no terminal 'rejected', and the status stays resubmittable/actionable by
+    // an admin (topups.admin verify accepts 'manual_review').
+    const { error } = await supabase
+      .from('topups')
+      .update({
+        status: 'manual_review',
+        rejection_reason: reason || 'MANUAL_REVIEW',
+        verified_at: verificationTime.toISOString(),
+        verification_result: verificationResult,
+      })
+      .eq('id', topup.id)
+      .in('status', SUBMITTABLE_STATUSES);
+    if (error) throw { message: 'Failed to flag topup for review', code: 'REVIEW_FAILED' };
+
+    return { credited: false, alreadyProcessed: false, manualReview: true, reason: reason || 'MANUAL_REVIEW' };
   }
 
   const { error } = await supabase

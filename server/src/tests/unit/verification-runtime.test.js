@@ -4,11 +4,16 @@ import { getUserPayments } from '../../services/paymentService.js';
 import { runScreenshotVerification } from '../../services/verificationService.js';
 import { applyTopupVerification, getTopupsForUser } from '../../services/topupService.js';
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
-  runOCR: vi.fn(),
-  runAmountRecoveryOCR: vi.fn(),
-  runAdditionalOCRPasses: vi.fn(),
-}));
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => {
+  if (!process.env.ADMIN_RECEIVER_NAME) {
+    process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
+  }
+  return {
+    runOCR: vi.fn(),
+    runAmountRecoveryOCR: vi.fn(),
+    runAdditionalOCRPasses: vi.fn(),
+  };
+});
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
@@ -135,11 +140,11 @@ beforeEach(() => {
 
 const PROVIDERS = [
   ['Google Pay', () => ['Google Pay', 'Payment Successful', '\u20B9120', 'To Jayaraj', RECEIVER_UPI, `Date: ${istDateLine(2)}`, 'UPI transaction ID: T7GHD240824'].join('\n')],
-  ['PhonePe', () => ['PhonePe', 'Transaction Successful', '\u20B9120', 'Paid to jayarajj126-3@okicici', istDateLine(3).replace(/(\d{2})\/(\d{2})\/(\d{4}),/, '$1/$2/$3,'), 'Transaction ID: PP240824123456'].join('\n')],
-  ['Paytm', () => ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'UPI Ref No: T250824123456', istDateLine(4)].join('\n')],
-  ['BHIM', () => ['BHIM', 'Payment Successful', '\u20B9120', 'To: jayarajj126-3@okicici', 'UPI Reference Number: BHIM240824001', istDateLine(5)].join('\n')],
-  ['Bank UPI', () => ['SBI UPI', 'Transferred Successfully', 'Rs.120', 'To: jayarajj126-3@okicici', 'Bank Ref No: SBIN240824123', istDateLine(6)].join('\n')],
-  ['Amazon Pay', () => ['Amazon Pay', 'Payment Completed', 'Amount \u20B9120', 'Sent to jayarajj126-3@okicici', 'Reference ID: AMZ24082412345', `${istDateLine(7)}`].join('\n')],
+  ['PhonePe', () => ['PhonePe', 'Transaction Successful', '\u20B9120', 'Paid to jayarajj126-3@okicici', 'To Jayaraj', istDateLine(3).replace(/(\d{2})\/(\d{2})\/(\d{4}),/, '$1/$2/$3,'), 'Transaction ID: PP240824123456'].join('\n')],
+  ['Paytm', () => ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'UPI Ref No: T250824123456', istDateLine(4)].join('\n')],
+  ['BHIM', () => ['BHIM', 'Payment Successful', '\u20B9120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'UPI Reference Number: BHIM240824001', istDateLine(5)].join('\n')],
+  ['Bank UPI', () => ['SBI UPI', 'Transferred Successfully', 'Rs.120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'Bank Ref No: SBIN240824123', istDateLine(6)].join('\n')],
+  ['Amazon Pay', () => ['Amazon Pay', 'Payment Completed', 'Amount \u20B9120', 'Sent to jayarajj126-3@okicici', 'To Jayaraj', 'Reference ID: AMZ24082412345', `${istDateLine(7)}`].join('\n')],
 ];
 
 describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
@@ -181,7 +186,7 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
 
   it('Paytm wrong UPI -> DB row becomes "rejected" with UPI_MISMATCH', async () => {
     runOCR.mockResolvedValue({
-      text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: attacker@paytm', 'UPI Ref No: NEG000000001', istDateLine(2)].join('\n'),
+      text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: attacker@paytm', 'To Jayaraj', 'UPI Ref No: NEG000000001', istDateLine(2)].join('\n'),
       confidence: 90,
     });
     const result = await verifyPayment('pay-1', Buffer.from('img'));
@@ -195,7 +200,7 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
 
   it('duplicate UTR -> DB row becomes "rejected" with DUPLICATE_UTR', async () => {
     runOCR.mockResolvedValue({
-      text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'UPI Ref No: DUP000000001', istDateLine(2)].join('\n'),
+      text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'UPI Ref No: DUP000000001', istDateLine(2)].join('\n'),
       confidence: 90,
     });
     db.state.results.approved_utrs = { data: null, error: { code: '23505', message: 'unique violation' } };
@@ -210,7 +215,7 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
 
   it('legacy manual_review row retried through POST /verify -> resolved by CURRENT rules', async () => {
     runOCR.mockResolvedValue({
-      text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'UPI Ref No: FIX000000001', istDateLine(2)].join('\n'),
+      text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'UPI Ref No: FIX000000001', istDateLine(2)].join('\n'),
       confidence: 90,
     });
     resetDb(seedPaymentRow({ status: 'manual_review' }));
@@ -265,7 +270,7 @@ describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
   it('Paytm valid proof -> topup "completed", both wallets credited once', async () => {
     resetTopupDb(seedTopup());
     const outcome = await runTopupVerification(
-      ['Paytm', 'Money Sent Successfully', '\u20B9120', `To: ${RECEIVER_UPI}`, 'UPI Ref No: TOP2408240001', istDateLine(2)].join('\n')
+      ['Paytm', 'Money Sent Successfully', '\u20B9120', `To: ${RECEIVER_UPI}`, 'To Jayaraj', 'UPI Ref No: TOP2408240001', istDateLine(2)].join('\n')
     );
     const statuses = (db.state.updates.topups || []).map(u => u.status);
     const credits = (db.state.inserts.wallet_transactions || []);

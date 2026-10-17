@@ -651,6 +651,99 @@ export function extractTransactionStatus(text) {
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Receiver (payee) name extraction.
+//
+// SECONDARY identity signal. UPI match is the primary identity gate; the
+// name is compared against the admin-configured receiver name to catch
+// proof that was paid to a different person who happens to share a UPI
+// alias, or a screenshot of someone else's transfer.
+//
+// Only an explicitly labelled payee line is read ("To ...", "Paid to ...",
+// "Sent to ...", "Transferred to ..."). Values that are UPI IDs (contain
+// '@'), amounts, dates or pure numbers are ignored — the name branch must
+// never fabricate a name out of unrelated receipt text.
+// ─────────────────────────────────────────────────────────────
+const NAME_LABEL_RE = /^(?:paid\s+to|sent\s+to|transferred\s+to|money\s+sent\s+to|pay\s+to|to)\b\s*[:\-]?\s*(.*)$/i;
+const NAME_TRAILING_NOISE_RE = /\s*[-|•·]?\s*(?:upi\s*id|vpa|account|rs\.?|inr|₹).*$/i;
+
+function sanitizeNameCandidate(value) {
+  if (!value) return null;
+  let s = String(value).trim();
+  // Never treat a UPI ID / email-like token as a name.
+  if (s.includes('@')) return null;
+  // Drop trailing "• UPI ID", "| Rs.120" style annotations.
+  s = s.replace(NAME_TRAILING_NOISE_RE, '').trim();
+  // Remove a leading currency marker and currency amounts.
+  s = s.replace(/^[₹]/, '').replace(/₹\s*\d[\d,]*/g, '').trim();
+  // Reject anything that is mostly digits (amounts, refs, dates).
+  const letters = (s.match(/[A-Za-z]/g) || []).length;
+  if (letters < 2) return null;
+  const digits = (s.match(/\d/g) || []).length;
+  if (digits > letters) return null;
+  if (s.length < 2 || s.length > 60) return null;
+  // Collapse whitespace.
+  s = s.replace(/\s+/g, ' ').trim();
+  return s || null;
+}
+
+export function extractReceiverNames(ocrText) {
+  if (!ocrText) return [];
+  const lines = String(ocrText).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const names = new Set();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(NAME_LABEL_RE);
+    if (!m) continue;
+    let value = (m[1] || '').trim();
+    // Label on its own line ("To") → the name is usually the next line.
+    if (!value && lines[i + 1]) value = lines[i + 1];
+    const cleaned = sanitizeNameCandidate(value);
+    if (cleaned) names.add(cleaned);
+  }
+  return [...names];
+}
+
+// Canonical name form for comparison: lowercase, punctuation stripped,
+// honorifics removed, whitespace collapsed. Deliberately conservative —
+// only cosmetic differences (case, punctuation, spacing) are erased.
+export function normalizeName(name) {
+  if (!name) return null;
+  let s = String(name).toLowerCase();
+  s = s.replace(/[^a-z0-9\s]/g, ' ');
+  s = s.replace(/\b(mr|mrs|ms|miss|dr|shri|shree|smt|sri|ku|kum)\b/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s || null;
+}
+
+// Compares extracted payee names against the configured receiver name.
+// Returns { match, method, expected, candidates, matched }.
+//   exact       – identical after normalization
+//   token_subset – every significant token of the shorter name is present
+//                  in the longer one (handles extra middle/last names)
+// Conservative by design: it never "fuzzy" guesses unrelated names.
+export function matchReceiverName(extractedNames, receiverName) {
+  const expected = normalizeName(receiverName);
+  const candidates = (extractedNames || []).map(normalizeName).filter(Boolean);
+  const base = { match: false, method: 'none', expected, candidates, matched: null };
+  if (!expected) return { ...base, method: 'no_config' };
+  if (candidates.length === 0) return { ...base, method: 'not_found' };
+
+  for (const c of candidates) {
+    if (c === expected) return { match: true, method: 'exact', expected, candidates, matched: c };
+  }
+
+  const expTokens = expected.split(' ').filter(t => t.length >= 3);
+  for (const c of candidates) {
+    const cTokens = c.split(' ').filter(t => t.length >= 3);
+    const [shorter, longer] = expTokens.length <= cTokens.length ? [expTokens, cTokens] : [cTokens, expTokens];
+    if (shorter.length > 0 && shorter.every(t => longer.includes(t))) {
+      return { match: true, method: 'token_subset', expected, candidates, matched: c };
+    }
+  }
+
+  return base;
+}
+
 export async function runOCR(imageBuffer) {
   const processed = await preprocessImage(imageBuffer);
   return recognizeWithSharedWorker(processed);
@@ -896,7 +989,8 @@ export function extractPaymentData(ocrText) {
   const dates = extractDates(ocrText);
   const dateTimes = extractDateTimes(ocrText);
   const transactionStatus = extractTransactionStatus(ocrText);
-  return { amounts, upis, utrs, dates, dateTimes, transactionStatus, rawText: ocrText };
+  const receiverNames = extractReceiverNames(ocrText);
+  return { amounts, upis, utrs, dates, dateTimes, transactionStatus, receiverNames, rawText: ocrText };
 }
 
 export function matchAmount(extractedAmounts, expectedAmount) {

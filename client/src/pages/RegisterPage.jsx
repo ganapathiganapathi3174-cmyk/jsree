@@ -40,6 +40,8 @@ export default function RegisterPage() {
         return 'The screenshot amount does not match your plan amount. Please pay the exact amount and upload that screenshot.';
       case 'UPI_MISMATCH':
         return 'The screenshot shows a different recipient. Please pay to the UPI ID shown on this screen.';
+      case 'RECEIVER_NAME_MISMATCH':
+        return 'The screenshot shows a different recipient name. Please pay to the account shown on this screen.';
       case 'INVALID_PAYMENT_DATE':
         return 'This screenshot is too old or its date could not be read. Please upload the screenshot from your current payment.';
       case 'TRANSACTION_FAILED':
@@ -153,6 +155,9 @@ export default function RegisterPage() {
         navigate('/dashboard');
       } else if (verification?.status === 'rejected') {
         toast.error(friendlyRejectionMessage(verification.reason));
+        navigate('/payment-status');
+      } else if (verification?.status === 'manual_review') {
+        toast('Your payment is being reviewed by our team. We will notify you once it is verified.', { icon: '\u23F3' });
         navigate('/payment-status');
       } else {
         toast.success('Registration complete! Payment verification could not finish — please resubmit your screenshot.');

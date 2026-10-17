@@ -1,10 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
-  runOCR: vi.fn(),
-  runAmountRecoveryOCR: vi.fn(),
-  runAdditionalOCRPasses: vi.fn(),
-}));
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => {
+  // Ensure receiver name is configured so the name gate does not block
+  // auto-approval in these tests.
+  if (!process.env.ADMIN_RECEIVER_NAME) {
+    process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
+  }
+  return {
+    runOCR: vi.fn(),
+    runAmountRecoveryOCR: vi.fn(),
+    runAdditionalOCRPasses: vi.fn(),
+  };
+});
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();

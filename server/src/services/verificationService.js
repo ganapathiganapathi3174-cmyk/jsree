@@ -11,6 +11,8 @@ import {
   runDeepAmountRecovery,
   verifyAmountWithCurrencyRecovery,
   normalizeUPI,
+  matchReceiverName,
+  normalizeName,
 } from './ocrService.js';
 import {
   PAYMENT_TIME_WINDOW_MINUTES,
@@ -22,12 +24,22 @@ import { supabase } from '../db/supabase.js';
 // ─────────────────────────────────────────────────────────────
 // Strict automatic verification engine (payments AND top-ups).
 //
-// DECISION RULE — binary only:
-//   approved = upiMatch && amountMatch && dateValid && utrPresent
-//              && transactionStatusOk && ocrConfident && allFieldConfidenceHigh
-//   rejected = everything else
+// DECISION RULE — binary for the strong identity/amount gates, with a
+// single manual-review branch for the SECONDARY recipient-name check:
+//   approved      = upiMatch && amountMatch && dateValid && utrPresent
+//                   && transactionStatusOk && ocrConfident
+//                   && allFieldConfidenceHigh
+//                   && (name gate disabled OR receiver name matches)
+//   manual_review = a strong gate passed but the recipient-name evidence is
+//                   missing/unreadable, or no receiver name is configured
+//                   (fail safe — never auto-approve blindly)
+//   rejected      = any strong gate fails, or a name IS present but does not
+//                   match the configured recipient
 //
-// There is NO manual_review path.  Every uncertainty is a rejection.
+// The name gate is ACTIVE only when a receiver name is supplied
+// (receiverName !== undefined). Direct engine callers/tests that omit it keep
+// the original binary behaviour. Production callers always pass the resolved
+// receiver name (possibly ''), so an unconfigured name fails safe.
 //
 // APPROVE conditions (ALL must pass):
 //   1. Receiver UPI matches expected
@@ -38,6 +50,7 @@ import { supabase } from '../db/supabase.js';
 //   5. A valid UTR/reference ID is detected
 //   6. OCR confidence >= MIN_OCR_CONFIDENCE_APPROVE
 //   7. All field-level confidences are "high"
+//   8. (when enabled) the detected recipient name matches the configured name
 //
 // REJECT conditions (ANY triggers rejection):
 //   - Wrong UPI
@@ -48,11 +61,13 @@ import { supabase } from '../db/supabase.js';
 //   - Missing UTR
 //   - Low OCR confidence
 //   - Any field confidence below "high"
+//   - Recipient name present but different from the configured name
 //   - Duplicate UTR (handled by reserveApprovedUtr)
 // ─────────────────────────────────────────────────────────────
 export function decidePaymentVerification({
   upiMatch, amountMatch, dateValid, utrPresent,
   transactionStatusOk, ocrConfidence,
+  receiverName, nameMatch, nameFound, nameConfigured,
 }) {
   // Gate 1: UPI must match
   if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
@@ -74,6 +89,23 @@ export function decidePaymentVerification({
   const confident = ocrConfidence !== undefined && ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE;
   if (!confident) return { decision: 'rejected', reason: 'LOW_OCR_CONFIDENCE' };
 
+  // Gate 7 (SECONDARY): recipient name. Only evaluated when a receiver name
+  // is supplied. Undefined => disabled (direct engine callers / legacy tests).
+  if (receiverName !== undefined) {
+    if (nameConfigured !== true) {
+      // No trusted payee name configured — fail safe, do not auto-approve.
+      return { decision: 'manual_review', reason: 'RECEIVER_NAME_NOT_CONFIGURED' };
+    }
+    if (nameMatch !== true) {
+      if (nameFound === true) {
+        // A payee name was read and it is a DIFFERENT person — hard reject.
+        return { decision: 'rejected', reason: 'RECEIVER_NAME_MISMATCH' };
+      }
+      // No name could be read from the screenshot — needs human review.
+      return { decision: 'manual_review', reason: 'RECEIVER_NAME_UNREADABLE' };
+    }
+  }
+
   // All gates passed — approve.
   return { decision: 'approved', reason: null };
 }
@@ -87,7 +119,7 @@ export function decidePaymentVerification({
 // structured ({ decision, reason, checks, detected, ... }) for admin
 // debugging; decision/reason remain the primary contract.
 // ─────────────────────────────────────────────────────────────
-export async function runScreenshotVerification({ imageBuffer, screenshotUrl, expectedAmount, receiverUpi, now, referenceId = null, referenceType = null }) {
+export async function runScreenshotVerification({ imageBuffer, screenshotUrl, expectedAmount, receiverUpi, receiverName, now, referenceId = null, referenceType = null }) {
   // Server-side upload/receipt time — captured BEFORE the OCR run starts.
   // The ±30-minute freshness window is measured from this instant (spec:
   // "within ±30 min of the SERVER-SIDE upload time"). Capturing it after OCR
@@ -105,6 +137,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   let extractedUTRs = [];
   let extractedDates = [];
   let extractedDateTimes = [];
+  let extractedReceiverNames = [];
   let transactionStatus = null;
   let ocrPassInfo = { primaryConfidence: 0, additionalPassesRun: 0, additionalPassConfidences: [], candidatesFromPasses: { amounts: [], upis: [], utrs: [] } };
 
@@ -127,6 +160,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     extractedUTRs = primaryExtracted.utrs;
     extractedDates = primaryExtracted.dates;
     extractedDateTimes = primaryExtracted.dateTimes;
+    extractedReceiverNames = primaryExtracted.receiverNames || [];
     transactionStatus = primaryExtracted.transactionStatus;
 
     // ── Additional OCR passes (upscaled + thresholded) ──
@@ -156,6 +190,9 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
           if (!extractedDateTimes.some(e => `${e.day}-${e.month}-${e.year}-${e.hour}-${e.minute}` === key)) {
             extractedDateTimes.push(dt);
           }
+        }
+        for (const n of passExtracted.receiverNames || []) {
+          if (!extractedReceiverNames.includes(n)) extractedReceiverNames.push(n);
         }
         if (!transactionStatus && passExtracted.transactionStatus) {
           transactionStatus = passExtracted.transactionStatus;
@@ -205,6 +242,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       extractedUTRs,
       extractedDates: [],
       extractedDateTimes: [],
+      extractedReceiverNames: [],
       amountMatch: false,
       upiMatch: false,
       utr: null,
@@ -216,15 +254,17 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       checks: {
         amount: { passed: false, expected: expectedAmount, detected: null },
         receiverUpi: { passed: false, expected: receiverUpi, detected: null },
+        receiverName: { passed: false, expected: (typeof receiverName === 'string' ? receiverName : null), detected: null },
         utr: { passed: false, detected: null },
         transactionDate: { passed: false, detected: null, timezone: TIMEZONE },
         transactionStatus: { passed: false, detected: null },
         duplicate: { passed: true, utr: null },
       },
-      detected: { amount: null, utr: null, upi: null, date: null, dateTimeMs: null, status: null },
+      detected: { amount: null, utr: null, upi: null, receiverNames: [], date: null, dateTimeMs: null, status: null },
       fieldConfidence: {
         amount: { confidence: 'none', reason: 'Demo screenshot detected' },
         receiverUpi: { confidence: 'none', reason: 'Demo screenshot detected' },
+        receiverName: { confidence: 'none', reason: 'Demo screenshot detected' },
         utr: { confidence: 'none', reason: 'Demo screenshot detected' },
         transactionDate: { confidence: 'none', reason: 'Demo screenshot detected' },
         transactionStatus: { confidence: 'none', reason: 'Demo screenshot detected' },
@@ -342,6 +382,16 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // confidence.  Medium/low/none on any field → reject.
   const detectedUpi = extractedUPIs.length > 0 ? extractedUPIs.join(', ') : null;
 
+  // ── Recipient-name gate (SECONDARY identity check) ──
+  // Active only when the caller supplies a receiver name. Direct engine
+  // callers (tests) omit it and keep the original binary behaviour.
+  const nameActive = receiverName !== undefined;
+  const nameConfigured = nameActive && normalizeName(receiverName) !== null;
+  const nameResult = nameActive ? matchReceiverName(extractedReceiverNames, receiverName) : null;
+  const nameMatch = nameActive ? nameResult.match === true : true;
+  const nameFound = nameActive ? nameResult.candidates.length > 0 : false;
+  const detectedReceiverNames = extractedReceiverNames.length > 0 ? extractedReceiverNames.join(', ') : null;
+
   const fieldConfidence = {
     amount: {
       confidence: amountMatch ? 'high' : (extractedAmounts.length > 0 ? 'low' : 'none'),
@@ -379,6 +429,18 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
           ? `Status detected: ${transactionStatus.status} (not successful)`
           : 'No transaction status detected in screenshot'),
     },
+    receiverName: nameActive
+      ? {
+        confidence: !nameConfigured ? 'none' : nameMatch ? 'high' : (nameFound ? 'low' : 'none'),
+        reason: !nameConfigured
+          ? 'No receiver name configured — manual review required'
+          : nameMatch
+            ? 'Detected receiver name matches configured payee'
+            : (nameFound
+              ? `Detected ${detectedReceiverNames} does not match configured receiver name`
+              : 'No receiver name found in screenshot'),
+      }
+      : { confidence: 'high', reason: 'Receiver name check not enabled' },
   };
 
   const allFieldsHighConfidence =
@@ -386,11 +448,13 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     fieldConfidence.receiverUpi.confidence === 'high' &&
     fieldConfidence.utr.confidence === 'high' &&
     fieldConfidence.transactionDate.confidence === 'high' &&
-    fieldConfidence.transactionStatus.confidence === 'high';
+    fieldConfidence.transactionStatus.confidence === 'high' &&
+    (!nameActive || fieldConfidence.receiverName.confidence === 'high');
 
   const { decision, reason } = decidePaymentVerification({
     upiMatch, amountMatch, dateValid, utrPresent,
     transactionStatusOk, ocrConfidence,
+    receiverName, nameMatch, nameFound, nameConfigured,
   });
 
   // Enforce field confidence gate: even if the decision engine says approved,
@@ -408,6 +472,12 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   const checks = {
     amount: { passed: amountMatch, expected: expectedAmount, detected: detectedAmount },
     receiverUpi: { passed: upiMatch, expected: receiverUpi, detected: detectedUpi },
+    receiverName: {
+      passed: nameActive ? nameMatch : true,
+      enabled: nameActive,
+      expected: typeof receiverName === 'string' ? (receiverName || null) : null,
+      detected: detectedReceiverNames,
+    },
     utr: { passed: utrPresent, detected: utr || null },
     transactionDate: { passed: dateValid, detected: detectedDate, timezone: TIMEZONE },
     transactionStatus: {
@@ -421,6 +491,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     amount: detectedAmount,
     utr: utr || null,
     upi: detectedUpi,
+    receiverNames: extractedReceiverNames,
     date: detectedDate,
     dateTimeMs: date && hasTimeComponent ? date.getTime() : null,
     status: transactionStatus ? transactionStatus.matched : null,
@@ -451,9 +522,14 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     hasTimeComponent,
     transactionStatus: transactionStatus ? transactionStatus.status : null,
     ocrConfidence,
+    receiverNameExpected: typeof receiverName === 'string' ? (receiverName || null) : null,
+    receiverNamesDetected: extractedReceiverNames,
+    receiverNameMatch: nameActive ? nameMatch : null,
+    receiverNameMethod: nameResult ? nameResult.method : null,
     fieldConfidence: {
       amount: fieldConfidence.amount.confidence,
       receiverUpi: fieldConfidence.receiverUpi.confidence,
+      receiverName: fieldConfidence.receiverName.confidence,
       utr: fieldConfidence.utr.confidence,
       transactionDate: fieldConfidence.transactionDate.confidence,
       transactionStatus: fieldConfidence.transactionStatus.confidence,
@@ -471,8 +547,12 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       extractedUTRs,
       extractedDates: extractedDates.map(d => d.toISOString()),
       extractedDateTimes: extractedDateTimes.map(e => ({ ...e, raw: undefined })),
+      extractedReceiverNames,
       amountMatch,
       upiMatch,
+      nameMatch: nameActive ? nameMatch : null,
+      nameFound,
+      nameConfigured,
       utr: utr || null,
       dateValid,
       hasTimeComponent,
@@ -482,6 +562,13 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       checks,
       detected,
       fieldConfidence,
+      nameDiagnostics: {
+        enabled: nameActive,
+        expected: typeof receiverName === 'string' ? (receiverName || null) : null,
+        candidates: extractedReceiverNames,
+        matchMethod: nameResult ? nameResult.method : null,
+        matched: nameResult ? nameResult.matched : null,
+      },
       upiDiagnostics: {
         originalCandidates: upiResult.originalCandidates || [],
         normalizedCandidates: upiResult.allCandidates || [],

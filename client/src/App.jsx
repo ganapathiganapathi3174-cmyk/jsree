@@ -31,6 +31,7 @@ import AdminChat from './pages/admin/Chat';
 import AdminAuditLogs from './pages/admin/AuditLogs';
 import AdminFinancialReports from './pages/admin/FinancialReports';
 import AdminSuspiciousActivity from './pages/admin/SuspiciousActivity';
+import AdminPaymentSettings from './pages/admin/PaymentSettings';
 
 export default function App() {
   return (
@@ -67,6 +68,7 @@ export default function App() {
         <Route path="/admin/audit-logs" element={<ProtectedRoute adminOnly><Layout isAdmin><AdminAuditLogs /></Layout></ProtectedRoute>} />
         <Route path="/admin/financial-reports" element={<ProtectedRoute adminOnly><Layout isAdmin><AdminFinancialReports /></Layout></ProtectedRoute>} />
         <Route path="/admin/suspicious-activity" element={<ProtectedRoute adminOnly><Layout isAdmin><AdminSuspiciousActivity /></Layout></ProtectedRoute>} />
+        <Route path="/admin/payment-settings" element={<ProtectedRoute adminOnly><Layout isAdmin><AdminPaymentSettings /></Layout></ProtectedRoute>} />
 
         <Route path="*" element={<NotFound />} />
         </Routes>

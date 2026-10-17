@@ -15,6 +15,12 @@ const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
 
 export const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
 
+// Admin-configured receiver (payee) name. Used as a SECONDARY identity gate
+// behind the receiver-UPI match (see verificationService). Empty by default:
+// when no name is configured the caller must fail safe and route the payment
+// to manual review rather than auto-approve. Never hardcode a real name here.
+export const RECEIVER_NAME = process.env.ADMIN_RECEIVER_NAME || '';
+
 export const PAYMENT_PLANS = Object.fromEntries(
   Object.entries(PLAN_AMOUNTS).map(([months, amount]) => [
     months,

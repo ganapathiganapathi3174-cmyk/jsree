@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, User, CreditCard, ArrowUpDown, Users, RefreshCw,
   MessageSquare, History, Shield, LogOut, X, UserX, FileText,
-  ClipboardList, ScrollText, Wallet, Bell, Receipt, Lock, BarChart3, AlertTriangle,
+  ClipboardList, ScrollText, Wallet, Bell, Receipt, Lock, BarChart3, AlertTriangle, Settings,
 } from 'lucide-react';
 
 const userLinks = [
@@ -31,6 +31,7 @@ const adminLinks = [
   { to: '/admin/suspicious-activity', icon: AlertTriangle, label: 'Suspicious Activity' },
   { to: '/admin/chat', icon: MessageSquare, label: 'Chat' },
   { to: '/admin/audit-logs', icon: ScrollText, label: 'Audit Logs' },
+  { to: '/admin/payment-settings', icon: Settings, label: 'Payment Settings' },
 ];
 
 export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
