@@ -51,16 +51,7 @@ export function isOriginAllowed(origin, allowedOrigins) {
 
   const clean = normalizeOrigin(origin);
   if (!clean) return false;
-  if (allowedOrigins.includes(clean)) return true;
-
-  // Vercel preview deployments. Host must be a *.vercel.app subdomain over
-  // https, so a look-alike host or an http:// downgrade stays blocked.
-  try {
-    const { protocol, hostname } = new URL(clean);
-    return protocol === 'https:' && hostname.endsWith('.vercel.app');
-  } catch {
-    return false;
-  }
+  return allowedOrigins.includes(clean);
 }
 
 export function buildCorsOptions({ env = process.env, logger = console } = {}) {

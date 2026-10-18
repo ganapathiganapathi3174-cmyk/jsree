@@ -154,11 +154,12 @@ describe('CORS: request handling edge cases', () => {
     expect(res.status).toBe(200);
   });
 
-  it('allows Vercel preview deployments over https only', () => {
+  it('allows only explicitly listed origins, including production and local development', () => {
     const allowed = buildAllowedOrigins({});
-    expect(isOriginAllowed('https://jsree-git-main-abc123.vercel.app', allowed)).toBe(true);
     expect(isOriginAllowed('https://jsree.vercel.app', allowed)).toBe(true);
-    expect(isOriginAllowed('http://jsree-git-main-abc123.vercel.app', allowed)).toBe(false);
+    expect(isOriginAllowed('http://localhost:5173', allowed)).toBe(true);
+    expect(isOriginAllowed('https://jsree-git-main-abc123.vercel.app', allowed)).toBe(false);
+    expect(isOriginAllowed('https://untrusted.example.com', allowed)).toBe(false);
   });
 
   it('logs blocked origins server-side so the failure is diagnosable', async () => {
