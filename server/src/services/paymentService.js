@@ -347,14 +347,13 @@ export async function verifyPayment(paymentId, imageBuffer) {
   }
 
   // ── Payment expiry gate (post-OCR, pre-commit) ──
-  // Re-check expiry after OCR processing completes. This catches the race
-  // condition where payment expires DURING the OCR pipeline. Even if the
-  // OCR says "approved" (or the request would only be parked for manual
-  // review), we must never keep an expired request alive: expiry is
-  // authoritative and fails closed to a rejection.
+  // Re-check at commit time: the request may have expired DURING the OCR
+  // pipeline (30-75 s). expires_at is immutable (created_at + 30 min), so the
+  // pre-OCR fetch already carries the authoritative value — this check runs
+  // against the current clock, which is exactly what catches the race. (A
+  // previous SELECT-again round trip re-read the same immutable column.)
   if (newStatus === 'approved' || newStatus === 'manual_review') {
-    const { data: currentPayment } = await supabase.from('payments').select('expires_at').eq('id', paymentId).single();
-    if (currentPayment && isPaymentExpired(currentPayment)) {
+    if (isPaymentExpired(payment)) {
       // Release any UTR reservation and reject with expiry reason.
       if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
       const expiryUpdateData = {

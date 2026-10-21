@@ -94,13 +94,27 @@ async function recognizeWithSharedWorker(buffer) {
   return { text: result.data.text || '', confidence: result.data.confidence || 0 };
 }
 
+// Preprocessing is deterministic for identical input bytes, and every stage
+// of one verification (primary pass, strip probe/scan, deep, currency) is
+// handed the SAME Buffer instance. Memoizing on buffer identity turns 4 sharp
+// pipelines (~400 ms each in production) into 1 per verification with zero
+// behaviour change: the first call computes, later calls get the identical
+// buffer back. WeakMap keys die with the request-scoped buffer.
+const __preprocessMemo = new WeakMap();
+
 export async function preprocessImage(buffer) {
-  return sharp(buffer)
+  if (buffer && typeof buffer === 'object') {
+    const memoized = __preprocessMemo.get(buffer);
+    if (memoized) return memoized;
+  }
+  const out = await sharp(buffer)
     .resize({ width: 1200, withoutEnlargement: true })
     .grayscale()
     .normalize()
     .sharpen()
     .toBuffer();
+  if (buffer && typeof buffer === 'object') __preprocessMemo.set(buffer, out);
+  return out;
 }
 
 export function normalizeAmount(text) {
@@ -855,7 +869,46 @@ export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null) {
   const STRIP_H = 220;
   const OVERLAP = 110;
   const recovered = [];
-  for (let y = 0; y < H; y += (STRIP_H - OVERLAP)) {
+  const hitExpected = () => expectedAmount != null &&
+    extractAmountsFromStrips(recovered.join('\n')).some(a => Math.abs(a - expectedAmount) < 0.01);
+
+  // ── Phase-0: fast top-region probe (threshold 80/120 on 180px bands) ──
+  // Large-font header corruption (₹ misread as "2") is only rescued by
+  // aggressive thresholding: the plain scan below reads the CORRUPTED number
+  // on every band of a tall screenshot and never matches (~30 s of wasted
+  // OCR) before deep recovery rescues the amount. The probe uses deep
+  // recovery's exact band geometry over the top 45% amount region with its
+  // two cheapest strategies: a hit returns the expected amount and skips
+  // both the full-height scan and the deep stage; a miss costs ≤20 cheap
+  // jobs and falls through to the scan exactly as before — recall and the
+  // decision are unchanged either way. Diagnostic calls (no expectedAmount)
+  // skip the probe and keep the full scan.
+  if (expectedAmount != null) {
+    const TOP_REGION_H = Math.floor(H * 0.45);
+    for (let y = 0; y < TOP_REGION_H; y += 90) {
+      const h = Math.min(180, TOP_REGION_H - y);
+      try {
+        const bandBuf = await sharp(processed)
+          .extract({ left: 0, top: y, width: W, height: h })
+          .png()
+          .toBuffer();
+        for (const t of [80, 120]) {
+          const variant = await sharp(bandBuf).threshold(t).png().toBuffer();
+          const r = await recognizeWithSharedWorker(variant);
+          if (r.text) recovered.push(r.text);
+          if (hitExpected()) return extractAmountsFromStrips(recovered.join('\n'));
+        }
+      } catch (_) { /* best-effort */ }
+    }
+  }
+
+  // Full-height scan: every band, all 4 variants (recall unchanged). The
+  // expected-amount check runs after EACH variant instead of once per band —
+  // acceptance is identical to the full scan (the caller only tests
+  // matchAmount against expectedAmount) but the scan stops at the first
+  // variant that reads the amount. When no expectedAmount is supplied the
+  // full scan runs (diagnostic use).
+  scan: for (let y = 0; y < H; y += (STRIP_H - OVERLAP)) {
     const h = Math.min(STRIP_H, H - y);
     const strip = await sharp(processed)
       .extract({ left: 0, top: y, width: W, height: h })
@@ -864,34 +917,28 @@ export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null) {
 
     const r = await recognizeWithSharedWorker(strip);
     if (r.text) recovered.push(r.text);
+    if (hitExpected()) break scan;
 
     try {
       const thresholdBuf = await sharp(strip).threshold(145).png().toBuffer();
       const r2 = await recognizeWithSharedWorker(thresholdBuf);
       if (r2.text) recovered.push(r2.text);
     } catch (_) { /* best-effort */ }
+    if (hitExpected()) break scan;
 
     try {
       const thresholdBuf = await sharp(strip).threshold(100).png().toBuffer();
       const r3 = await recognizeWithSharedWorker(thresholdBuf);
       if (r3.text) recovered.push(r3.text);
     } catch (_) { /* best-effort */ }
+    if (hitExpected()) break scan;
 
     try {
       const invertedBuf = await sharp(strip).negate().normalize().png().toBuffer();
       const r4 = await recognizeWithSharedWorker(invertedBuf);
       if (r4.text) recovered.push(r4.text);
     } catch (_) { /* best-effort */ }
-
-    // Early exit ONLY when the expected amount has been recovered from the
-    // strips read so far — acceptance is identical to the full scan (the
-    // caller only checks matchAmount against expectedAmount), but tall
-    // screenshots stop as soon as the amount band is read. When no
-    // expectedAmount is supplied the full scan runs (diagnostic use).
-    if (expectedAmount != null &&
-        extractAmountsFromStrips(recovered.join('\n')).some(a => Math.abs(a - expectedAmount) < 0.01)) {
-      break;
-    }
+    if (hitExpected()) break scan;
   }
   return extractAmountsFromStrips(recovered.join('\n'));
 }
@@ -1084,18 +1131,15 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
     { name: 'linear_high_contrast', build: () => sharp(topBuf).linear(2.0, -50).normalize().png().toBuffer() },
   ];
 
-  // Every strategy is still rendered and recognized — the OCR call count is
-  // unchanged — but only one variant buffer is alive at a time. Texts are
-  // small, so collecting them costs nothing next to the buffers.
-  const results = [];
-  for (const strategy of strategies) {
-    const buf = await strategy.build();
-    results.push(await recognizeWithSharedWorker(buf));
-  }
-
-  // Check each strategy for evidence of the correct amount (same order).
-  for (let i = 0; i < results.length; i++) {
-    const text = results[i].text;
+  // Each strategy is checked as soon as it completes: the FIRST strategy
+  // with evidence returns the identical { verified, method, evidence } shape
+  // the batched version produced (same order, same first-match rule) while
+  // skipping the remaining OCR calls — a no-match run still executes all 12
+  // strategies. Only one variant buffer is alive at a time.
+  for (let i = 0; i < strategies.length; i++) {
+    const buf = await strategies[i].build();
+    const r = await recognizeWithSharedWorker(buf);
+    const text = r.text || '';
     if (textContainsExpected(text)) {
       return {
         verified: true,
@@ -1123,14 +1167,11 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
         () => sharp(stripBuf).sharpen({ sigma: 3 }).threshold(100).png().toBuffer(),
       ];
 
-      // All four variants are still recognized; one buffer alive at a time.
-      const stripResults = [];
+      // Checked per variant: first evidence returns (same method/evidence
+      // as the batched check over all four, in the same order).
       for (const build of stripStrategies) {
         const buf = await build();
-        stripResults.push(await recognizeWithSharedWorker(buf));
-      }
-
-      for (const r of stripResults) {
+        const r = await recognizeWithSharedWorker(buf);
         const text = r.text || '';
         if (textContainsExpected(text)) {
           return {
