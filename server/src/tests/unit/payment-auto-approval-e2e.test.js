@@ -125,7 +125,7 @@ beforeEach(() => {
 });
 
 describe('E2E: valid screenshot through paymentController.uploadScreenshot', () => {
-  it('persists status=approved and activates the user', async () => {
+  it('requires external confirmation instead of approving from OCR alone', async () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
@@ -135,21 +135,15 @@ describe('E2E: valid screenshot through paymentController.uploadScreenshot', () 
 
     await uploadScreenshot(req, res);
 
-    console.log('E2E_DIAGNOSTIC', JSON.stringify({
-      statusCode: res.statusCode,
-      verification: res.body?.data?.verification,
-      paymentUpdates: db.state.updates.payments,
-      userUpdates: db.state.updates.users,
-      finalPaymentStatus: db.state.paymentRow?.status,
-      finalUserStatus: db.state.userRow?.status,
-      userCurrentPlan: db.state.userRow?.current_plan,
-      notificationInserts: (db.state.inserts.notifications || []).map(n => n.type),
-    }));
-
     expect(res.body.success).toBe(true);
-    expect(res.body.data.verification.status).toBe('approved');
-    expect(db.state.paymentRow.status).toBe('approved');
-    expect(db.state.userRow.status).toBe('active');
-    expect(db.state.userRow.current_plan).toBe(120);
+    expect(res.body.data.verification.status).toBe('manual_review');
+    expect(db.state.paymentRow.status).toBe('manual_review');
+    expect(db.state.paymentRow.verification_result).toMatchObject({
+      decision: 'manual_review',
+      ocrDecision: 'approved',
+      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+    });
+    expect(db.state.userRow.status).toBe('pending');
+    expect(db.state.userRow.current_plan).toBeNull();
   });
 });

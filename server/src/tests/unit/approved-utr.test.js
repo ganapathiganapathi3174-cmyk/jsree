@@ -3,17 +3,18 @@ import { normalizeUtr, reserveApprovedUtr, releaseApprovedUtr } from '../../serv
 import { applyPaymentUtrPolicy } from '../../services/paymentService.js';
 import { applyTopupVerification } from '../../services/topupService.js';
 
-const { supabaseMock, walletCredit } = vi.hoisted(() => ({
+const { supabaseMock, walletCreditBatch } = vi.hoisted(() => ({
   supabaseMock: { from: vi.fn() },
-  walletCredit: vi.fn(),
+  walletCreditBatch: vi.fn(),
 }));
 
 vi.mock('../../db/supabase.js', () => ({ supabase: supabaseMock }));
-vi.mock('../../services/walletService.js', () => ({ default: { credit: walletCredit } }));
+vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: walletCreditBatch } }));
 
 let chains;
 beforeEach(() => {
   vi.clearAllMocks();
+  walletCreditBatch.mockResolvedValue([{ credited: true }, { credited: true }]);
   chains = {};
   supabaseMock.from.mockImplementation((table) => chains[table] || makeUtrsChain({ insertResult: { data: { utr: 'X' }, error: null } }));
 });
@@ -34,7 +35,9 @@ function makeTopupsChain(selectResult) {
     update: vi.fn(() => obj),
     eq: vi.fn(() => obj),
     in: vi.fn(() => obj),
-    select: vi.fn(() => Promise.resolve(selectResult || { data: [], error: null })),
+    select: vi.fn(() => obj),
+    single: vi.fn(() => Promise.resolve({ data: { status: 'completed' }, error: null })),
+    then: (resolve, reject) => Promise.resolve(selectResult || { data: [], error: null }).then(resolve, reject),
   };
   return obj;
 }
@@ -184,8 +187,11 @@ describe('C: top-up flow (applyTopupVerification)', () => {
 
     expect(result.credited).toBe(true);
     expect(result.pendingClaim).toBe(false);
-    expect(walletCredit).toHaveBeenCalledTimes(2);
-    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, 'Top-up payment verified', 'topup-1', 'topup');
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
+    expect(walletCreditBatch).toHaveBeenCalledWith([
+      { userId: 'sender-1', amount: 120, description: 'Top-up payment verified', referenceId: 'topup-1', referenceType: 'topup' },
+      { userId: 'receiver-1', amount: 120, description: 'Top-up completed', referenceId: 'topup-1', referenceType: 'topup' },
+    ]);
     expect(chains.approved_utrs.insert).toHaveBeenCalledWith({
       utr: 'TOP123', reference_type: 'topup', reference_id: 'topup-1',
     });
@@ -200,7 +206,7 @@ describe('C: top-up flow (applyTopupVerification)', () => {
 
     expect(result.credited).toBe(false);
     expect(result.reason).toBe('DUPLICATE_UTR');
-    expect(walletCredit).not.toHaveBeenCalled();
+    expect(walletCreditBatch).not.toHaveBeenCalled();
 
     // Top-up was transitioned to approved, then rolled to rejected.
     const rejectCalls = chains.topups.update.mock.calls.filter(([payload]) => payload.status === 'rejected');
@@ -215,7 +221,7 @@ describe('C: top-up flow (applyTopupVerification)', () => {
 
     const first = await applyTopupVerification(topup, { decision: 'approved', reason: null, utr: 'DBL1' }, time);
     expect(first.credited).toBe(true);
-    expect(walletCredit).toHaveBeenCalledTimes(2);
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
 
     // Second submit: guarded transition returns 0 rows (already approved).
     // The ledger already holds both credit rows from the first submit, so
@@ -226,10 +232,11 @@ describe('C: top-up flow (applyTopupVerification)', () => {
     chains.approved_utrs.insert.mockClear();
     chains.topups = makeTopupsChain({ data: [], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [{ id: 'tx-s' }, { id: 'tx-r' }], error: null });
+    walletCreditBatch.mockResolvedValueOnce([{ credited: false }, { credited: false }]);
     const second = await applyTopupVerification(topup, { decision: 'approved', reason: null, utr: 'DBL1' }, time);
     expect(second.alreadyProcessed).toBe(true);
     expect(second.credited).toBe(false);
-    expect(walletCredit).toHaveBeenCalledTimes(2);
+    expect(walletCreditBatch).toHaveBeenCalledTimes(2);
     expect(chains.approved_utrs.insert).not.toHaveBeenCalled();
   });
 
@@ -244,6 +251,6 @@ describe('C: top-up flow (applyTopupVerification)', () => {
 
     expect(result.credited).toBe(false);
     expect(result.reason).toBe('DUPLICATE_UTR');
-    expect(walletCredit).not.toHaveBeenCalled();
+    expect(walletCreditBatch).not.toHaveBeenCalled();
   });
 });

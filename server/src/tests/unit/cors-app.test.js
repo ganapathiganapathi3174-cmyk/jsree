@@ -90,9 +90,23 @@ describe('production CORS through the Express app', () => {
 
     expect(response.status).toBe(204);
     expect(response.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+    expect(response.headers.get('access-control-allow-credentials')).toBe('true');
     expect(response.headers.get('access-control-allow-methods')).toMatch(/\bPOST\b/);
     expect(response.headers.get('access-control-allow-headers')).toMatch(/Authorization/i);
     expect(response.headers.get('access-control-allow-headers')).toMatch(/Content-Type/i);
+  });
+
+  it('keeps the local Vite development origin enabled through the actual app', async () => {
+    const response = await fetch(`${baseUrl}/api/health`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'Access-Control-Request-Method': 'GET'
+      }
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
   });
 
   it('handles preflight for other API routes before authentication', async () => {
@@ -120,12 +134,105 @@ describe('production CORS through the Express app', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
-    expect(await response.json()).toMatchObject({ success: true });
+    expect(await response.json()).toMatchObject({
+      success: true,
+      data: { verification: { decision: 'manual_review' } }
+    });
     expect(paymentService.uploadScreenshot).toHaveBeenCalledWith(
       PAYMENT_ID,
       expect.objectContaining({ mimetype: 'image/png' }),
       'test-user'
     );
+    expect(paymentService.verifyPayment).toHaveBeenCalledWith(
+      PAYMENT_ID,
+      Buffer.from('test image')
+    );
+  });
+
+  it('rejects invalid authentication and a missing screenshot with CORS', async () => {
+    const invalidAuthResponse = await fetch(`${baseUrl}${SCREENSHOT_PATH}`, {
+      method: 'POST',
+      headers: {
+        Origin: PROD_ORIGIN,
+        Authorization: 'Bearer invalid-test-token'
+      }
+    });
+    expect(invalidAuthResponse.status).toBe(401);
+    expect(invalidAuthResponse.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+
+    const missingScreenshotResponse = await fetch(`${baseUrl}${SCREENSHOT_PATH}`, {
+      method: 'POST',
+      headers: {
+        Origin: PROD_ORIGIN,
+        Authorization: `Bearer ${makeToken()}`
+      }
+    });
+    expect(missingScreenshotResponse.status).toBe(400);
+    expect((await missingScreenshotResponse.json()).code).toBe('NO_FILE');
+    expect(missingScreenshotResponse.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+    expect(paymentService.uploadScreenshot).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized screenshots before invoking payment services', async () => {
+    const form = new FormData();
+    form.append(
+      'screenshot',
+      new Blob([new Uint8Array(5 * 1024 * 1024 + 1)], { type: 'image/png' }),
+      'oversized.png'
+    );
+    const response = await fetch(`${baseUrl}${SCREENSHOT_PATH}`, {
+      method: 'POST',
+      headers: {
+        Origin: PROD_ORIGIN,
+        Authorization: `Bearer ${makeToken()}`
+      },
+      body: form
+    });
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe('FILE_TOO_LARGE');
+    expect(response.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+    expect(paymentService.uploadScreenshot).not.toHaveBeenCalled();
+  });
+
+  it('returns safe CORS-enabled errors for malformed multipart and payment-service failures', async () => {
+    const malformedResponse = await fetch(`${baseUrl}${SCREENSHOT_PATH}`, {
+      method: 'POST',
+      headers: {
+        Origin: PROD_ORIGIN,
+        Authorization: `Bearer ${makeToken()}`,
+        'Content-Type': 'multipart/form-data; boundary=broken'
+      },
+      body: '--broken\r\nContent-Disposition: form-data; name="screenshot"; filename="proof.png"\r\nContent-Type: image/png\r\n\r\ntruncated'
+    });
+    expect(malformedResponse.status).toBe(400);
+    expect(malformedResponse.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+
+    for (const failure of [
+      { code: 'PAYMENT_NOT_FOUND', status: 404 },
+      { code: 'DUPLICATE_SCREENSHOT', status: 409 },
+      { code: 'UPLOAD_FAILED', status: 500 }
+    ]) {
+      paymentService.uploadScreenshot.mockRejectedValueOnce({
+        code: failure.code,
+        message: 'Synthetic isolated test failure'
+      });
+      const form = new FormData();
+      form.append('screenshot', new Blob(['test image'], { type: 'image/png' }), 'proof.png');
+      const response = await fetch(`${baseUrl}${SCREENSHOT_PATH}`, {
+        method: 'POST',
+        headers: {
+          Origin: PROD_ORIGIN,
+          Authorization: `Bearer ${makeToken()}`
+        },
+        body: form
+      });
+
+      expect(response.status).toBe(failure.status);
+      expect((await response.json()).code).toBe(failure.code);
+      expect(response.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+    }
+    expect(paymentService.verifyPayment).not.toHaveBeenCalled();
   });
 
   it('keeps CORS headers on authentication and upload-validation errors', async () => {
@@ -165,9 +272,22 @@ describe('production CORS through the Express app', () => {
       headers: { Origin: PROD_ORIGIN, 'Content-Type': 'application/json' },
       body: '{invalid json'
     });
-    expect(errorResponse.status).toBe(500);
-    expect((await errorResponse.json()).code).toBe('INTERNAL_ERROR');
+    expect(errorResponse.status).toBe(400);
+    expect((await errorResponse.json()).code).toBe('INVALID_JSON');
     expect(errorResponse.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+
+    const unexpectedErrorResponse = await fetch(`${baseUrl}${SCREENSHOT_PATH}`, {
+      method: 'POST',
+      headers: {
+        Origin: PROD_ORIGIN,
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'gzip'
+      },
+      body: '{}'
+    });
+    expect(unexpectedErrorResponse.status).toBe(500);
+    expect((await unexpectedErrorResponse.json()).code).toBe('INTERNAL_ERROR');
+    expect(unexpectedErrorResponse.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
   });
 
   it('does not relax registration validation or top-up authentication', async () => {
@@ -185,6 +305,24 @@ describe('production CORS through the Express app', () => {
     expect(topupResponse.status).toBe(401);
     expect((await topupResponse.json()).code).toBe('TOKEN_REQUIRED');
     expect(topupResponse.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+  });
+
+  it('keeps payment configuration restricted to authenticated administrators', async () => {
+    const anonymousResponse = await fetch(`${baseUrl}/api/config`, {
+      headers: { Origin: PROD_ORIGIN }
+    });
+    expect(anonymousResponse.status).toBe(401);
+    expect(anonymousResponse.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+
+    const userResponse = await fetch(`${baseUrl}/api/config`, {
+      headers: {
+        Origin: PROD_ORIGIN,
+        Authorization: `Bearer ${makeToken()}`
+      }
+    });
+    expect(userResponse.status).toBe(403);
+    expect((await userResponse.json()).code).toBe('ADMIN_REQUIRED');
+    expect(userResponse.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
   });
 
   it('does not emit allow-origin for a disallowed website', async () => {

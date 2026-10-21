@@ -12,30 +12,35 @@ class WalletService {
   }
 
   async credit(userId, amount, description, referenceId = null, referenceType = null) {
-    const balance = await this.getBalance(userId);
-    const newBalance = balance + parseFloat(amount);
+    const [result] = await this.creditBatch([{
+      userId,
+      amount,
+      description,
+      referenceId,
+      referenceType,
+    }]);
+    return { transaction: result.transaction, newBalance: result.newBalance };
+  }
 
-    const { error: balErr } = await supabase
-      .from('users')
-      .update({ wallet_balance: newBalance })
-      .eq('id', userId);
-    if (balErr) throw balErr;
+  async creditBatch(credits) {
+    if (!Array.isArray(credits) || credits.length === 0) {
+      throw new Error('At least one wallet credit is required');
+    }
 
-    const { data, error } = await supabase
-      .from('wallet_transactions')
-      .insert({
+    const { data, error } = await supabase.rpc('credit_wallets_atomic', {
+      p_credits: credits.map(({ userId, amount, description, referenceId = null, referenceType = null }) => ({
         user_id: userId,
-        type: 'credit',
-        amount: parseFloat(amount),
+        amount: Number(amount),
         description,
         reference_id: referenceId,
         reference_type: referenceType,
-        balance_after: newBalance
-      })
-      .select()
-      .single();
+      })),
+    });
     if (error) throw error;
-    return { transaction: data, newBalance };
+    if (!Array.isArray(data?.results) || data.results.length !== credits.length) {
+      throw new Error('Atomic wallet credit returned an invalid result');
+    }
+    return data.results;
   }
 
   async debit(userId, amount, description, referenceId = null, referenceType = null) {

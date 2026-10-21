@@ -3,6 +3,7 @@ import {
   createTopup,
   submitTopupProof,
   applyTopupVerification,
+  verifyTopup,
 } from '../../services/topupService.js';
 import { autoExpireStalePayments } from '../../services/paymentService.js';
 import { getPlans } from '../../services/planService.js';
@@ -16,7 +17,7 @@ import { PAYMENT_PLANS } from '../../config/paymentConfig.js';
 const { runScreenshotVerification, reserveApprovedUtr, creditMock, uploadMock, db } = vi.hoisted(() => {
   const state = {
     sender: null, topupRow: null, topupList: null, flipResult: [{ id: 'top-1' }],
-    ledger: [], inserts: {}, updates: {},
+    ledger: [], inserts: {}, updates: {}, results: {},
   };
   const rec = (bucket, table, payload) => {
     (state[bucket][table] = state[bucket][table] || []).push(payload);
@@ -41,7 +42,7 @@ const { runScreenshotVerification, reserveApprovedUtr, creditMock, uploadMock, d
           if (p._single) return res({ data: state.topupRow ? { ...state.topupRow } : null, error: null });
           return res({ data: state.topupList ? state.topupList.map(r => ({ ...r })) : [], error: null });
         }
-        return res({ data: null, error: null });
+        return res(state.results[table] || { data: null, error: null });
       },
       catch: () => p,
     };
@@ -50,7 +51,7 @@ const { runScreenshotVerification, reserveApprovedUtr, creditMock, uploadMock, d
   const uploadMock = vi.fn(async () => ({ error: null }));
   const client = {
     from: (t) => builder(t),
-    storage: { from: () => ({ upload: uploadMock, getPublicUrl: () => ({ publicUrl: 'https://x/proof.png' }), remove: vi.fn() }) },
+    storage: { from: () => ({ upload: uploadMock, getPublicUrl: () => ({ data: { publicUrl: 'https://x/proof.png' } }), remove: vi.fn() }) },
   };
   return {
     runScreenshotVerification: vi.fn(),
@@ -70,7 +71,7 @@ vi.mock('../../services/verificationService.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runScreenshotVerification, reserveApprovedUtr };
 });
-vi.mock('../../services/walletService.js', () => ({ default: { credit: creditMock } }));
+vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: creditMock } }));
 vi.mock('../../services/notificationService.js', () => ({ default: { createNotification: vi.fn(async () => ({})) } }));
 
 import { supabase } from '../../db/supabase.js';
@@ -97,9 +98,10 @@ function reset() {
   db.state.ledger = [];
   db.state.inserts = {};
   db.state.updates = {};
+  db.state.results = {};
   vi.clearAllMocks();
   uploadMock.mockResolvedValue({ error: null });
-  creditMock.mockResolvedValue({ transaction: { id: 'tx-1' }, newBalance: 120 });
+  creditMock.mockResolvedValue([{ credited: true }, { credited: true }]);
   reserveApprovedUtr.mockResolvedValue({ duplicate: false, reserved: true, utr: 'UTRX' });
 }
 
@@ -147,6 +149,38 @@ describe('top-up pre-upload gates', () => {
     await expect(submitTopupProof('top-1', file, 'sender-1')).rejects.toMatchObject({ code: 'DUPLICATE_SCREENSHOT' });
     expect(uploadMock).not.toHaveBeenCalled();
   });
+
+  it('valid-looking OCR without provider confirmation goes to manual review without wallet credit', async () => {
+    reset();
+    db.state.topupRow = freshTopup();
+    runScreenshotVerification.mockResolvedValue({
+      verificationResult: {
+        decision: 'approved',
+        reason: null,
+        utr: 'SYNTHETIC-UTR',
+        amountMatch: true,
+        upiMatch: true,
+      },
+      verificationTime: new Date(),
+      utr: 'SYNTHETIC-UTR',
+    });
+
+    const result = await submitTopupProof(
+      'top-1',
+      { originalname: 'synthetic.png', mimetype: 'image/png', buffer: Buffer.from('synthetic-image') },
+      'sender-1'
+    );
+
+    expect(result.manualReview).toBe(true);
+    expect(result.credited).toBe(false);
+    expect(db.state.topupRow.status).toBe('manual_review');
+    expect(db.state.topupRow.verification_result).toMatchObject({
+      decision: 'manual_review',
+      ocrDecision: 'approved',
+      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+    });
+    expect(creditMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('shared-engine approval matrix for top-ups', () => {
@@ -159,9 +193,11 @@ describe('shared-engine approval matrix for top-ups', () => {
       expect(outcome.credited).toBe(true);
       const statuses = (db.state.updates.topups || []).map(u => u.status);
       expect(statuses).toContain('completed');
-      expect(creditMock).toHaveBeenCalledTimes(2);
-      const creditedUsers = creditMock.mock.calls.map(c => c[0]).sort();
-      expect(creditedUsers).toEqual(['recv-1', 'sender-1']);
+      expect(creditMock).toHaveBeenCalledTimes(1);
+      expect(creditMock).toHaveBeenCalledWith([
+        expect.objectContaining({ userId: 'sender-1', amount, referenceId: 'top-1', referenceType: 'topup' }),
+        expect.objectContaining({ userId: 'recv-1', amount, referenceId: 'top-1', referenceType: 'topup' }),
+      ]);
     });
   }
 
@@ -202,18 +238,19 @@ describe('shared-engine approval matrix for top-ups', () => {
 });
 
 describe('wallet idempotency', () => {
-  it('concurrent unique-violation (23505) treated as already-credited, no throw', async () => {
+  it('atomic idempotency result recognizes one existing wallet ledger entry', async () => {
     reset();
-    creditMock.mockRejectedValueOnce({ code: '23505', message: 'duplicate key' });
+    creditMock.mockResolvedValueOnce([{ credited: false }, { credited: true }]);
     const { verificationResult, verificationTime } = approvedResult('UTRRACE');
     const outcome = await applyTopupVerification(freshTopup(), verificationResult, verificationTime);
-    // Sender lost the race (already credited), receiver credited normally.
+    // One entry was already credited; the other is credited in the same RPC.
     expect(outcome.credited).toBe(true);
   });
 
   it('retry after crash (already completed, ledger empty) reconciles the credit', async () => {
     reset();
     db.state.flipResult = []; // atomic flip finds no rows → already processed
+    db.state.topupRow = freshTopup({ status: 'completed' });
     const outcome = await applyTopupVerification(
       freshTopup(),
       { decision: 'approved', reason: null, utr: 'UTRRETRY', amountMatch: true, upiMatch: true },
@@ -221,20 +258,112 @@ describe('wallet idempotency', () => {
     );
     expect(outcome.alreadyProcessed).toBe(true);
     expect(outcome.credited).toBe(true); // missing ledger rows were backfilled
-    expect(creditMock).toHaveBeenCalledTimes(2);
+    expect(creditMock).toHaveBeenCalledTimes(1);
   });
 
   it('retry with ledger present credits nothing', async () => {
     reset();
     db.state.flipResult = [];
+    db.state.topupRow = freshTopup({ status: 'completed' });
     db.state.ledger = [{ id: 'tx-s' }, { id: 'tx-r' }]; // both sides already recorded
+    creditMock.mockResolvedValueOnce([{ credited: false }, { credited: false }]);
     const outcome = await applyTopupVerification(
       freshTopup(),
       { decision: 'approved', reason: null, utr: 'UTRDONE', amountMatch: true, upiMatch: true },
       new Date()
     );
     expect(outcome.credited).toBe(false);
+    expect(creditMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('failed atomic wallet transaction moves the completed top-up to manual review', async () => {
+    reset();
+    creditMock.mockRejectedValueOnce({ code: 'XX000', message: 'transaction rolled back' });
+    const { verificationResult, verificationTime } = approvedResult('UTRFAIL');
+
+    await expect(applyTopupVerification(freshTopup(), verificationResult, verificationTime))
+      .rejects.toMatchObject({ code: 'XX000' });
+
+    const statuses = (db.state.updates.topups || []).map(update => update.status);
+    expect(statuses).toContain('completed');
+    expect(statuses).toContain('manual_review');
+    expect(creditMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('admin top-up manual review', () => {
+  const reviewTopup = () => freshTopup({
+    status: 'manual_review',
+    screenshot_url: 'https://x/proof.png',
+    verification_result: {
+      decision: 'manual_review',
+      ocrDecision: 'approved',
+      utr: 'UTR-ADMIN-1',
+      checks: {
+        amount: { passed: true },
+        receiverUpi: { passed: true },
+        transactionDate: { passed: true },
+        utr: { passed: true },
+      },
+    },
+  });
+
+  it('admin approval credits both users in one batch and records the review', async () => {
+    reset();
+    db.state.topupRow = reviewTopup();
+    const result = await verifyTopup('top-1', 'admin-1', true);
+
+    expect(result.credited).toBe(true);
+    expect(db.state.topupRow.status).toBe('completed');
+    expect(db.state.topupRow.verification_result.adminReview).toMatchObject({
+      decision: 'approved',
+      adminId: 'admin-1',
+      utr: 'UTR-ADMIN-1',
+    });
+    expect(creditMock).toHaveBeenCalledTimes(1);
+    expect(creditMock).toHaveBeenCalledWith([
+      expect.objectContaining({ userId: 'sender-1', referenceId: 'top-1', referenceType: 'topup' }),
+      expect.objectContaining({ userId: 'recv-1', referenceId: 'top-1', referenceType: 'topup' }),
+    ]);
+  });
+
+  it('does not approve a manual-review top-up without uploaded proof', async () => {
+    reset();
+    db.state.topupRow = reviewTopup();
+    db.state.topupRow.screenshot_url = null;
+
+    await expect(verifyTopup('top-1', 'admin-1', true))
+      .rejects.toMatchObject({ code: 'TOPUP_PROOF_REQUIRED' });
     expect(creditMock).not.toHaveBeenCalled();
+  });
+
+  it('duplicate UTR remains in manual review and does not credit', async () => {
+    reset();
+    db.state.topupRow = reviewTopup();
+    reserveApprovedUtr.mockResolvedValueOnce({ duplicate: true, reserved: false, utr: 'UTR-ADMIN-1' });
+    db.state.results.approved_utrs = {
+      data: { reference_type: 'topup', reference_id: 'another-topup' },
+      error: null,
+    };
+
+    await expect(verifyTopup('top-1', 'admin-1', true))
+      .rejects.toMatchObject({ code: 'DUPLICATE_UTR' });
+    expect(db.state.topupRow.status).toBe('manual_review');
+    expect(creditMock).not.toHaveBeenCalled();
+  });
+
+  it('wallet transaction failure restores manual-review status for a safe retry', async () => {
+    reset();
+    db.state.topupRow = reviewTopup();
+    creditMock.mockRejectedValueOnce({ code: 'XX000', message: 'atomic transaction rolled back' });
+
+    await expect(verifyTopup('top-1', 'admin-1', true))
+      .rejects.toMatchObject({ code: 'XX000' });
+    expect(db.state.topupRow.status).toBe('manual_review');
+    expect(db.state.topupRow.verification_result).toMatchObject({
+      decision: 'manual_review',
+      reason: 'WALLET_CREDIT_FAILED',
+    });
   });
 });
 

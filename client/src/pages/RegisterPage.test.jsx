@@ -95,7 +95,7 @@ describe('RegisterPage payment verification — loading always resets', () => {
     await waitFor(() => expect(verifyButton().textContent).toContain('Verifying'));
 
     await waitFor(() => expect(verifyButton().textContent).toContain('Verify Payment & Continue'), { timeout: 2000 });
-    expect(toastError).toHaveBeenCalledWith('Verification is taking too long. Please check your connection and try again.');
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Verification timed out. The server is taking too long (possibly a cold start). Please try again in a moment.'));
   });
 
   it('resets the button when the API rejects', async () => {

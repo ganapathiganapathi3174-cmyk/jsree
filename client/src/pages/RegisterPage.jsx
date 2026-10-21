@@ -168,9 +168,11 @@ export default function RegisterPage() {
       if (code === 'PAYMENT_EXPIRED') {
         toast.error('Payment request expired. Please create a new payment request.');
         setPaymentData(null);
-      } else if (isTimeoutError(err)) {
+      } else if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT' || isTimeoutError(err)) {
         debug('verify:timeout', { paymentId: paymentData?.id });
-        toast.error('Verification is taking too long. Please check your connection and try again.');
+        toast.error('Verification timed out. The server is taking too long (possibly a cold start). Please try again in a moment.');
+      } else if (code === 'DUPLICATE_REQUEST') {
+        toast.error('A verification for this screenshot is already in progress. Please wait for the result.');
       } else {
         toast.error(err.response?.data?.message || 'Verification failed');
       }
@@ -212,28 +214,28 @@ export default function RegisterPage() {
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Personal Information</h2>
               <div>
-                <label className="label">Full Name</label>
-                <div className="relative"><User className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" placeholder="John Doe" value={form.name} onChange={e => set('name', e.target.value)} /></div>
+                <label htmlFor="register-name" className="label">Full Name</label>
+                <div className="relative"><User className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input id="register-name" className="input-field pl-10" placeholder="John Doe" value={form.name} onChange={e => set('name', e.target.value)} /></div>
               </div>
               <div>
-                <label className="label">Email</label>
-                <div className="relative"><Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" type="email" placeholder="john@example.com" value={form.email} onChange={e => set('email', e.target.value)} /></div>
+                <label htmlFor="register-email" className="label">Email</label>
+                <div className="relative"><Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input id="register-email" className="input-field pl-10" type="email" placeholder="john@example.com" value={form.email} onChange={e => set('email', e.target.value)} /></div>
               </div>
               <div>
-                <label className="label">Mobile</label>
-                <div className="relative"><Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" placeholder="9876543210" value={form.mobile} onChange={e => set('mobile', e.target.value)} /></div>
+                <label htmlFor="register-mobile" className="label">Mobile</label>
+                <div className="relative"><Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input id="register-mobile" className="input-field pl-10" placeholder="9876543210" value={form.mobile} onChange={e => set('mobile', e.target.value)} /></div>
               </div>
               <div>
-                <label className="label">Password</label>
-                <PasswordInput placeholder="Min 6 characters" value={form.password} onChange={e => set('password', e.target.value)} />
+                <label htmlFor="register-password" className="label">Password</label>
+                <PasswordInput id="register-password" placeholder="Min 6 characters" value={form.password} onChange={e => set('password', e.target.value)} />
               </div>
               <div>
-                <label className="label">Confirm Password</label>
-                <PasswordInput placeholder="Re-enter password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)} />
+                <label htmlFor="register-confirm-password" className="label">Confirm Password</label>
+                <PasswordInput id="register-confirm-password" placeholder="Re-enter password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)} />
               </div>
               <div>
-                <label className="label">Referral Code (optional)</label>
-                <input className="input-field uppercase" placeholder="Enter referral code" value={form.referral_code} onChange={e => set('referral_code', e.target.value.toUpperCase())} />
+                <label htmlFor="register-referral-code" className="label">Referral Code (optional)</label>
+                <input id="register-referral-code" className="input-field uppercase" placeholder="Enter referral code" value={form.referral_code} onChange={e => set('referral_code', e.target.value.toUpperCase())} />
               </div>
               <button onClick={() => { if (validateStep1()) setStep(2); }} className="btn-primary w-full">Next <ArrowRight className="h-4 w-4" /></button>
               <p className="text-center text-sm text-gray-600">Already have an account? <Link to="/login" className="text-primary-600 font-medium">Login</Link></p>

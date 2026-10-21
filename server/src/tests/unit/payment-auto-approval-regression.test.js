@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => {
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, walletCreditBatch } = vi.hoisted(() => {
   if (!process.env.ADMIN_RECEIVER_NAME) {
     process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
   }
@@ -8,6 +8,7 @@ const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() =
     runOCR: vi.fn(),
     runAmountRecoveryOCR: vi.fn(),
     runAdditionalOCRPasses: vi.fn(),
+    walletCreditBatch: vi.fn(),
   };
 });
 
@@ -15,6 +16,7 @@ vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
 });
+vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: walletCreditBatch } }));
 
 const { db } = vi.hoisted(() => {
   // Faithful in-memory Supabase/PostgREST emulator:
@@ -120,7 +122,7 @@ vi.mock('../../db/supabase.js', () => {
 });
 
 import { uploadScreenshot } from '../../controllers/paymentController.js';
-import { verifyPayment } from '../../services/paymentService.js';
+import { approvePayment, verifyPayment } from '../../services/paymentService.js';
 import { applyTopupVerification } from '../../services/topupService.js';
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
@@ -195,40 +197,46 @@ beforeEach(() => {
   runOCR.mockResolvedValue({ text: VALID_RECEIPT, confidence: 90 });
   runAmountRecoveryOCR.mockResolvedValue([]);
   runAdditionalOCRPasses.mockResolvedValue([]);
+  walletCreditBatch.mockResolvedValue([{ credited: true }, { credited: true }]);
   seed();
 });
 
 // ─────────────────────────────────────────────────────────────
-// 1. VALID PAYMENT AUTO-APPROVAL (must stay approved)
+// 1. OCR-only evidence must never produce a final approval
 // ─────────────────────────────────────────────────────────────
-describe('S1 valid payment auto-approves', () => {
-  it('controller returns approved and DB row is approved + user active', async () => {
+describe('S1 valid-looking OCR requires external payment confirmation', () => {
+  it('controller returns manual review without activating the user', async () => {
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
 
     expect(res.body.success).toBe(true);
-    expect(res.body.data.verification.status).toBe('approved');
-    expect(PAY().status).toBe('approved');
-    expect(paymentUpdates().some(u => u.status === 'approved')).toBe(true);
-    expect(USR().status).toBe('active');
+    expect(res.body.data.verification.status).toBe('manual_review');
+    expect(PAY().status).toBe('manual_review');
+    expect(paymentUpdates().some(u => u.status === 'approved')).toBe(false);
+    expect(USR().status).toBe('pending');
   });
 
-  it('persists verification_result.decision=approved, verified_at and transaction_id', async () => {
+  it('records the OCR candidate but does not reserve its UTR or set approval fields', async () => {
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
 
     const row = PAY();
-    expect(row.verification_result.decision).toBe('approved');
+    expect(row.verification_result).toMatchObject({
+      decision: 'manual_review',
+      ocrDecision: 'approved',
+      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+    });
     expect(row.verified_at).toBeTruthy();
-    expect(row.transaction_id).toBeTruthy();
-    expect(row.approved_at).toBeTruthy();
+    expect(row.transaction_id).toBeNull();
+    expect(row.approved_at).toBeUndefined();
+    expect(db.state.store.approved_utrs).toHaveLength(0);
   });
 
-  it('approves from manual_review too (legacy rows are resolvable)', async () => {
+  it('keeps a prior manual-review payment in manual review', async () => {
     seed({ paymentStatus: 'manual_review' });
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
-    expect(PAY().status).toBe('approved');
+    expect(PAY().status).toBe('manual_review');
   });
 });
 
@@ -285,12 +293,12 @@ describe('S2 invalid payments are never approved', () => {
     expect(PAY().verification_result.reason).toBe('LOW_OCR_CONFIDENCE');
   });
 
-  it('already-approved UTR reused -> rejected DUPLICATE_UTR', async () => {
+  it('OCR-only UTR is not reserved or treated as an approved duplicate', async () => {
     db.state.forcedErrors.approved_utrs = { code: '23505', message: 'duplicate key value' };
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
-    expect(PAY().status).toBe('rejected');
-    expect(PAY().verification_result.reason).toBe('DUPLICATE_UTR');
+    expect(PAY().status).toBe('manual_review');
+    expect(PAY().verification_result.reason).toBe('EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED');
     expect(USR().status).toBe('pending');
   });
 });
@@ -315,27 +323,19 @@ describe('S3 OCR failure leaves a retryable pending row (never approved)', () =>
 });
 
 // ─────────────────────────────────────────────────────────────
-// 4. APPROVAL COMMIT MUST SURVIVE A POST-DECISION SIDE-EFFECT FAILURE
-//    (a valid, decided payment must never be left in PENDING)
+// 4. SCREENSHOT OCR MUST NOT TRIGGER APPROVAL SIDE EFFECTS
 // ─────────────────────────────────────────────────────────────
-describe('S4 approval commit is not destroyed by a post-decision failure', () => {
-  it('notification insert failure does NOT leave a valid payment pending', async () => {
+describe('S4 OCR-only evidence cannot trigger approval side effects', () => {
+  it('does not activate the user or emit approval notifications', async () => {
     db.state.forcedErrors.notifications = { code: 'XX000', message: 'insert blocked' };
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
 
-    const row = PAY();
-    const diag = {
-      statusCode: res.statusCode,
-      responseBody: res.body,
-      finalStatus: row.status,
-      updates: paymentUpdates(),
-      userStatus: USR().status,
-    };
-    console.log('S4_DIAGNOSTIC', JSON.stringify(diag));
-
-    expect(row.verification_result?.decision).toBe('approved');
-    expect(row.status).toBe('approved');
+    expect(PAY().verification_result?.decision).toBe('manual_review');
+    expect(PAY().status).toBe('manual_review');
+    expect(USR().status).toBe('pending');
+    expect(db.state.store.notifications).toHaveLength(0);
+    expect(db.state.store.wallet_transactions).toHaveLength(0);
   });
 });
 
@@ -370,14 +370,12 @@ describe('S5 top-up: valid -> completed + credited once; replay -> no double cre
     expect(TOP().status).toBe('completed');
     expect(out.credited).toBe(true);
 
-    const walletInserts = db.state.inserts.wallet_transactions || [];
-    const userCredits = walletInserts.map(w => w.user_id);
-    expect(new Set(userCredits).size).toBe(walletInserts.length);
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
 
+    walletCreditBatch.mockResolvedValueOnce([{ credited: false }, { credited: false }]);
     const replay = await applyTopupVerification(TOP(), verificationResult, new Date());
-    const walletInserts2 = db.state.inserts.wallet_transactions || [];
-    expect(walletInserts2.length).toBe(walletInserts.length);
     expect(replay.credited).toBe(false);
+    expect(walletCreditBatch).toHaveBeenCalledTimes(2);
   });
 
   it('rejected top-up proof never credits', async () => {
@@ -389,7 +387,7 @@ describe('S5 top-up: valid -> completed + credited once; replay -> no double cre
     );
     expect(TOP().status).toBe('rejected');
     expect(out.credited).toBe(false);
-    expect((db.state.inserts.wallet_transactions || []).length).toBe(0);
+    expect(walletCreditBatch).not.toHaveBeenCalled();
   });
 });
 
@@ -412,5 +410,18 @@ describe('S6 decided rows cannot be resurrected', () => {
       code: 'PAYMENT_EXPIRED',
     });
     expect(PAY().status).toBe('pending');
+  });
+});
+
+describe('manual registration approval evidence', () => {
+  it('rejects an admin approval attempt when no screenshot proof is stored', async () => {
+    seed();
+    PAY().screenshot_url = null;
+
+    await expect(approvePayment('pay-1', 'admin-1')).rejects.toMatchObject({
+      code: 'PAYMENT_PROOF_REQUIRED',
+    });
+    expect(PAY().status).toBe('pending');
+    expect(USR().status).toBe('pending');
   });
 });

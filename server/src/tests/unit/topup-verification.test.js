@@ -3,17 +3,18 @@ import { decidePaymentVerification as sharedDecide } from '../../services/verifi
 import { decidePaymentVerification as paymentDecide } from '../../services/paymentService.js';
 import { applyTopupVerification } from '../../services/topupService.js';
 
-const { supabaseMock, walletCredit } = vi.hoisted(() => ({
+const { supabaseMock, walletCreditBatch } = vi.hoisted(() => ({
   supabaseMock: { from: vi.fn() },
-  walletCredit: vi.fn(),
+  walletCreditBatch: vi.fn(),
 }));
 
 vi.mock('../../db/supabase.js', () => ({ supabase: supabaseMock }));
-vi.mock('../../services/walletService.js', () => ({ default: { credit: walletCredit } }));
+vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: walletCreditBatch } }));
 
 let chains;
 beforeEach(() => {
   vi.clearAllMocks();
+  walletCreditBatch.mockResolvedValue([{ credited: true }, { credited: true }]);
   chains = {};
   supabaseMock.from.mockImplementation((table) => chains[table] || {});
 });
@@ -25,7 +26,9 @@ function makeTopupsChain(selectResult) {
     update: vi.fn(() => obj),
     eq: vi.fn(() => obj),
     in: vi.fn(() => obj),
-    select: vi.fn(() => Promise.resolve(selectResult || { data: [], error: null })),
+    select: vi.fn(() => obj),
+    single: vi.fn(() => Promise.resolve({ data: { status: 'completed' }, error: null })),
+    then: (resolve, reject) => Promise.resolve(selectResult || { data: [], error: null }).then(resolve, reject),
   };
   return obj;
 }
@@ -133,9 +136,11 @@ describe('Top-up balance credit', () => {
     expect(result.credited).toBe(true);
     expect(result.alreadyProcessed).toBe(false);
     expect(result.pendingClaim).toBe(false);
-    expect(walletCredit).toHaveBeenCalledTimes(2);
-    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, expect.any(String), 'topup-1', 'topup');
-    expect(walletCredit).toHaveBeenCalledWith('receiver-1', 120, expect.any(String), 'topup-1', 'topup');
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
+    expect(walletCreditBatch).toHaveBeenCalledWith([
+      { userId: 'sender-1', amount: 120, description: 'Top-up payment verified', referenceId: 'topup-1', referenceType: 'topup' },
+      { userId: 'receiver-1', amount: 120, description: 'Top-up completed', referenceId: 'topup-1', referenceType: 'topup' },
+    ]);
 
     // The guarded update used the atomic WHERE status IN (...) transition.
     const updateCall = chains.topups.update.mock.calls[0];
@@ -148,7 +153,7 @@ describe('Top-up balance credit', () => {
     const result = await applyTopupVerification(topup, { decision: 'rejected', reason: 'UPI_MISMATCH' }, time);
 
     expect(result.credited).toBe(false);
-    expect(walletCredit).not.toHaveBeenCalled();
+    expect(walletCreditBatch).not.toHaveBeenCalled();
 
     const updatePayload = chains.topups.update.mock.calls[0][0];
     expect(updatePayload.status).toBe('rejected');
@@ -161,7 +166,7 @@ describe('Top-up balance credit', () => {
     const result = await applyTopupVerification(topup, { decision: 'rejected', reason: 'UPI_MISMATCH' }, time);
 
     expect(result.credited).toBe(false);
-    expect(walletCredit).not.toHaveBeenCalled();
+    expect(walletCreditBatch).not.toHaveBeenCalled();
   });
 
   it('rejected INVALID_PAYMENT_DATE -> status rejected, no credit', async () => {
@@ -170,7 +175,7 @@ describe('Top-up balance credit', () => {
     const result = await applyTopupVerification(topup, { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' }, time);
 
     expect(result.credited).toBe(false);
-    expect(walletCredit).not.toHaveBeenCalled();
+    expect(walletCreditBatch).not.toHaveBeenCalled();
   });
 
   it('same top-up record cannot credit balance twice (status already transitioned)', async () => {
@@ -180,7 +185,7 @@ describe('Top-up balance credit', () => {
     const first = await applyTopupVerification(topup, approved, time);
     expect(first.credited).toBe(true);
     expect(first.pendingClaim).toBe(false);
-    expect(walletCredit).toHaveBeenCalledTimes(2);
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
 
     // Second submission (concurrent/retry): guarded UPDATE returns 0 rows
     // because the record is already 'completed'. The ledger already holds
@@ -190,21 +195,22 @@ describe('Top-up balance credit', () => {
     // them; that recovery path is covered in topup-hardening.test.js.)
     chains.topups = makeTopupsChain({ data: [], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [{ id: 'tx-s' }, { id: 'tx-r' }], error: null });
+    walletCreditBatch.mockResolvedValueOnce([{ credited: false }, { credited: false }]);
     const second = await applyTopupVerification(topup, approved, time);
     expect(second.alreadyProcessed).toBe(true);
     expect(second.credited).toBe(false);
-    expect(walletCredit).toHaveBeenCalledTimes(2);
+    expect(walletCreditBatch).toHaveBeenCalledTimes(2);
   });
 
   it('defense in depth: existing wallet_transaction for the top-up blocks a second credit', async () => {
     // Transition succeeds but wallet_transactions already exist for sender+receiver -> no credit.
     chains.topups = makeTopupsChain({ data: [{ id: topup.id, status: 'completed' }], error: null });
     chains.wallet_transactions = makeWalletChain({ data: [{ id: 'existing-tx' }], error: null });
-
+    walletCreditBatch.mockResolvedValueOnce([{ credited: false }, { credited: false }]);
 
     const result = await applyTopupVerification(topup, approved, time);
 
     expect(result.credited).toBe(false);
-    expect(walletCredit).not.toHaveBeenCalled();
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
   });
 });

@@ -46,12 +46,12 @@ export default function LoginPage() {
         <div className="card p-8 shadow-elevation ring-1 ring-slate-500/20">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="label">Email</label>
-              <div className="relative"><Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className="input-field pl-10" type="email" placeholder="you@example.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
+              <label htmlFor="login-email" className="label">Email</label>
+              <div className="relative"><Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input id="login-email" className="input-field pl-10" type="email" placeholder="you@example.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
             </div>
             <div>
-              <label className="label">Password</label>
-              <PasswordInput placeholder="Your password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+              <label htmlFor="login-password" className="label">Password</label>
+              <PasswordInput id="login-password" placeholder="Your password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
             </div>
             <button type="submit" disabled={loading} className="btn-primary w-full">
               {loading ? 'Signing in...' : <><LogIn className="h-4 w-4" /> Sign In</>}

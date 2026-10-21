@@ -110,6 +110,17 @@ export function decidePaymentVerification({
   return { decision: 'approved', reason: null };
 }
 
+export function requireExternalPaymentConfirmation(verificationResult) {
+  if (verificationResult?.decision !== 'approved') return verificationResult;
+
+  return {
+    ...verificationResult,
+    ocrDecision: 'approved',
+    decision: 'manual_review',
+    reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Runs OCR on a screenshot and produces the verification result.
 //
@@ -140,6 +151,12 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   let extractedReceiverNames = [];
   let transactionStatus = null;
   let ocrPassInfo = { primaryConfidence: 0, additionalPassesRun: 0, additionalPassConfidences: [], candidatesFromPasses: { amounts: [], upis: [], utrs: [] } };
+  // Timing variables for structured logging
+  let primaryMs = 0;
+  let additionalMs = 0;
+  let stripRecoveryMs = 0;
+  let deepRecoveryMs = 0;
+  let currencyRecoveryMs = 0;
 
   try {
     if (!buffer && screenshotUrl) {
@@ -149,7 +166,15 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     }
 
     // ── Primary OCR pass ──
-    const _p=Date.now(); const ocr = await runOCR(buffer); console.log("PHASE primary", Date.now()-_p);
+    const primaryStart = Date.now();
+    const ocr = await runOCR(buffer);
+    primaryMs = Date.now() - primaryStart;
+    console.log('[VERIFICATION TIMING]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      phase: 'primary_ocr',
+      durationMs: primaryMs,
+      confidence: ocr.confidence,
+    }));
     ocrText = ocr.text;
     ocrConfidence = ocr.confidence;
     ocrPassInfo.primaryConfidence = ocrConfidence;
@@ -166,7 +191,16 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     // ── Additional OCR passes (upscaled + thresholded) ──
     // Run when primary pass is missing key data to improve recall.
     try {
-      const _p2=Date.now(); const additionalPasses = await runAdditionalOCRPasses(buffer); console.log("PHASE additional", Date.now()-_p2);
+      const additionalStart = Date.now();
+      const additionalPasses = await runAdditionalOCRPasses(buffer);
+      additionalMs = Date.now() - additionalStart;
+      console.log('[VERIFICATION TIMING]', JSON.stringify({
+        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+        phase: 'additional_ocr',
+        durationMs: additionalMs,
+        passesRun: additionalPasses.length,
+        confidences: additionalPasses.map(p => p.confidence),
+      }));
       ocrPassInfo.additionalPassesRun = additionalPasses.length;
       ocrPassInfo.additionalPassConfidences = additionalPasses.map(p => p.confidence);
 
@@ -301,9 +335,18 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // the allFieldsHighConfidence gate enforces. Recovery only runs when the
   // outcome is still in play (Gate 1 passed).
   let amountMatch = matchAmount(extractedAmounts, expectedAmount);
+
   if (!amountMatch && !skipAmountRecovery) {
     try {
-      const _p3=Date.now(); const recovered = await runAmountRecoveryOCR(buffer); console.log("PHASE stripRecovery", Date.now()-_p3, "found", recovered.length);
+      const stripStart = Date.now();
+      const recovered = await runAmountRecoveryOCR(buffer);
+      stripRecoveryMs = Date.now() - stripStart;
+      console.log('[VERIFICATION TIMING]', JSON.stringify({
+        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+        phase: 'strip_recovery_ocr',
+        durationMs: stripRecoveryMs,
+        candidatesFound: recovered.length,
+      }));
       const merged = [...new Set([...extractedAmounts, ...recovered])];
       if (matchAmount(merged, expectedAmount)) {
         amountMatch = true;
@@ -315,7 +358,15 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
 
   if (!amountMatch && !skipAmountRecovery) {
     try {
-      const _p4=Date.now(); const deepRecovered = await runDeepAmountRecovery(buffer); console.log("PHASE deepRecovery", Date.now()-_p4, "found", deepRecovered.length);
+      const deepStart = Date.now();
+      const deepRecovered = await runDeepAmountRecovery(buffer);
+      deepRecoveryMs = Date.now() - deepStart;
+      console.log('[VERIFICATION TIMING]', JSON.stringify({
+        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+        phase: 'deep_recovery_ocr',
+        durationMs: deepRecoveryMs,
+        candidatesFound: deepRecovered.length,
+      }));
       const merged = [...new Set([...extractedAmounts, ...deepRecovered])];
       if (matchAmount(merged, expectedAmount)) {
         amountMatch = true;
@@ -334,7 +385,16 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // amount — no numeric heuristics, no string inference.
   if (!amountMatch && !skipAmountRecovery) {
     try {
-      const _p5=Date.now(); const currencyResult = await verifyAmountWithCurrencyRecovery(buffer, expectedAmount); console.log("PHASE currencyRecovery", Date.now()-_p5, "verified", currencyResult.verified);
+      const currencyStart = Date.now();
+      const currencyResult = await verifyAmountWithCurrencyRecovery(buffer, expectedAmount);
+      currencyRecoveryMs = Date.now() - currencyStart;
+      console.log('[VERIFICATION TIMING]', JSON.stringify({
+        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+        phase: 'currency_recovery_ocr',
+        durationMs: currencyRecoveryMs,
+        verified: currencyResult.verified,
+        method: currencyResult.method,
+      }));
       if (currencyResult.verified) {
         amountMatch = true;
         recoveredFromBands = true;
@@ -501,11 +561,20 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // the final decision. This is the audit trail used to explain WHY a
   // screenshot was approved or rejected (register payments AND top-ups).
   // Contains no secrets, tokens or credentials.
+  const totalMs = Date.now() - ocrStart;
   console.log('[VERIFICATION DEBUG]', JSON.stringify({
     reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
     receivedAt: receivedAt.toISOString(),
     verificationTime: verificationTime.toISOString(),
-    ocrMs: Date.now() - ocrStart,
+    ocrMs: totalMs,
+    timingBreakdown: {
+      primaryOcrMs: ocrPassInfo.primaryConfidence > 0 ? 'measured_above' : 0,
+      additionalOcrMs: 'measured_above',
+      stripRecoveryMs,
+      deepRecoveryMs,
+      currencyRecoveryMs,
+      totalMs,
+    },
     transactionDateTime: date ? date.toISOString() : null,
     differenceMinutes: date ? Number(((receivedAt.getTime() - date.getTime()) / 60000).toFixed(2)) : null,
     windowMinutes,

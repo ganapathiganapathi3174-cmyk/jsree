@@ -71,6 +71,7 @@ router.put('/payments/bulk-reject', async (req, res) => {
 });
 
 router.get('/topups', adminController.getTopups);
+router.put('/topups/:topupId/review', adminController.reviewTopup);
 router.delete('/topups/:topupId', adminController.deleteTopup);
 
 router.get('/plan-change-requests', adminController.getPlanChangeRequests);

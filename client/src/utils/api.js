@@ -3,7 +3,8 @@ import axios from 'axios';
 // Never allow a request to hang forever: the verification endpoints run OCR on
 // the server and can take tens of seconds (or stall on a cold start), which
 // previously left the UI stuck on its submitting state with no way out.
-export const REQUEST_TIMEOUT_MS = 120000;
+// Increased to 240s to accommodate: Render cold start (30-60s) + full OCR pipeline (50-100s) + network overhead.
+export const REQUEST_TIMEOUT_MS = 240000;
 
 export function isTimeoutError(err) {
   return err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT' || err?.code === 'ERR_CANCELED';

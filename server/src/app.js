@@ -21,6 +21,7 @@ import configRoutes from './routes/config.js';
 import { buildCorsOptions } from './config/cors.js';
 import { authenticateToken, requireAdmin } from './middleware/auth.js';
 import { cacheStats } from './middleware/cache.js';
+import { requestTimeout, REQUEST_TIMEOUT_MS } from './middleware/requestTimeout.js';
 
 export function createApp({ env = process.env, logger = console } = {}) {
   const app = express();
@@ -50,6 +51,11 @@ export function createApp({ env = process.env, logger = console } = {}) {
   app.use('/api/auth/login', authLimiter);
   app.use('/api/auth/admin-login', authLimiter);
   app.use('/api/auth/register', authLimiter);
+
+  // Request timeout (applies to all /api routes) — must be before routes
+  // so OCR verification endpoints have a hard ceiling.
+  app.use('/api', requestTimeout());
+  logger.log?.(`[timeout] request timeout: ${REQUEST_TIMEOUT_MS}ms`);
 
   app.use('/api/auth', authRoutes);
   app.use('/api/users', userRoutes);
@@ -81,6 +87,14 @@ export function createApp({ env = process.env, logger = console } = {}) {
   });
 
   app.use((err, req, res, next) => {
+    if (err?.type === 'entity.parse.failed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Malformed JSON request',
+        code: 'INVALID_JSON'
+      });
+    }
+
     logger.error?.('Unhandled error:', err);
     res.status(500).json({
       success: false,

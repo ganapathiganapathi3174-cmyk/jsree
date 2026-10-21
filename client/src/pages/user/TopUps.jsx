@@ -60,7 +60,17 @@ export default function TopUps() {
       announceProofResult(res.data.message, 'Proof submitted!', res.data.data?.manualReview);
       setProofModal(null); setScreenshot(null); setRefId('');
       load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
+    } catch (err) {
+      const code = err.response?.data?.code;
+      const msg = err.response?.data?.message;
+      if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
+        toast.error('Verification timed out. The server is taking too long (possibly a cold start). Please try again in a moment.');
+      } else if (code === 'DUPLICATE_REQUEST') {
+        toast.error('A verification for this screenshot is already in progress. Please wait for the result.');
+      } else {
+        toast.error(msg || 'Failed');
+      }
+    }
     finally { setSubmitting(false); }
   };
 
@@ -83,7 +93,17 @@ export default function TopUps() {
         announceProofResult(res.data.message, 'Payment proof submitted!', res.data.data?.manualReview);
       }
       load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Failed to submit proof'); }
+    } catch (err) {
+      const code = err.response?.data?.code;
+      const msg = err.response?.data?.message;
+      if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
+        toast.error('Verification timed out. The server is taking too long (possibly a cold start). Please try again in a moment.');
+      } else if (code === 'DUPLICATE_REQUEST') {
+        toast.error('A verification for this screenshot is already in progress. Please wait for the result.');
+      } else {
+        toast.error(msg || 'Failed to submit proof');
+      }
+    }
     finally { setSubmitting(false); }
   };
 

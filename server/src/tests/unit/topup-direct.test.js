@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createDirectTopup, computeTopupSummary, TOPUP_RECEIVED_REQUIRED } from '../../services/topupService.js';
 
-const { supabaseMock, walletCredit, runScreenshotVerification } = vi.hoisted(() => ({
+const { supabaseMock, walletCreditBatch, runScreenshotVerification } = vi.hoisted(() => ({
   supabaseMock: { from: vi.fn(), storage: { from: vi.fn() } },
-  walletCredit: vi.fn(),
+  walletCreditBatch: vi.fn(),
   runScreenshotVerification: vi.fn(),
 }));
 
 vi.mock('../../db/supabase.js', () => ({ supabase: supabaseMock }));
-vi.mock('../../services/walletService.js', () => ({ default: { credit: walletCredit } }));
+vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: walletCreditBatch } }));
 vi.mock('../../services/verificationService.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runScreenshotVerification };
@@ -17,6 +17,7 @@ vi.mock('../../services/verificationService.js', async (importOriginal) => {
 let chains;
 beforeEach(() => {
   vi.clearAllMocks();
+  walletCreditBatch.mockResolvedValue([{ credited: true }, { credited: true }]);
   chains = {};
   supabaseMock.from.mockImplementation((table) => chains[table] || makeFallbackChain());
   supabaseMock.storage.from.mockReturnValue({
@@ -84,22 +85,23 @@ function installHappyChains({ approvalSelect }) {
 // DIRECT TOP-UP (no pre-existing sponsor request required)
 // ─────────────────────────────────────────────────────────────
 describe('createDirectTopup', () => {
-  it('D1: user with NO pending request tops up sponsor -> record created + verified + sender credited once', async () => {
+  it('D1: screenshot OCR alone routes a new sponsor top-up to manual review', async () => {
     installHappyChains({ approvalSelect: { data: [{ id: 'topup-new-1', status: 'completed' }], error: null } });
     runScreenshotVerification.mockResolvedValue(APPROVED_VERIFICATION);
 
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
 
-    expect(result.credited).toBe(true);
+    expect(result.credited).toBe(false);
+    expect(result.manualReview).toBe(true);
     expect(result.topupId).toBe('topup-new-1');
     expect(chains.topups.insert).toHaveBeenCalledWith(expect.objectContaining({
       sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, status: 'created',
     }));
-    expect(walletCredit).toHaveBeenCalledTimes(2);
-    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, expect.any(String), 'topup-new-1', 'topup');
+    expect(chains.topups.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'manual_review' }));
+    expect(walletCreditBatch).not.toHaveBeenCalled();
   });
 
-  it('D2: a pending request already exists -> it is REUSED (no duplicate row, no TOPUP_EXISTS block)', async () => {
+  it('D2: a pending request is reused, but OCR alone does not credit it', async () => {
     chains.users = makeUsersChain([SENDER, RECEIVER, SENDER]);
     chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP], approvalSelect: { data: [{ id: 'pending-1', status: 'completed' }], error: null } });
     chains.wallet_transactions = makeWalletChain();
@@ -109,8 +111,9 @@ describe('createDirectTopup', () => {
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
 
     expect(result.topupId).toBe('pending-1');
+    expect(result.manualReview).toBe(true);
     expect(chains.topups.insert).not.toHaveBeenCalled();
-    expect(walletCredit).toHaveBeenCalledWith('sender-1', 120, expect.any(String), 'pending-1', 'topup');
+    expect(walletCreditBatch).not.toHaveBeenCalled();
   });
 
   it('D3: no sponsor (no referred_by) -> NO_SPONSOR error', async () => {
@@ -128,7 +131,7 @@ describe('createDirectTopup', () => {
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
 
     expect(result.credited).toBe(false);
-    expect(walletCredit).not.toHaveBeenCalled();
+    expect(walletCreditBatch).not.toHaveBeenCalled();
     expect(result.message).toBe('Topup rejected');
   });
 

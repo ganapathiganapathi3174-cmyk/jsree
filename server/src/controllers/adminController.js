@@ -1,5 +1,6 @@
 import * as adminService from '../services/adminService.js';
 import * as paymentService from '../services/paymentService.js';
+import * as topupService from '../services/topupService.js';
 import * as planService from '../services/planService.js';
 import * as chatService from '../services/chatService.js';
 import { supabase } from '../db/supabase.js';
@@ -113,6 +114,27 @@ export async function getTopups(req, res) {
     res.json({ success: true, data: topups || [] });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message || 'Failed to fetch topups', code: error.code || 'FETCH_FAILED' });
+  }
+}
+
+export async function reviewTopup(req, res) {
+  try {
+    const { approved, reason } = req.body;
+    if (typeof approved !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'approved must be a boolean', code: 'VALIDATION_ERROR' });
+    }
+    const result = await topupService.verifyTopup(req.params.topupId, req.user.id, approved, reason);
+    res.json({ success: true, message: result.message, data: result });
+  } catch (error) {
+    const status = error.code === 'TOPUP_NOT_FOUND' ? 404
+      : error.code === 'DUPLICATE_UTR' ? 409
+        : ['TOPUP_NOT_VERIFIABLE', 'TOPUP_PROOF_REQUIRED', 'TOPUP_VERIFICATION_INCOMPLETE', 'TOPUP_UTR_REQUIRED'].includes(error.code) ? 400
+          : 500;
+    res.status(status).json({
+      success: false,
+      message: error.message || 'Failed to review top-up',
+      code: error.code || 'TOPUP_REVIEW_FAILED',
+    });
   }
 }
 

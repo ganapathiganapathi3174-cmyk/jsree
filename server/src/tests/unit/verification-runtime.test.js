@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { verifyPayment } from '../../services/paymentService.js';
 import { getUserPayments } from '../../services/paymentService.js';
-import { runScreenshotVerification } from '../../services/verificationService.js';
+import {
+  runScreenshotVerification,
+  requireExternalPaymentConfirmation,
+} from '../../services/verificationService.js';
 import { applyTopupVerification, getTopupsForUser } from '../../services/topupService.js';
 
 const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => {
@@ -149,7 +152,7 @@ const PROVIDERS = [
 
 describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
   for (const [name, makeText] of PROVIDERS) {
-    it(`${name}: valid receipt -> DB row becomes "approved" (never manual_review)`, async () => {
+    it(`${name}: valid-looking receipt -> manual review until provider confirmation`, async () => {
       runOCR.mockResolvedValue({ text: makeText(), confidence: 90 });
       resetDb(seedPaymentRow());
 
@@ -159,28 +162,13 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
       const persistedStatuses = payUpdates.map(u => u.status);
       const finalRow = { ...seedPaymentRow(), ...payUpdates[payUpdates.length - 1] };
 
-      const diag = {
-        provider: name,
-        expectedAmount: 120,
-        amountMatch: result.verificationResult.amountMatch,
-        upiMatch: result.verificationResult.upiMatch,
-        utr: result.utr,
-        dateValid: result.verificationResult.dateValid,
-        transactionStatus: result.verificationResult.transactionStatus?.status ?? null,
-        ocrConfidence: result.verificationResult.ocrConfidence,
-        apiDecision: result.decision,
-        apiReason: result.reason,
-        persistedStatuses,
-        finalDbStatus: finalRow.status,
-        userActivationUpdate: (db.state.updates.users || []).map(u => u.status),
-      };
-      // Structured diagnostic visible in test output (no sensitive data).
-      console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify(diag));
-
-      expect(result.decision).toBe('approved');
-      expect(persistedStatuses).toContain('approved');
-      expect(persistedStatuses.every(s => s !== 'manual_review')).toBe(true);
-      expect(finalRow.status).toBe('approved');
+      expect(result.decision).toBe('manual_review');
+      expect(result.reason).toBe('EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED');
+      expect(result.verificationResult.ocrDecision).toBe('approved');
+      expect(persistedStatuses).toContain('manual_review');
+      expect(persistedStatuses.every(s => s !== 'approved')).toBe(true);
+      expect(finalRow.status).toBe('manual_review');
+      expect(db.state.updates.users || []).toHaveLength(0);
     });
   }
 
@@ -198,7 +186,7 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
     expect(statuses.every(s => s !== 'manual_review')).toBe(true);
   });
 
-  it('duplicate UTR -> DB row becomes "rejected" with DUPLICATE_UTR', async () => {
+  it('OCR UTR is not reserved before external verification', async () => {
     runOCR.mockResolvedValue({
       text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'UPI Ref No: DUP000000001', istDateLine(2)].join('\n'),
       confidence: 90,
@@ -207,13 +195,13 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
 
     const result = await verifyPayment('pay-1', Buffer.from('img'));
     const statuses = (db.state.updates.payments || []).map(u => u.status);
-    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ case: 'duplicate-utr', apiDecision: result.decision, apiReason: result.reason, persistedStatuses: statuses }));
-    expect(result.decision).toBe('rejected');
-    expect(result.reason).toBe('DUPLICATE_UTR');
-    expect(statuses.every(s => s !== 'manual_review')).toBe(true);
+    expect(result.decision).toBe('manual_review');
+    expect(result.reason).toBe('EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED');
+    expect(statuses).toContain('manual_review');
+    expect(db.state.inserts.approved_utrs || []).toHaveLength(0);
   });
 
-  it('legacy manual_review row retried through POST /verify -> resolved by CURRENT rules', async () => {
+  it('legacy manual_review row stays in review when retried through POST /verify', async () => {
     runOCR.mockResolvedValue({
       text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'UPI Ref No: FIX000000001', istDateLine(2)].join('\n'),
       confidence: 90,
@@ -222,9 +210,8 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
 
     const result = await verifyPayment('pay-1', Buffer.from('img'));
     const statuses = (db.state.updates.payments || []).map(u => u.status);
-    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ case: 'legacy-manual_review-retry', apiDecision: result.decision, apiReason: result.reason, persistedStatuses: statuses }));
-    expect(['approved', 'rejected']).toContain(result.decision);
-    expect(statuses.every(s => s !== 'manual_review')).toBe(true);
+    expect(result.decision).toBe('manual_review');
+    expect(statuses).toContain('manual_review');
   });
 });
 
@@ -264,30 +251,32 @@ describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
       expectedAmount: 120,
       receiverUpi: RECEIVER_UPI,
     });
-    return applyTopupVerification(seedTopup(), verificationResult, verificationTime);
+    return applyTopupVerification(
+      seedTopup(),
+      requireExternalPaymentConfirmation(verificationResult),
+      verificationTime
+    );
   }
 
-  it('Paytm valid proof -> topup "completed", both wallets credited once', async () => {
+  it('Paytm valid-looking proof -> manual review, no wallet credit', async () => {
     resetTopupDb(seedTopup());
     const outcome = await runTopupVerification(
       ['Paytm', 'Money Sent Successfully', '\u20B9120', `To: ${RECEIVER_UPI}`, 'To Jayaraj', 'UPI Ref No: TOP2408240001', istDateLine(2)].join('\n')
     );
     const statuses = (db.state.updates.topups || []).map(u => u.status);
-    const credits = (db.state.inserts.wallet_transactions || []);
-    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ flow: 'topup-valid', outcome, persistedStatuses: statuses, creditCount: credits.length }));
-    expect(statuses).toContain('completed');
-    expect(statuses.every(s => s !== 'manual_review')).toBe(true);
-    expect(credits.length).toBe(2);
+    expect(outcome.manualReview).toBe(true);
+    expect(statuses).toContain('manual_review');
+    expect(db.state.inserts.wallet_transactions || []).toHaveLength(0);
   });
 
-  it('GPay valid proof -> completed + credited (provider parity)', async () => {
+  it('GPay valid-looking proof -> manual review, no wallet credit', async () => {
     resetTopupDb(seedTopup());
     await runTopupVerification(
       ['Google Pay', 'Payment Successful', '\u20B9120', 'To Jayaraj', RECEIVER_UPI, `Date: ${istDateLine(2)}`, 'UPI transaction ID: T7GHDTOP001'].join('\n')
     );
     const statuses = (db.state.updates.topups || []).map(u => u.status);
-    expect(statuses).toContain('completed');
-    expect((db.state.inserts.wallet_transactions || []).length).toBe(2);
+    expect(statuses).toContain('manual_review');
+    expect(db.state.inserts.wallet_transactions || []).toHaveLength(0);
   });
 
   it('PhonePe wrong amount -> rejected, NO wallet credit', async () => {
@@ -302,7 +291,7 @@ describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
     expect(db.state.inserts.wallet_transactions || []).toHaveLength(0);
   });
 
-  it('duplicate UTR -> reverted to rejected, NO wallet credit', async () => {
+  it('OCR UTR is not reserved as approved and cannot credit a wallet', async () => {
     resetTopupDb(seedTopup());
     db.state.results.approved_utrs = { data: null, error: { code: '23505', message: 'unique violation' } };
     const outcome = await runTopupVerification(
@@ -311,8 +300,7 @@ describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
     const statuses = (db.state.updates.topups || []).map(u => u.status);
     console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ flow: 'topup-duplicate-utr', outcome, persistedStatuses: statuses }));
     expect(outcome.credited).toBeFalsy();
-    expect(statuses).toContain('rejected');
-    expect(statuses.every(s => s !== 'manual_review')).toBe(true);
+    expect(statuses).toContain('manual_review');
     expect(db.state.inserts.wallet_transactions || []).toHaveLength(0);
   });
 });

@@ -6,7 +6,13 @@ import { checkAndDeactivateReferrer } from './referralService.js';
 import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
-import { runScreenshotVerification, decidePaymentVerification, reserveApprovedUtr, releaseApprovedUtr } from './verificationService.js';
+import {
+  runScreenshotVerification,
+  requireExternalPaymentConfirmation,
+  decidePaymentVerification,
+  reserveApprovedUtr,
+  releaseApprovedUtr,
+} from './verificationService.js';
 import { getPaymentConfig } from './configService.js';
 import { RECEIVER_UPI, PAYMENT_TIME_WINDOW_MINUTES } from '../config/paymentConfig.js';
 
@@ -312,7 +318,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
   const paymentConfig = await getPaymentConfig();
   const receiverName = paymentConfig.receiver_name || '';
 
-  const { verificationResult, verificationTime, utr } = await runScreenshotVerification({
+  const { verificationResult: ocrResult, verificationTime, utr } = await runScreenshotVerification({
     imageBuffer: imageBuffer || null,
     screenshotUrl: payment.screenshot_url || null,
     expectedAmount: payment.expected_amount,
@@ -321,6 +327,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
     referenceType: 'payment',
     referenceId: payment.id,
   });
+  const verificationResult = requireExternalPaymentConfirmation(ocrResult);
   const { decision } = verificationResult;
 
   // Approved-UTR duplicate gate. A UTR that was already APPROVED (for any
@@ -513,6 +520,7 @@ export async function approvePayment(paymentId, adminId) {
   const { data: payment, error: fetchError } = await supabase.from('payments').select('*').eq('id', paymentId).single();
   if (fetchError || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
   if (!payment.status || !ACTABLE_STATUSES.includes(payment.status)) throw { message: 'Payment is not in an actionable status', code: 'PAYMENT_NOT_PENDING' };
+  if (!payment.screenshot_url) throw { message: 'Payment proof is required for manual approval', code: 'PAYMENT_PROOF_REQUIRED' };
 
   // Defensive approved-UTR gate for admin approvals that carry a UTR
   // (normally only OCR auto-verify sets transaction_id, so this is a no-op).
