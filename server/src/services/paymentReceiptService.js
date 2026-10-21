@@ -1,14 +1,17 @@
 import supabase from '../db/supabase.js';
+import { escapeHtml } from '../utils/helpers.js';
 
 class PaymentReceiptService {
-  async generateReceipt(paymentId) {
-    const { data: payment, error: pErr } = await supabase
-      .from('payments')
-      .select('*, users:user_id(id, full_name, email, mobile)')
-      .eq('id', paymentId)
-      .single();
-    if (pErr) throw pErr;
+  // Ownership gate for receipt lookups. Mirrors paymentService.requirePaymentOwner:
+  // only the payment's owner or an admin may read a receipt. The check runs on
+  // the server against the DB row — no client-supplied owner field is trusted.
+  async #authorizePaymentOwner(payment, requester) {
+    if (payment.user_id !== requester?.id && requester?.role !== 'admin') {
+      throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
+    }
+  }
 
+  async #buildReceipt(payment) {
     const { data: topups } = await supabase
       .from('topups')
       .select('*')
@@ -16,7 +19,7 @@ class PaymentReceiptService {
       .order('created_at', { ascending: false })
       .limit(1);
 
-    const receipt = {
+    return {
       receiptId: `RCP-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
       paymentId: payment.id,
       userName: payment.users?.full_name || 'N/A',
@@ -30,24 +33,35 @@ class PaymentReceiptService {
       createdAt: payment.created_at,
       generatedAt: new Date().toISOString()
     };
+  }
 
-    return receipt;
+  async generateReceipt(paymentId, requester) {
+    const { data: payment, error: pErr } = await supabase
+      .from('payments')
+      .select('*, users:user_id(id, full_name, email, mobile)')
+      .eq('id', paymentId)
+      .single();
+    if (pErr || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
+
+    await this.#authorizePaymentOwner(payment, requester);
+
+    return this.#buildReceipt(payment);
   }
 
   async getUserReceipts(userId, { page = 1, limit = 20 } = {}) {
     const offset = (page - 1) * limit;
     const { data, error, count } = await supabase
       .from('payments')
-      .select('*', { count: 'exact' })
+      .select('*, users:user_id(id, full_name, email, mobile)', { count: 'exact' })
       .eq('user_id', userId)
       .eq('status', 'approved')
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
-    if (error) throw error;
+    if (error) throw { message: 'Failed to fetch payments', code: 'FETCH_FAILED' };
 
     const receipts = [];
     for (const p of data) {
-      receipts.push(await this.generateReceipt(p.id));
+      receipts.push(await this.#buildReceipt(p));
     }
 
     return {
@@ -57,6 +71,19 @@ class PaymentReceiptService {
   }
 
   generateHTML(receipt) {
+    // Every value interpolated into the page is untrusted (user-controlled
+    // profile fields, OCR-derived UTR, DB status) and is HTML-escaped for
+    // its context before rendering.
+    const receiptId = escapeHtml(receipt.receiptId);
+    const createdDate = escapeHtml(new Date(receipt.createdAt).toLocaleDateString('en-IN'));
+    const userName = escapeHtml(receipt.userName);
+    const userEmail = escapeHtml(receipt.userEmail);
+    const utrNumber = escapeHtml(receipt.utrNumber);
+    const planMonths = escapeHtml(receipt.planMonths);
+    const amount = escapeHtml(receipt.amount);
+    const status = escapeHtml(String(receipt.status || '').toUpperCase());
+    const generatedAt = escapeHtml(new Date(receipt.generatedAt).toLocaleString('en-IN'));
+
     return `
 <!DOCTYPE html>
 <html>
@@ -82,17 +109,17 @@ class PaymentReceiptService {
       <h1>ReferralHub</h1>
       <p>Payment Receipt</p>
     </div>
-    <div class="row"><span class="label">Receipt ID</span><span class="value">${receipt.receiptId}</span></div>
-    <div class="row"><span class="label">Date</span><span class="value">${new Date(receipt.createdAt).toLocaleDateString('en-IN')}</span></div>
-    <div class="row"><span class="label">Name</span><span class="value">${receipt.userName}</span></div>
-    <div class="row"><span class="label">Email</span><span class="value">${receipt.userEmail}</span></div>
-    <div class="row"><span class="label">UTR Number</span><span class="value">${receipt.utrNumber}</span></div>
-    <div class="row"><span class="label">Plan</span><span class="value">${receipt.planMonths} month(s)</span></div>
-    <div class="row"><span class="label">Amount</span><span class="value amount">₹${receipt.amount}</span></div>
-    <div class="row"><span class="label">Status</span><span class="status approved">${receipt.status.toUpperCase()}</span></div>
+    <div class="row"><span class="label">Receipt ID</span><span class="value">${receiptId}</span></div>
+    <div class="row"><span class="label">Date</span><span class="value">${createdDate}</span></div>
+    <div class="row"><span class="label">Name</span><span class="value">${userName}</span></div>
+    <div class="row"><span class="label">Email</span><span class="value">${userEmail}</span></div>
+    <div class="row"><span class="label">UTR Number</span><span class="value">${utrNumber}</span></div>
+    <div class="row"><span class="label">Plan</span><span class="value">${planMonths} month(s)</span></div>
+    <div class="row"><span class="label">Amount</span><span class="value amount">₹${amount}</span></div>
+    <div class="row"><span class="label">Status</span><span class="status approved">${status}</span></div>
     <div class="footer">
       <p>This is a computer-generated receipt. No signature required.</p>
-      <p>Generated: ${new Date(receipt.generatedAt).toLocaleString('en-IN')}</p>
+      <p>Generated: ${generatedAt}</p>
     </div>
   </div>
 </body>

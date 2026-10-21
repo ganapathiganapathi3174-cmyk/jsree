@@ -72,3 +72,20 @@ export function isWithinTimeWindow(date1, date2, windowMinutes = 30) {
   const bound = windowMinutes * 60 * 1000;
   return diffMs >= -bound && diffMs <= bound;
 }
+
+// Single-pass HTML entity encoding for untrusted values rendered into
+// HTML text nodes or quoted attributes. Escaping '&' first (and doing the
+// replacement in one pass) prevents double-encoding of already-escaped
+// input; all five meta characters are covered.
+const HTML_ESCAPES = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+};
+
+export function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+}
