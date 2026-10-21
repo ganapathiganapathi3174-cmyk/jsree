@@ -1,0 +1,17 @@
+[
+  {
+    "name": "title present",
+    "status": "PASS",
+    "detail": "title='JSREE \u2014 Premium Community Platform'"
+  },
+  {
+    "name": "body rendered",
+    "status": "PASS",
+    "detail": "len=898"
+  },
+  {
+    "name": "no console errors",
+    "status": "PASS",
+    "detail": "errors=[]"
+  }
+]

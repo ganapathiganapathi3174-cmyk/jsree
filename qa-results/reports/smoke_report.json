@@ -1,0 +1,62 @@
+[
+  {
+    "name": "smoke homepage",
+    "status": "PASS",
+    "detail": "title=JSREE \u2014 Premium Community Platform"
+  },
+  {
+    "name": "smoke no console errors homepage",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "smoke page /register",
+    "status": "PASS",
+    "detail": "body=JSREE\nCreate Account\nStep 1 of 3\nPersonal Information\nFull Name\nEmail\nMobile\nPassword\nConfirm Password\nReferral Code (op"
+  },
+  {
+    "name": "smoke page /login",
+    "status": "PASS",
+    "detail": "body=JSREE\nWelcome Back\nSign in to your account\nEmail\nPassword\nSign In\nDon't have an account? Register\nAdmin Login"
+  },
+  {
+    "name": "smoke page /admin/login",
+    "status": "PASS",
+    "detail": "body=Back to Home\nJSREE Admin Portal\nSecure admin access\nEmail\nPassword\nAdmin Sign In"
+  },
+  {
+    "name": "smoke setup approved user",
+    "status": "PASS",
+    "detail": "ok"
+  },
+  {
+    "name": "smoke approved login -> dashboard",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/dashboard"
+  },
+  {
+    "name": "smoke dashboard renders",
+    "status": "PASS",
+    "detail": "body=JSREE\nDashboard\nProfile\nPayment\nTop-Ups\nReferrals\nChange Plan\nWallet\nNotifications\nReceipts\nChat\nHis"
+  },
+  {
+    "name": "smoke /dashboard/profile",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/dashboard/profile len=383"
+  },
+  {
+    "name": "smoke payment-status page",
+    "status": "PASS",
+    "detail": "body=JSREE\nAccount Activation\nTrack your registration payment status\nSign in to check your payment status.\nGo to Login"
+  },
+  {
+    "name": "smoke admin login -> admin",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/admin"
+  },
+  {
+    "name": "smoke admin dashboard",
+    "status": "PASS",
+    "detail": "body=JSREE Admin\nDashboard\nUsers\nPayments\nTop-Ups\nInactive Users\nPlan Changes\nFinancial Reports\nSuspicious Activity\nChat\nAudi"
+  }
+]

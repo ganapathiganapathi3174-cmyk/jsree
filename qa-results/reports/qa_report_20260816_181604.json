@@ -1,0 +1,62 @@
+[
+  {
+    "name": "setup approved user",
+    "status": "FAIL",
+    "detail": "register failed 201 {'success': True, 'data': {'user': {'id': '3cfea75c-5ec0-4554-8fe0-f28679828cc9', 'full_name': 'QA main', 'email': 'qa_main_181605384@test.com', 'mobile': '9181605384', 'referral_code': 'REF85YMZW', 'current_plan': 120, 'status': 'pending', 'role': 'user', 'avatar_url': None}, 'token': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIzY2ZlYTc1Yy01ZWMwLTQ1NTQtOGZlMC1mMjg2Nzk4MjhjYzkiLCJyb2xlIjoidXNlciIsImlhdCI6MTc4Njg4NDM2OSwiZXhwIjoxNzg3NDg5MTY5fQ.vM3tCWs9IbLLsqr6bg5JJSaa"
+  },
+  {
+    "name": "setup pending user",
+    "status": "FAIL",
+    "detail": "register failed 201 {'success': True, 'data': {'user': {'id': 'acc139f1-6544-4cd1-85dd-d2cf69ac8c23', 'full_name': 'QA pending gate', 'email': 'qap_gate_181609680@test.com', 'mobile': '8181609680', 'referral_code': 'REFWVWWLU', 'current_plan': 120, 'status': 'pending', 'role': 'user', 'avatar_url': None}, 'token': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJhY2MxMzlmMS02NTQ0LTRjZDEtODVkZC1kMmNmNjlhYzhjMjMiLCJyb2xlIjoidXNlciIsImlhdCI6MTc4Njg4NDM3MSwiZXhwIjoxNzg3NDg5MTcxfQ.-aZKpvF77MVl6-d"
+  },
+  {
+    "name": "1.1 public loads",
+    "status": "PASS",
+    "detail": "title=JSREE \u2014 Premium Community Platform"
+  },
+  {
+    "name": "1.2 body rendered",
+    "status": "PASS",
+    "detail": "len=898"
+  },
+  {
+    "name": "1.3 no console errors",
+    "status": "PASS",
+    "detail": "errors=[]"
+  },
+  {
+    "name": "1.4 landing CTA present",
+    "status": "PASS",
+    "detail": "body[:120]='JSREE\\nLogin\\nGet Started\\nGrow Together\\nGrow Together with\\nJSREE\\nJoin our referral network, connect with others, and earn '"
+  },
+  {
+    "name": "1.5 page loads /register",
+    "status": "PASS",
+    "detail": "errs=[]"
+  },
+  {
+    "name": "1.5 page loads /login",
+    "status": "PASS",
+    "detail": "errs=[]"
+  },
+  {
+    "name": "1.5 page loads /admin/login",
+    "status": "PASS",
+    "detail": "errs=[]"
+  },
+  {
+    "name": "2.1 empty submit blocked",
+    "status": "PASS",
+    "detail": "body='JSREE\\nCreate Account\\nStep 1 of 3\\nPersonal Information\\nFull Name\\nEmail\\nMobile\\nPassword\\nConfirm Password\\nReferral Code (optional)\\nNext\\nAlready have an a'"
+  },
+  {
+    "name": "2.2 invalid email blocked",
+    "status": "PASS",
+    "detail": "body='JSREE\\nCreate Account\\nStep 1 of 3\\nPersonal Information\\nFull Name\\nEmail\\nMobile\\nPassword\\nConfirm Password\\nReferral Code (optional)\\nNext\\nAlready have an a'"
+  },
+  {
+    "name": "fatal exception",
+    "status": "FAIL",
+    "detail": "Message: \nStacktrace:\n\tchromedriver!GetHandleVerifier [0x7ff632e5abb5+151b5]\n\tchromedriver!GetHandleVerifier [0x7ff632e5ac10+15210]\n\tchromedriver!(No symbol) [0x7ff632985d6d]\n\tchromedriver!(No symbol) [0x7ff6329e1289]\n\tchromedriver!(No symbol) [0x7ff6329e158c]\n\tchromedriver!(No symbol) [0x7ff632a320"
+  }
+]

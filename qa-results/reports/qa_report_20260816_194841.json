@@ -1,0 +1,312 @@
+[
+  {
+    "name": "setup approved user",
+    "status": "PASS",
+    "detail": "verification={'paymentId': '09468464-3b54-4069-826c-7aec5cdc13d4', 'status': 'approved', 'decision': 'approved', 'reason': None, 'verificationResult': {'ocrConfidence': 90, 'recoveredFromBands': False, 'extractedAmounts': [120, 2026], 'extractedUPIs': ['jayarajj126-3@okicici'], 'extractedUTRs': ['QA194846227UTR01'], 'extractedDates': ['2026-08-16T00:00:00.000Z'], 'amountMatch': True, 'upiMatch': True, 'utr': 'QA194846227UTR01', 'dateValid': True, 'decision': 'approved', 'reason': None}, 'elapsed"
+  },
+  {
+    "name": "setup pending user",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "1.1 public loads",
+    "status": "PASS",
+    "detail": "title=JSREE \u2014 Premium Community Platform"
+  },
+  {
+    "name": "1.2 body rendered",
+    "status": "PASS",
+    "detail": "len=898"
+  },
+  {
+    "name": "1.3 no console errors",
+    "status": "PASS",
+    "detail": "errors=[]"
+  },
+  {
+    "name": "1.4 landing CTA present",
+    "status": "PASS",
+    "detail": "body[:120]='JSREE\\nLogin\\nGet Started\\nGrow Together\\nGrow Together with\\nJSREE\\nJoin our referral network, connect with others, and earn '"
+  },
+  {
+    "name": "1.5 page loads /register",
+    "status": "PASS",
+    "detail": "errs=[]"
+  },
+  {
+    "name": "1.5 page loads /login",
+    "status": "PASS",
+    "detail": "errs=[]"
+  },
+  {
+    "name": "1.5 page loads /admin/login",
+    "status": "PASS",
+    "detail": "errs=[]"
+  },
+  {
+    "name": "2.1 empty submit blocked",
+    "status": "PASS",
+    "detail": "body='JSREE\\nCreate Account\\nStep 1 of 3\\nPersonal Information\\nFull Name\\nEmail\\nMobile\\nPassword\\nConfirm Password\\nReferral Code (optional)\\nNext\\nAlready have an a'"
+  },
+  {
+    "name": "2.2 invalid email blocked",
+    "status": "PASS",
+    "detail": "body='JSREE\\nCreate Account\\nStep 1 of 3\\nPersonal Information\\nFull Name\\nEmail\\nMobile\\nPassword\\nConfirm Password\\nReferral Code (optional)\\nNext\\nAlready have an a'"
+  },
+  {
+    "name": "3.1 payment instructions shown",
+    "status": "PASS",
+    "detail": "body='JSREE\\nCreate Account\\nStep 3 of 3\\nComplete Payment\\nPayment Instructions\\nSend exactly ?120 to the UPI ID below:\\njayarajj126-3@okicici\\nUpload Payment Screenshot\\nClick to upload JPG, PNG, WEBP (max 5MB)\\nB'"
+  },
+  {
+    "name": "3.2 OCR approved -> dashboard",
+    "status": "FAIL",
+    "detail": "url=https://jsree.vercel.app/register?plan=120, body='JSREE\\nCreate Account\\nStep 3 of 3\\nComplete Payment\\nPayment Instructions\\nSend exactly ?120 to the UPI ID below:\\njayarajj12'"
+  },
+  {
+    "name": "3.3 fallback pending page",
+    "status": "FAIL",
+    "detail": "url=https://jsree.vercel.app/register?plan=120"
+  },
+  {
+    "name": "4.1 pending login -> payment-status",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/payment-status"
+  },
+  {
+    "name": "4.2 payment-status shows pending",
+    "status": "PASS",
+    "detail": "body='JSREE\\nAccount Activation\\nTrack your registration payment status\\nPayment under review\\nYour account is pending activation. You will be able to access the dashboard once your registration payment is appr'"
+  },
+  {
+    "name": "4.3 direct dashboard blocked for pending",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/payment-status"
+  },
+  {
+    "name": "5.1 approved login -> dashboard",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/dashboard"
+  },
+  {
+    "name": "5.2 dashboard content",
+    "status": "PASS",
+    "detail": "body='JSREE\\nDashboard\\nProfile\\nPayment\\nTop-Ups\\nReferrals\\nChange Plan\\nWallet\\nNotifications\\nReceipts\\nChat\\nHistory\\nSecurity\\nLogout\\nDashboard\\n1\\nJSREE\\nQM\\nUser\\nUse'"
+  },
+  {
+    "name": "5.3 dashboard no console errors",
+    "status": "PASS",
+    "detail": "errors=[]"
+  },
+  {
+    "name": "5.4 /dashboard/profile loads",
+    "status": "PASS",
+    "detail": "len=379 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/payments loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/topups loads",
+    "status": "PASS",
+    "detail": "len=228 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/referrals loads",
+    "status": "PASS",
+    "detail": "len=360 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/plan-change loads",
+    "status": "PASS",
+    "detail": "len=266 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/chat loads",
+    "status": "PASS",
+    "detail": "len=219 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/history loads",
+    "status": "PASS",
+    "detail": "len=231 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/wallet loads",
+    "status": "PASS",
+    "detail": "len=266 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/notifications loads",
+    "status": "PASS",
+    "detail": "len=310 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/receipts loads",
+    "status": "PASS",
+    "detail": "len=268 errs=[]"
+  },
+  {
+    "name": "5.4 /dashboard/security loads",
+    "status": "PASS",
+    "detail": "len=334 errs=[]"
+  },
+  {
+    "name": "6.1 wrong password stays on login",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/login, body=\"JSREE\\nWelcome Back\\nSign in to your account\\nEmail\\nPassword\\nSign In\\nDon't have an account? Register\\nAdmin Login\""
+  },
+  {
+    "name": "6.2 not navigated to dashboard",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/login"
+  },
+  {
+    "name": "7.1 wallet balance API",
+    "status": "PASS",
+    "detail": "status=200, resp={'balance': 0}"
+  },
+  {
+    "name": "7.2 topups page loads",
+    "status": "PASS",
+    "detail": "body='JSREE\\nDashboard\\nProfile\\nPayment\\nTop-Ups\\nReferrals\\nChange Plan\\nWallet\\nNotifications\\nReceipts\\nChat\\nHistory\\nSecurity\\nLogout\\nDashboard\\n/\\nTopups\\n1\\nJSREE\\nQM\\nUser\\nUser'"
+  },
+  {
+    "name": "8.1 referral code API",
+    "status": "PASS",
+    "detail": "status=200, data={'referralCode': 'REF6W5JZ3', 'status': 'active'}"
+  },
+  {
+    "name": "8.2 referrals page loads",
+    "status": "PASS",
+    "detail": "body='JSREE\\nDashboard\\nProfile\\nPayment\\nTop-Ups\\nReferrals\\nChange Plan\\nWallet\\nNotifications\\nReceipts\\nChat\\nHistory\\nSecurity\\nLogout\\nDashboard\\n/\\nReferrals\\n1\\nJSREE\\nQM\\nUser\\nU'"
+  },
+  {
+    "name": "9.1 plan change API",
+    "status": "PASS",
+    "detail": "status=201, resp={'success': True, 'data': {'id': 'feda15b0-66f7-4093-8fb1-6b29750d7b3a', 'user_id': '720191c7-8929-47dd-a590-c6eca167b91"
+  },
+  {
+    "name": "9.2 plan-change page loads",
+    "status": "PASS",
+    "detail": "body='JSREE\\nDashboard\\nProfile\\nPayment\\nTop-Ups\\nReferrals\\nChange Plan\\nWallet\\nNotifications\\nReceipts\\nChat\\nHistory\\nSecurity\\nLogout\\nDashboard\\n/\\nPlan change\\n1\\nJSREE\\nQM\\nUser'"
+  },
+  {
+    "name": "10.1 notifications API",
+    "status": "PASS",
+    "detail": "status=200"
+  },
+  {
+    "name": "10.2 notifications page loads",
+    "status": "PASS",
+    "detail": "body='JSREE\\nDashboard\\nProfile\\nPayment\\nTop-Ups\\nReferrals\\nChange Plan\\nWallet\\nNotifications\\nReceipts\\nChat\\nHistory\\nSecurity\\nLogout\\nDashboard\\n/\\nNotifications\\n1\\nJSREE\\nQM\\nUs'"
+  },
+  {
+    "name": "11.1 conversations API",
+    "status": "PASS",
+    "detail": "status=200"
+  },
+  {
+    "name": "11.2 chat page loads",
+    "status": "PASS",
+    "detail": "body='JSREE\\nDashboard\\nProfile\\nPayment\\nTop-Ups\\nReferrals\\nChange Plan\\nWallet\\nNotifications\\nReceipts\\nChat\\nHistory\\nSecurity\\nLogout\\nDashboard\\n/\\nChat\\n1\\nJSREE\\nQM\\nUser\\nUser\\nC'"
+  },
+  {
+    "name": "14.1 invalid token rejected",
+    "status": "PASS",
+    "detail": "status=401"
+  },
+  {
+    "name": "14.2 admin without token blocked",
+    "status": "PASS",
+    "detail": "status=401"
+  },
+  {
+    "name": "14.3 admin as non-admin blocked",
+    "status": "PASS",
+    "detail": "status=403"
+  },
+  {
+    "name": "14.4 unknown login rejected",
+    "status": "PASS",
+    "detail": "status=401"
+  },
+  {
+    "name": "14.5 register with XSS name run",
+    "status": "PASS",
+    "detail": "status=201"
+  },
+  {
+    "name": "12.1 mobile public renders",
+    "status": "PASS",
+    "detail": "len=898"
+  },
+  {
+    "name": "12.2 mobile login renders",
+    "status": "PASS",
+    "detail": "body=\"JSREE\\nWelcome Back\\nSign in to your account\\nEmail\\nPassword\\nSign In\\nDon't have an account? Register\\nAdmin Login\""
+  },
+  {
+    "name": "13.1 admin login -> admin",
+    "status": "PASS",
+    "detail": "url=https://jsree.vercel.app/admin"
+  },
+  {
+    "name": "13.2 /admin/dashboard loads",
+    "status": "PASS",
+    "detail": "len=422 errs=[]"
+  },
+  {
+    "name": "13.2 /adminusers loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "13.2 /adminpayments loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "13.2 /admintopups loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "13.2 /admininactive-users loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "13.2 /adminplan-changes loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "13.2 /adminchat loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "13.2 /adminaudit-logs loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "13.2 /adminfinancial-reports loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "13.2 /adminsuspicious-activity loads",
+    "status": "PASS",
+    "detail": "len=69 errs=[]"
+  },
+  {
+    "name": "15.1 /health fast",
+    "status": "PASS",
+    "detail": "status=200 time=1.05s"
+  }
+]

@@ -19,3 +19,8 @@ coverage/
 
 .vercel
 .env*
+
+referral-platform_snapshot_*.zip
+__pycache__/
+*.pyc
+*.pid

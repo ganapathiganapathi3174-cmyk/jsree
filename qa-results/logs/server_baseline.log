@@ -1,0 +1,4 @@
+[cors] allowed origins: https://jsree.vercel.app, http://localhost:5173, http://localhost:3000
+Server running on port 5000
+[auto-expire] Expired 6 stale payment request(s)
+[auto-expire] Expired 5 stale payment request(s)
