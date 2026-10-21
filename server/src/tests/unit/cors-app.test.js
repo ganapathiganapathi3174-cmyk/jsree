@@ -96,6 +96,20 @@ describe('production CORS through the Express app', () => {
     expect(response.headers.get('access-control-allow-headers')).toMatch(/Content-Type/i);
   });
 
+  it('answers register OPTIONS before auth/limiter with the exact origin, POST, and required headers', async () => {
+    const response = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'OPTIONS',
+      headers: corsHeaders()
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+    expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+    expect(response.headers.get('access-control-allow-methods')).toMatch(/\bPOST\b/);
+    expect(response.headers.get('access-control-allow-headers')).toMatch(/Authorization/i);
+    expect(response.headers.get('access-control-allow-headers')).toMatch(/Content-Type/i);
+  });
+
   it('keeps the local Vite development origin enabled through the actual app', async () => {
     const response = await fetch(`${baseUrl}/api/health`, {
       method: 'OPTIONS',
