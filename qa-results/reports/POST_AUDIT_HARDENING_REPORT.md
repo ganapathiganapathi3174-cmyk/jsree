@@ -120,7 +120,7 @@ Root cause of the former flakiness (three independent causes, none of them produ
 except the admin one below):
 
 1. **Two stale login expectations.** `api.test.js` logged in a hard-coded seeded account
-   (`test1@example.com`) and expected success, contradicting confirmed **BUG-012**
+   (`[REDACTED]`) and expected success, contradicting confirmed **BUG-012**
    behaviour. `authService.login()` order is now verified line-by-line
    (`server/src/services/authService.js:107-161`): not-found / deleted / inactive are
    checked first, then the **password (126-129)**, then admin-role (131) and **only then**
@@ -185,7 +185,7 @@ alignment could NOT be verified — no configuration change was made. Details an
 
 `adminLogin()` looks the admin up by `ADMIN_EMAIL` and, when no row matches, auto-inserts
 one with the **hard-coded `referral_code: 'ADMIN001'`** (line 221). In the shared
-database an admin row already exists under a **different email** (`jayaraj@gmail.com`)
+database an admin row already exists under a **different email** (`[REDACTED]`)
 holding `ADMIN001`, so the insert violates the unique constraint, returns `null`, and the
 endpoint answers:
 
@@ -197,13 +197,13 @@ endpoint answers:
 the failure is the missing row lookup + the unhandled `null`, not the password.
 
 Two components remain: (i) a **configuration/identity conflict** between the documented
-administrator (`admin@gmail.com`) and an undocumented live row (`jayaraj@gmail.com`) that
+administrator (`[REDACTED]`) and an undocumented live row (`[REDACTED]`) that
 squats the fixed `ADMIN001` code, and (ii) a **code-fragility defect** (unhandled `null` →
 misleading 500 instead of a clear error).
 
 Options — each still needs your decision; none has been implemented:
 
-- **(a) Config:** point `ADMIN_EMAIL` at the existing row (`jayaraj@gmail.com`). **Not
+- **(a) Config:** point `ADMIN_EMAIL` at the existing row (`[REDACTED]`). **Not
   applied** — that identity is not documented anywhere in the project and the configured
   password does not match that row's stored hash (§10.1, §10.3). Would also adopt an
   operationally-observed-but-undocumented account as the platform administrator.
@@ -274,7 +274,7 @@ instead.
    because the intended administrator could not be confirmed as the seeded account and the
    configured password does not match that row's stored hash. Recommended next decision:
    authorise (b)+(d) (guard the insert result, then align/free the stray row), or confirm
-   that `jayaraj@gmail.com` is in fact the intended administrator. Then verify production
+   that `[REDACTED]` is in fact the intended administrator. Then verify production
    admin login works.
 2. Adopt the integration procedure: **restart the server before an integration pass**;
    expect **36/37** with the single, clearly-labelled admin-login red until DEFECT-A is
@@ -296,19 +296,19 @@ variable, database row or business rule was changed. No credentials are reproduc
 
 | Source | Administrator identity |
 |---|---|
-| `.env.example` (`ADMIN_EMAIL`) | `admin@gmail.com` |
-| `README.md` | `admin@gmail.com` |
-| `server/.env.example` | `admin@gmail.com` |
-| `server/.env` (local, non-secret key) | `admin@gmail.com` |
-| `server/src/scripts/production-final-check.js` (hard-codes login checks) | `admin@gmail.com` |
+| `.env.example` (`ADMIN_EMAIL`) | `[REDACTED]` |
+| `README.md` | `[REDACTED]` |
+| `server/.env.example` | `[REDACTED]` |
+| `server/.env` (local, non-secret key) | `[REDACTED]` |
+| `server/src/scripts/production-final-check.js` (hard-codes login checks) | `[REDACTED]` |
 | `render.yaml` (`ADMIN_EMAIL`) | value `sync: false` (set in Render dashboard, not in repo) |
-| Git history (`git log -S 'ADMIN_EMAIL=admin@gmail.com'`) | `55d7844` |
-| **Live DB `users` row with `role='admin'`** | **`jayaraj@gmail.com`** (id `837d89f3-…`, `referral_code='ADMIN001'`) |
-| Code / docs referencing `jayaraj@gmail.com` | **none** (searched all tracked + untracked files) |
-| `git log -S 'jayaraj@gmail.com'` | empty |
+| Git history (`git log -S 'ADMIN_EMAIL=[REDACTED]'`) | `55d7844` |
+| **Live DB `users` row with `role='admin'`** | **`[REDACTED]`** (id `837d89f3-…`, `referral_code='ADMIN001'`) |
+| Code / docs referencing `[REDACTED]` | **none** (searched all tracked + untracked files) |
+| `git log -S '[REDACTED]'` | empty |
 
-Every in-repo authoritative source names `admin@gmail.com`. The sole live admin row is
-`jayaraj@gmail.com`, which is referenced **nowhere** in the project and is not created by
+Every in-repo authoritative source names `[REDACTED]`. The sole live admin row is
+`[REDACTED]`, which is referenced **nowhere** in the project and is not created by
 any seed script (`server/src/scripts/seedDefaultUsers.js` provisions only QA users
 `qa.{120,500,1000}@jsree.local` and never touches admin rows) or migration.
 
@@ -318,7 +318,7 @@ admin actions by it (incl. `admin_login`, `approve_payment`, `delete_payment_reg
 `ip_logs` contains 57 `admin_action` events (newest `2026-10-11`). Because
 `logAction(adminUser.id, …, 'admin_login', …)` is reached only **after** a successful
 password match and row resolution (`authService.js:230`), these rows prove
-`ADMIN_EMAIL` was `jayaraj@gmail.com` at some point. This **contradicts** the current,
+`ADMIN_EMAIL` was `[REDACTED]` at some point. This **contradicts** the current,
 documented configuration — hence the identity could not be conclusively established.
 
 ### 10.2 Verified root cause
@@ -328,7 +328,7 @@ documented configuration — hence the identity could not be conclusively establ
   `process.env.ADMIN_PASSWORD_HASH` — **env only, never the DB row's hash**.
 - It then looks the user up by `ADMIN_EMAIL`. If absent it **inserts** a new admin with the
   fixed `referral_code: 'ADMIN001'` (line 221). Since `ADMIN001` is already held by the
-  `jayaraj@gmail.com` row, the insert fails its unique constraint → returned `data` is
+  `[REDACTED]` row, the insert fails its unique constraint → returned `data` is
   `null` → `adminUser.id` at line 228 throws → the endpoint returns
   `500 ADMIN_LOGIN_FAILED "Cannot read properties of null (reading 'id')"`.
 - The failure is **not** the password (the configured hash verifies against the expected
@@ -343,7 +343,7 @@ Read-only probes (bcrypt comparisons, no values logged):
 - `bcrypt(<documented admin password>, ADMIN_PASSWORD_HASH)` → **true**
 
 The configured hash matches the **documented** admin password but does **not** match the
-`jayaraj@gmail.com` row's stored hash. Therefore the configured credential cannot be shown
+`[REDACTED]` row's stored hash. Therefore the configured credential cannot be shown
 to belong to the seeded account → the instruction's hard-stop condition was met and
 **Option A was not applied.**
 
@@ -395,7 +395,7 @@ as a separate housekeeping item.
 - **Configuration change applied: none.** Identity not confirmed + credential not aligned to
   the seeded row ⇒ per the stop rules, no `.env`, `render.yaml`, DB row, or code was changed.
 - **Open decisions for the owner:** (i) confirm the intended administrator
-  (`admin@gmail.com` vs `jayaraj@gmail.com`); (ii) if `admin@gmail.com`, authorise freeing
+  (`[REDACTED]` vs `[REDACTED]`); (ii) if `[REDACTED]`, authorise freeing
   `ADMIN001` / aligning the stray row (data action) and/or the error-handling guard (b);
   (iii) verify the production Render env values against the production admin row.
 - No commit was made; git state is unchanged from §8 apart from the one new test file.
