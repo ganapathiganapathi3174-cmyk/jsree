@@ -848,7 +848,7 @@ export async function runAdditionalOCRPasses(imageBuffer) {
   ];
 }
 
-export async function runAmountRecoveryOCR(imageBuffer) {
+export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null) {
   const processed = await preprocessImage(imageBuffer);
   const meta = await sharp(processed).metadata();
   const W = meta.width, H = meta.height;
@@ -882,6 +882,16 @@ export async function runAmountRecoveryOCR(imageBuffer) {
       const r4 = await recognizeWithSharedWorker(invertedBuf);
       if (r4.text) recovered.push(r4.text);
     } catch (_) { /* best-effort */ }
+
+    // Early exit ONLY when the expected amount has been recovered from the
+    // strips read so far — acceptance is identical to the full scan (the
+    // caller only checks matchAmount against expectedAmount), but tall
+    // screenshots stop as soon as the amount band is read. When no
+    // expectedAmount is supplied the full scan runs (diagnostic use).
+    if (expectedAmount != null &&
+        extractAmountsFromStrips(recovered.join('\n')).some(a => Math.abs(a - expectedAmount) < 0.01)) {
+      break;
+    }
   }
   return extractAmountsFromStrips(recovered.join('\n'));
 }
@@ -901,11 +911,16 @@ export async function runAmountRecoveryOCR(imageBuffer) {
 //
 // Returns additional amount candidates (may be empty).
 // ─────────────────────────────────────────────────────────────
-export async function runDeepAmountRecovery(imageBuffer) {
+export async function runDeepAmountRecovery(imageBuffer, expectedAmount = null) {
   const processed = await preprocessImage(imageBuffer);
   const meta = await sharp(processed).metadata();
   const W = meta.width, H = meta.height;
   const candidates = [];
+  // True once the expected amount has been seen in any strategy's text —
+  // subsequent (expensive) strategies are then skipped. Acceptance is
+  // identical: the caller only tests candidates against expectedAmount.
+  const expectedFound = () => expectedAmount != null &&
+    extractAmountsFromStrips(candidates.join('\n')).some(a => Math.abs(a - expectedAmount) < 0.01);
 
   const TOP_REGION_H = Math.floor(H * 0.45);
   try {
@@ -933,12 +948,13 @@ export async function runDeepAmountRecovery(imageBuffer) {
       const buf = await build();
       const r = await recognizeWithSharedWorker(buf);
       if (r.text) candidates.push(r.text);
+      if (expectedFound()) break;
     }
   } catch (_) { /* best-effort */ }
 
   const STRIP_H = 180;
   const OVERLAP = 90;
-  for (let y = 0; y < TOP_REGION_H; y += (STRIP_H - OVERLAP)) {
+  for (let y = 0; !expectedFound() && y < TOP_REGION_H; y += (STRIP_H - OVERLAP)) {
     const h = Math.min(STRIP_H, TOP_REGION_H - y);
     try {
       const stripBuf = await sharp(processed)
@@ -962,7 +978,9 @@ export async function runDeepAmountRecovery(imageBuffer) {
         const buf = await build();
         const r = await recognizeWithSharedWorker(buf);
         if (r.text) candidates.push(r.text);
+        if (expectedFound()) break;
       }
+      if (expectedFound()) break;
     } catch (_) { /* best-effort */ }
   }
 
@@ -1190,14 +1208,35 @@ export function matchUPIWithRecovery(extractedUPIs, receiverUPI) {
   const MIN_MASKED_LOCAL_PART = 4;
   const [expLocal, expDomain] = norm.split('@');
   if (expLocal && expDomain) {
+    // OCR renders GPay's leading "••••" mask bullets as letters/dots/zeros
+    // (e.g. "••••26-3@okicici" -> "ee26-3@okicici", "es0026-3@okicici").
+    // Before the suffix test, strip ONE leading run of mask-noise characters
+    // [A-Za-z0] from the candidate local-part. The stripped remainder must
+    // still start with a digit and pass the same suffix+domain+length checks
+    // below — never a match on the noise itself.
+    const stripMaskNoise = (local) => {
+      const stripped = local.replace(/^[A-Za-z0]{1,8}/, '');
+      return stripped !== local && /^\d/.test(stripped) ? stripped : null;
+    };
     for (const c of allCandidates) {
       if (!c || c.length < 5) continue;
-      const [candLocal, candDomain] = c.split('@');
-      if (!candLocal || !candDomain) continue;
+      const [rawLocal, candDomain] = c.split('@');
+      if (!rawLocal || !candDomain) continue;
       // Domain must match exactly
       if (candDomain !== expDomain) continue;
+      // Try the raw local-part, then the mask-noise-stripped form.
+      const localForms = [rawLocal];
+      const strippedLocal = stripMaskNoise(rawLocal);
+      if (strippedLocal) localForms.push(strippedLocal);
+      let candLocal = null;
+      for (const form of localForms) {
+        if (form.length >= MIN_MASKED_LOCAL_PART && expLocal.endsWith(form)) {
+          candLocal = form;
+          break;
+        }
+      }
       // Candidate local-part must be a suffix of expected local-part
-      if (!expLocal.endsWith(candLocal)) continue;
+      if (!candLocal) continue;
       // Must have meaningful local-part length
       if (candLocal.length < MIN_MASKED_LOCAL_PART) continue;
       // Must not be the full UPI (exact match already handled)

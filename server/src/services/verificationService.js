@@ -190,6 +190,26 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
 
     // ── Additional OCR passes (upscaled + thresholded) ──
     // Run when primary pass is missing key data to improve recall.
+    // Skipped when the primary pass already extracted EVERY required field
+    // (amount, UPI, UTR, date+time, success status, payee name) — the two
+    // extra full-page OCR runs then add no recall, only ~2× latency.
+    const primaryHasTimeEntry = extractedDateTimes.some(e => e.hasTime);
+    const primaryComplete =
+      extractedAmounts.length > 0 &&
+      extractedUPIs.length > 0 &&
+      extractedUTRs.length > 0 &&
+      primaryHasTimeEntry &&
+      transactionStatus?.status === 'success' &&
+      extractedReceiverNames.length > 0;
+    if (primaryComplete) {
+      console.log('[VERIFICATION TIMING]', JSON.stringify({
+        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+        phase: 'additional_ocr',
+        durationMs: 0,
+        skipped: true,
+        reason: 'primary_pass_complete',
+      }));
+    } else {
     try {
       const additionalStart = Date.now();
       const additionalPasses = await runAdditionalOCRPasses(buffer);
@@ -238,6 +258,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       }
       ocrPassInfo.candidatesFromPasses = { amounts: extractedAmounts, upis: extractedUPIs, utrs: extractedUTRs };
     } catch (e) { /* additional passes are best-effort */ }
+    }
 
   } catch (ocrErr) {
     console.log('[VERIFICATION DEBUG]', JSON.stringify({
@@ -339,7 +360,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   if (!amountMatch && !skipAmountRecovery) {
     try {
       const stripStart = Date.now();
-      const recovered = await runAmountRecoveryOCR(buffer);
+      const recovered = await runAmountRecoveryOCR(buffer, expectedAmount);
       stripRecoveryMs = Date.now() - stripStart;
       console.log('[VERIFICATION TIMING]', JSON.stringify({
         reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
@@ -359,7 +380,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   if (!amountMatch && !skipAmountRecovery) {
     try {
       const deepStart = Date.now();
-      const deepRecovered = await runDeepAmountRecovery(buffer);
+      const deepRecovered = await runDeepAmountRecovery(buffer, expectedAmount);
       deepRecoveryMs = Date.now() - deepStart;
       console.log('[VERIFICATION TIMING]', JSON.stringify({
         reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
