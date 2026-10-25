@@ -28,7 +28,7 @@ export default function AdminPayments() {
     catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
   };
   const handleDeleteUser = async (userId) => {
-    try { await api.delete(`/admin/users/${userId}`); toast.success('User deleted'); setConfirmAction(null); load(); }
+    try { await api.delete(`/admin/users/${userId}?soft=true`); toast.success('User disabled (soft deleted)'); setConfirmAction(null); load(); }
     catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
   };
   const handleDeletePayment = async (paymentId) => {
@@ -176,13 +176,13 @@ export default function AdminPayments() {
             await handleDeleteUser(confirmAction.userId);
           }
         }}
-        title={confirmAction?.paymentId ? 'Delete Registration' : 'Delete User'}
+        title={confirmAction?.paymentId ? 'Delete Registration' : 'Disable User (Soft Delete)'}
         message={
           confirmAction?.paymentId
             ? `This will permanently delete the pending registration and payment for "${confirmAction.userName || 'this user'}". This action cannot be undone. If the account has financial records, deletion will be blocked.`
-            : 'Are you sure? This action cannot be undone.'
+            : 'This will disable access (soft delete). The user will be marked as deleted and cannot log in. All existing records will be preserved for administrative review.'
         }
-        confirmText={confirmAction?.paymentId ? 'Delete Registration' : 'Delete'}
+        confirmText={confirmAction?.paymentId ? 'Delete Registration' : 'Disable'}
         confirmVariant="danger"
       />
     </div>

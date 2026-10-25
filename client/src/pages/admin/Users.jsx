@@ -58,9 +58,9 @@ export default function AdminUsers() {
       } else if (action === 'deactivate') {
         await api.put(`/admin/users/${userId}/status`, { status: 'inactive', reason: 'Admin deactivation' });
         toast.success('User deactivated');
-      } else if (action === 'delete') {
-        await api.delete(`/admin/users/${userId}`);
-        toast.success('User deleted successfully');
+      } else       if (action === 'delete') {
+        await api.delete(`/admin/users/${userId}?soft=true`);
+        toast.success('User disabled (soft deleted) successfully');
       }
       setConfirmAction(null); setDetailUser(null); load(page);
     } catch (err) { toast.error(err.response?.data?.message || 'Action failed'); }
@@ -79,13 +79,13 @@ export default function AdminUsers() {
   };
 
   const confirmTitle = confirmAction?.action === 'delete'
-    ? 'Delete user permanently?'
+    ? 'Disable user (soft delete)?'
     : confirmAction?.action === 'activate'
       ? 'Activate user?'
       : 'Deactivate user?';
 
   const confirmMessage = confirmAction?.action === 'delete'
-    ? `User: ${confirmAction.user?.full_name || 'Unknown'}\nEmail: ${confirmAction.user?.email || '-'}\nCurrent Plan: ${PLAN_MAP[confirmAction.user?.current_plan]?.label || '-'}${confirmAction.user?.id && pendingPlanChanges[confirmAction.user.id] ? `\nPending Request: ${PLAN_MAP[pendingPlanChanges[confirmAction.user.id]]?.label || '-'}` : ''}\n\nThis will permanently remove this user's account and all user-owned data. This action cannot be undone.`
+    ? `User: ${confirmAction.user?.full_name || 'Unknown'}\nEmail: ${confirmAction.user?.email || '-'}\nCurrent Plan: ${PLAN_MAP[confirmAction.user?.current_plan]?.label || '-'}${confirmAction.user?.id && pendingPlanChanges[confirmAction.user.id] ? `\nPending Request: ${PLAN_MAP[pendingPlanChanges[confirmAction.user.id]]?.label || '-'}` : ''}\n\nThis will disable access (soft delete). The user will be marked as deleted and cannot log in. All existing records (payments, wallet, referrals, audit logs) will be preserved for administrative review.`
     : confirmAction?.action === 'activate'
       ? 'This user will regain access to their account and the platform.'
       : 'This user will lose access to their account until reactivated.';
@@ -146,7 +146,7 @@ export default function AdminUsers() {
                         <button onClick={() => openUserDetail(u)} className="w-10 h-10 hover:bg-primary-500/15 rounded-xl border border-slate-500/20 text-slate-400 hover:text-primary-400 flex items-center justify-center" title="View details"><Eye className="h-4 w-4" /></button>
                         {u.status !== 'active' && <button onClick={() => setConfirmAction({ action: 'activate', id: u.id, label: 'activate this user' })} className="w-10 h-10 hover:bg-success-500/15 rounded-xl border border-slate-500/20 text-success-400 flex items-center justify-center" title="Activate user"><UserCheck className="h-4 w-4" /></button>}
                         {u.status === 'active' && <button onClick={() => setConfirmAction({ action: 'deactivate', id: u.id, label: 'deactivate this user' })} className="w-10 h-10 hover:bg-warning-500/15 rounded-xl border border-slate-500/20 text-warning-400 flex items-center justify-center" title="Deactivate user"><UserX className="h-4 w-4" /></button>}
-                        <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="w-10 h-10 hover:bg-error-500/15 rounded-xl border border-slate-500/20 text-error-400 flex items-center justify-center" title="Permanently delete this user and all their data"><Trash2 className="h-4 w-4" /></button>
+                         <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="w-10 h-10 hover:bg-error-500/15 rounded-xl border border-slate-500/20 text-error-400 flex items-center justify-center" title="Disable user (soft delete); preserves all data"><Trash2 className="h-4 w-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -261,7 +261,7 @@ export default function AdminUsers() {
         onConfirm={() => handleAction(confirmAction?.action, confirmAction?.id)}
         title={confirmTitle}
         message={confirmMessage}
-        confirmText={confirmAction?.action === 'delete' ? 'Delete' : confirmAction?.action === 'activate' ? 'Activate' : 'Deactivate'}
+        confirmText={confirmAction?.action === 'delete' ? 'Disable' : confirmAction?.action === 'activate' ? 'Activate' : 'Deactivate'}
         confirmVariant={confirmAction?.action === 'delete' ? 'danger' : 'success'}
       />
     </div>

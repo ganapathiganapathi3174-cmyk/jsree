@@ -175,26 +175,22 @@ async function removeStorageObjects(paths = []) {
 }
 
 export async function deleteUser(userId, softDelete = false, adminId = null) {
-  const { data: user, error: fetchError } = await supabase.from('users').select('id, role').eq('id', userId).single();
+  const { data: user, error: fetchError } = await supabase.from('users').select('id, role, status').eq('id', userId).single();
   if (fetchError || !user) throw { message: 'User not found', code: 'USER_NOT_FOUND' };
   if (user.role === 'admin') throw { message: 'Cannot delete admin user', code: 'CANNOT_DELETE_ADMIN' };
 
-  if (softDelete) {
-    const { error } = await supabase.from('users').update({ status: 'deleted' }).eq('id', userId);
-    if (error) throw { message: 'Failed to delete user', code: 'DELETE_FAILED' };
-    await logAction(adminId, 'admin', 'soft_delete_user', userId, 'user', {});
+  // Admin UI delete action must always be soft-delete only. All existing records
+  // (payments, wallet, UTR references, approvals, notifications, referrals, IP logs,
+  // audit logs) are preserved. Do not call the destructive admin_delete_user RPC.
+  if (user.status === 'deleted') {
+    await logAction(adminId, 'admin', 'soft_delete_user', userId, 'user', { alreadyDeleted: true });
     return { message: 'User soft deleted', userId };
   }
 
-  // Atomic, transactional, FK-safe deletion via SECURITY DEFINER RPC.
-  const { data, error } = await supabase.rpc('admin_delete_user', {
-    p_user_id: userId,
-    p_admin_id: adminId
-  });
-  if (error) throw { message: 'Failed to delete user', code: rpcErrorCode(error.message) };
-
-  await removeStorageObjects(data?.storagePaths);
-  return { message: 'User permanently deleted', userId };
+  const { error } = await supabase.from('users').update({ status: 'deleted' }).eq('id', userId);
+  if (error) throw { message: 'Failed to delete user', code: 'DELETE_FAILED' };
+  await logAction(adminId, 'admin', 'soft_delete_user', userId, 'user', {});
+  return { message: 'User soft deleted', userId };
 }
 
 export async function deleteTopup(topupId, adminId) {

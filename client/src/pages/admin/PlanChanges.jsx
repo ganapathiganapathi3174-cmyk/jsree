@@ -38,8 +38,8 @@ export default function PlanChanges() {
 
   const handleDeleteUser = async (userId) => {
     try {
-      await api.delete(`/admin/users/${userId}`);
-      toast.success('User deleted successfully');
+      await api.delete(`/admin/users/${userId}?soft=true`);
+      toast.success('User disabled (soft deleted) successfully');
       setConfirmDelete(null);
       load();
     } catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
@@ -196,9 +196,9 @@ export default function PlanChanges() {
         isOpen={!!confirmDelete}
         onClose={() => setConfirmDelete(null)}
         onConfirm={() => handleDeleteUser(confirmDelete?.user_id)}
-        title="Delete User Permanently?"
-        message={confirmDelete ? `User: ${confirmDelete.user?.full_name || confirmDelete.user_email || 'Unknown'}\nEmail: ${confirmDelete.user?.email || '-'}\nCurrent Plan: ${PLAN_MAP[confirmDelete.current_plan]?.label || '-'}\nRequested Plan: ${PLAN_MAP[confirmDelete.requested_plan]?.label || '-'}\nRequest Status: ${confirmDelete.status}\n\nThis permanently deletes the user account and all user-owned data. This action cannot be undone.` : ''}
-        confirmText="Delete User"
+        title="Disable User (Soft Delete)?"
+        message={confirmDelete ? `User: ${confirmDelete.user?.full_name || confirmDelete.user_email || 'Unknown'}\nEmail: ${confirmDelete.user?.email || '-'}\nCurrent Plan: ${PLAN_MAP[confirmDelete.current_plan]?.label || '-'}\nRequested Plan: ${PLAN_MAP[confirmDelete.requested_plan]?.label || '-'}\nRequest Status: ${confirmDelete.status}\n\nThis will disable access (soft delete). The user will be marked as deleted and cannot log in. All existing records (payments, wallet, referrals, audit logs) will be preserved for administrative review.` : ''}
+        confirmText="Disable User"
         confirmVariant="danger"
       />
     </div>
