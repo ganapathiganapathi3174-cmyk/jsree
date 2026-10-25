@@ -219,7 +219,7 @@ describe('Production sample end-to-end (mocked OCR, real decision engine)', () =
       referenceId: 't5',
       referenceType: 'payment',
     });
-    expect(runAmountRecoveryOCR).toHaveBeenCalledWith(expect.anything(), 120);
+    expect(runAmountRecoveryOCR).toHaveBeenCalledWith(expect.anything(), 120, expect.anything());
     expect(verificationResult.amountMatch).toBe(true);
     expect(verificationResult.decision).toBe('approved');
   });

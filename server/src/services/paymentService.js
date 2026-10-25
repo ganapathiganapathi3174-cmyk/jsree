@@ -7,17 +7,31 @@ import notificationService from './notificationService.js';
 import walletService from './walletService.js';
 import referralTierService from './referralTierService.js';
 import {
-  runScreenshotVerification,
-  requireExternalPaymentConfirmation,
   decidePaymentVerification,
   reserveApprovedUtr,
   releaseApprovedUtr,
+  requireExternalPaymentConfirmation,
 } from './verificationService.js';
+// Centralized payment screenshot validation engine: the SINGLE decision path
+// for registration payments (this file) and top-ups (topupService). The legacy
+// runScreenshotVerification pipeline is no longer invoked by any production
+// service; it survives only for unit tests that exercise OCR helpers.
+import { paymentValidationEngine } from './paymentValidationService.js';
 import { getPaymentConfig } from './configService.js';
-import { RECEIVER_UPI, PAYMENT_TIME_WINDOW_MINUTES } from '../config/paymentConfig.js';
+import {
+  RECEIVER_UPI,
+  RECEIVER_NAME,
+  PAYMENT_TIME_WINDOW_MINUTES,
+  OCR_VERIFICATION_BUDGET_MS,
+  isPaymentAutoApproveEnabled,
+} from '../config/paymentConfig.js';
 
 // Re-exported for callers/tests that import the decision engine here.
 export { decidePaymentVerification };
+
+// Engine identifier recorded in verification_result / audit logs so every
+// decision can be traced to the engine version that produced it.
+const VALIDATION_ENGINE = 'paymentValidationEngine/v1';
 
 const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
 // Statuses an admin can act on (approve / reject / re-verify).
@@ -296,6 +310,25 @@ export async function applyPaymentUtrPolicy(paymentId, { decision, utr }) {
   return { newStatus, reason, reservedUtr };
 }
 
+// ─────────────────────────────────────────────────────────────
+// verifyPayment — runs the CENTRALIZED validation engine.
+//
+// paymentValidationEngine owns extraction, normalization, every mandatory
+// rule (amount / receiver / date-time / transaction id / image integrity /
+// transaction status) and the duplicate check. This function owns only the
+// persistence and the atomic side effects:
+//   1. resolve screenshot bytes + server-side receiver config
+//   2. run the engine (bounded by OCR_VERIFICATION_BUDGET_MS)
+//   3. inconclusive outcome (OCR/DB/infra failure) -> throw, stay pending,
+//      resubmittable (controller records the failure marker)
+//   4. rejected outcome -> guarded status update + notification + audit log
+//   5. approved outcome -> atomic UTR reservation (cross-flow duplicate
+//      gate) -> guarded status update -> completeApproval (activation,
+//      referral, wallet, notification) with rollback on failure
+//
+// There is NO second decision path: if the engine does not return
+// `approved: true`, this payment can never become approved.
+// ─────────────────────────────────────────────────────────────
 export async function verifyPayment(paymentId, imageBuffer) {
   const t0 = Date.now();
   const { data: payment, error: fetchError } = await supabase.from('payments').select('*').eq('id', paymentId).single();
@@ -303,7 +336,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
   if (!payment.screenshot_url && !imageBuffer) throw { message: 'No screenshot uploaded', code: 'NO_SCREENSHOT' };
   if (!payment.status || !ACTABLE_STATUSES.includes(payment.status)) throw { message: 'Payment is not in a verifiable status', code: 'PAYMENT_NOT_PENDING' };
 
-  // ── Payment expiry gate (pre-OCR) ──
+  // ── Payment expiry gate (pre-engine) ──
   // Reject before running expensive OCR if the payment window has passed.
   if (isPaymentExpired(payment)) {
     throw {
@@ -312,99 +345,148 @@ export async function verifyPayment(paymentId, imageBuffer) {
     };
   }
 
-  // Receiver (payee) name is the SECONDARY identity gate. Resolved from the
-  // admin-configurable payment config (DB, env fallback). An empty/absent name
-  // makes the engine fail safe into manual_review — never a silent approve.
+  // Receiver identity comes from the server-side payment config (DB, then
+  // env fallback). An empty name makes the engine fail safe with
+  // RECEIVER_NAME_NOT_CONFIGURED — never a silent approve.
   const paymentConfig = await getPaymentConfig();
-  const receiverName = paymentConfig.receiver_name || '';
+  const receiverName = paymentConfig.receiver_name || RECEIVER_NAME || '';
 
-  const { verificationResult: ocrResult, verificationTime, utr } = await runScreenshotVerification({
-    imageBuffer: imageBuffer || null,
-    screenshotUrl: payment.screenshot_url || null,
-    expectedAmount: payment.expected_amount,
-    receiverUpi: RECEIVER_UPI,
-    receiverName,
-    referenceType: 'payment',
-    referenceId: payment.id,
+  // Resolve the screenshot bytes: the freshly uploaded buffer when called
+  // from the upload flow, otherwise the stored screenshot URL (manual
+  // re-verification / admin-triggered runs).
+  let buffer = imageBuffer || null;
+  if (!buffer && payment.screenshot_url) {
+    try {
+      const resp = await fetch(payment.screenshot_url);
+      if (resp.ok) buffer = Buffer.from(await resp.arrayBuffer());
+    } catch { /* handled below */ }
+  }
+  if (!buffer) throw { message: 'No screenshot data available', code: 'NO_SCREENSHOT' };
+
+  // ── The centralized validation engine — the ONLY decision path ──
+  const engineResult = await paymentValidationEngine.validatePayment({
+    imageBuffer: buffer,
+    paymentRequest: {
+      type: 'registration',
+      expectedAmount: payment.expected_amount,
+      paymentId: payment.id,
+      userId: payment.user_id,
+      receiverName,
+      receiverUpi: RECEIVER_UPI,
+    },
+    serverTime: new Date(),
+    timeoutMs: OCR_VERIFICATION_BUDGET_MS,
   });
-  const verificationResult = requireExternalPaymentConfirmation(ocrResult);
-  const { decision } = verificationResult;
 
-  // Approved-UTR duplicate gate. A UTR that was already APPROVED (for any
-  // payment or top-up) rejects this request with DUPLICATE_UTR — no user
-  // activation. Missing/random UTRs skip the check entirely.
-  const { newStatus, reason, reservedUtr } = await applyPaymentUtrPolicy(payment.id, { decision, utr });
-
-  let effectiveReason = reason;
-  if (!effectiveReason && newStatus !== 'approved') {
-    effectiveReason = verificationResult.reason || 'REJECTED';
-  }
-  if (effectiveReason === 'DUPLICATE_UTR') {
-    // Reflect the duplicate gate in the persisted structured result.
-    verificationResult.decision = 'rejected';
-    verificationResult.reason = 'DUPLICATE_UTR';
-    verificationResult.checks = { ...verificationResult.checks, duplicate: { passed: false, utr } };
+  // Inconclusive outcome (OCR timeout / OCR failure / infrastructure error):
+  // never a decision and NEVER an approval. The row keeps its current status
+  // (pending), stays resubmittable, and the controller records the failure
+  // marker so the client gets an honest retry message.
+  if (engineResult.inconclusive) {
+    throw {
+      message: engineResult.message || 'Screenshot verification did not complete',
+      code: engineResult.code || engineResult.reason || 'VERIFICATION_FAILED',
+      reason: engineResult.reason || null,
+      details: engineResult.details || null,
+    };
   }
 
-  // ── Payment expiry gate (post-OCR, pre-commit) ──
-  // Re-check at commit time: the request may have expired DURING the OCR
-  // pipeline (30-75 s). expires_at is immutable (created_at + 30 min), so the
-  // pre-OCR fetch already carries the authoritative value — this check runs
-  // against the current clock, which is exactly what catches the race. (A
-  // previous SELECT-again round trip re-read the same immutable column.)
-  if (newStatus === 'approved' || newStatus === 'manual_review') {
-    if (isPaymentExpired(payment)) {
-      // Release any UTR reservation and reject with expiry reason.
-      if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
-      const expiryUpdateData = {
-        verification_result: { ...verificationResult, decision: 'rejected', reason: 'PAYMENT_EXPIRED' },
-        verified_at: verificationTime.toISOString(),
-        status: 'rejected',
-        rejected_at: verificationTime.toISOString(),
-        rejection_reason: 'PAYMENT_EXPIRED',
-      };
-      await supabase.from('payments').update(expiryUpdateData).eq('id', paymentId).in('status', ACTABLE_STATUSES);
-      return {
-        paymentId,
-        status: 'rejected',
-        decision: 'rejected',
-        reason: 'PAYMENT_EXPIRED',
-        verificationResult: { ...verificationResult, decision: 'rejected', reason: 'PAYMENT_EXPIRED' },
-        elapsed: Date.now() - t0,
-      };
+  const verificationTime = new Date();
+  let newStatus;
+  let reason;
+  let verificationResult;
+  if (engineResult.approved && !isPaymentAutoApproveEnabled()) {
+    // ── External-confirmation gate (PAYMENT_AUTO_APPROVE off, the default) ──
+    // The engine approved the screenshot, but straight-through auto-approval
+    // is not enabled: park the row for human confirmation (HEAD parity).
+    // decision='manual_review' keeps ocrDecision='approved' in the record, no
+    // UTR is reserved, no activation runs, and the row stays SUBMITTABLE so
+    // the user can re-upload if needed.
+    const demoted = requireExternalPaymentConfirmation({
+      ...engineResult,
+      decision: 'approved',
+      reason: null,
+    });
+    newStatus = 'manual_review';
+    reason = demoted.reason || 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED';
+    verificationResult = { ...demoted, reason, engine: VALIDATION_ENGINE };
+  } else {
+    newStatus = engineResult.approved ? 'approved' : 'rejected';
+    reason = engineResult.approved ? null : (engineResult.reason || 'REJECTED');
+    verificationResult = {
+      ...engineResult,
+      decision: newStatus === 'approved' ? 'approved' : 'rejected',
+      reason: newStatus === 'approved' ? null : reason,
+      engine: VALIDATION_ENGINE,
+    };
+  }
+
+  // ── Approved-UTR duplicate gate (cross-flow) ──
+  // reserveApprovedUtr is an atomic INSERT against approved_utrs (UNIQUE
+  // constraint, migration 007), so a UTR already approved for ANY payment or
+  // top-up loses the race here and the payment is REJECTED with
+  // DUPLICATE_UTR — never SELECT-then-INSERT.
+  let reservedUtr = null;
+  if (newStatus === 'approved') {
+    const reserve = await reserveApprovedUtr(engineResult.transactionId, 'payment', paymentId);
+    if (reserve.duplicate) {
+      newStatus = 'rejected';
+      reason = 'DUPLICATE_UTR';
+      verificationResult.decision = 'rejected';
+      verificationResult.reason = 'DUPLICATE_UTR';
+    } else if (reserve.reserved) {
+      reservedUtr = reserve.utr;
     }
+  }
+
+  // ── Payment expiry gate (post-engine, pre-commit) ──
+  // The request may have expired DURING the engine run. expires_at is
+  // immutable (created_at + 30 min), so the pre-engine fetch already carries
+  // the authoritative value; this check runs against the current clock.
+  // manual_review is re-checked here too: an externally-confirmed row whose
+  // window elapsed during OCR becomes PAYMENT_EXPIRED, never a stale park.
+  if ((newStatus === 'approved' || newStatus === 'manual_review') && isPaymentExpired(payment)) {
+    if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
+    reservedUtr = null;
+    newStatus = 'rejected';
+    reason = 'PAYMENT_EXPIRED';
+    verificationResult.decision = 'rejected';
+    verificationResult.reason = 'PAYMENT_EXPIRED';
   }
 
   const updateData = {
     verification_result: verificationResult,
     verified_at: verificationTime.toISOString(),
-    transaction_id: newStatus === 'approved' ? utr : null,
+    transaction_id: newStatus === 'approved' ? engineResult.transactionId : null,
     status: newStatus,
   };
   if (newStatus === 'approved') updateData.approved_at = verificationTime.toISOString();
   if (newStatus === 'rejected') {
     updateData.rejected_at = verificationTime.toISOString();
-    updateData.rejection_reason = effectiveReason;
+    updateData.rejection_reason = reason;
   }
 
+  // Guarded transition: only rows still in an actionable status can move, so
+  // a concurrent approval/rejection can never be overwritten (exactly-once).
   const { error: updateError } = await supabase.from('payments').update(updateData).eq('id', paymentId).in('status', ACTABLE_STATUSES);
   if (updateError) {
     if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
     throw { message: 'Failed to update payment status', code: 'DATABASE_UPDATE_FAILED' };
   }
 
-  const { data: updatedPayment } = await supabase.from('payments').select('*').eq('id', paymentId).single();
-  if (updatedPayment.status !== newStatus) {
+  const { data: updatedPayment } = await supabase.from('payments').select('status').eq('id', paymentId).single();
+  if (!updatedPayment || updatedPayment.status !== newStatus) {
     if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
     throw { message: 'Concurrent modification detected', code: 'RACE_CONDITION' };
   }
 
   if (newStatus === 'approved') {
     try {
+      // Atomic activation: payment approved -> user active -> referral link,
+      // with rollback of both if activation fails. Side effects (referral
+      // bonus, tier upgrade) are non-blocking and idempotent.
       await completeApproval(payment, payment.user_id, 'system', 'verify_payment');
     } catch (approvalErr) {
-      // Atomic approval failed — roll back payment to pending so no partial
-      // activation, and release the UTR reservation so it can be retried.
       await supabase.from('payments')
         .update({ status: 'pending', approved_at: null })
         .eq('id', paymentId);
@@ -415,8 +497,8 @@ export async function verifyPayment(paymentId, imageBuffer) {
     try {
       await notificationService.createNotification(
         payment.user_id, 'payment_rejected', 'Payment Rejected',
-        `Your payment of ₹${payment.expected_amount} was rejected. Reason: ${effectiveReason}`,
-        { paymentId, amount: payment.expected_amount, reason: effectiveReason }
+        `Your payment of ₹${payment.expected_amount} was rejected. Reason: ${reason}`,
+        { paymentId, amount: payment.expected_amount, reason }
       );
     } catch (e) { /* non-blocking */ }
   }
@@ -424,11 +506,11 @@ export async function verifyPayment(paymentId, imageBuffer) {
   const elapsed = Date.now() - t0;
   await logAction(payment.user_id, 'system', 'verify_payment', paymentId, 'payment', {
     decision: newStatus,
-    reason: effectiveReason,
-    amountMatch: verificationResult.amountMatch,
-    upiMatch: verificationResult.upiMatch,
-    utr,
-    ocrConfidence: verificationResult.ocrConfidence,
+    reason,
+    engine: VALIDATION_ENGINE,
+    utr: newStatus === 'approved' ? engineResult.transactionId : null,
+    ocrConfidence: engineResult.extractedData?.ocrConfidence ?? null,
+    timings: engineResult.timings || null,
     elapsedMs: elapsed,
   });
 
@@ -436,7 +518,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
     paymentId,
     status: newStatus,
     decision: newStatus,
-    reason: effectiveReason,
+    reason,
     verificationResult,
     elapsed,
   };
@@ -445,11 +527,12 @@ export async function verifyPayment(paymentId, imageBuffer) {
 // ─────────────────────────────────────────────────────────────
 // Fail-closed record for a verification attempt that never reached a decision.
 //
-// runScreenshotVerification throws (OCR_FAILED / OCR_UNREADABLE) or the host
-// dies mid-OCR (e.g. the process is OOM-killed before it can return). In both
-// cases verifyPayment never reaches its status commit, so the row would sit at
-// status=pending with verification_result=NULL and no explanation — an
-// orphaned payment indistinguishable from one still awaiting review.
+// The validation engine did not reach a decision (OCR_TIMEOUT / OCR_FAILED)
+// or the host died mid-run (e.g. the process is OOM-killed before it could
+// return). In both cases verifyPayment throws before its status commit, so
+// the row would sit at status=pending with verification_result=NULL and no
+// explanation — an orphaned payment indistinguishable from one still awaiting
+// review.
 //
 // This writes WHY the attempt produced no decision. It is deliberately NOT a
 // decision:
@@ -462,7 +545,8 @@ export async function recordVerificationFailure(paymentId, error) {
   const record = {
     decision: null,
     inconclusive: true,
-    reason: error?.code || 'VERIFICATION_FAILED',
+    reason: error?.reason || error?.code || 'VERIFICATION_FAILED',
+    code: error?.code || 'VERIFICATION_FAILED',
     error: error?.message || 'Verification failed',
     details: error?.details ?? null,
     failed_at: new Date().toISOString()

@@ -74,10 +74,34 @@ vi.mock('../../services/verificationService.js', async (importOriginal) => {
 vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: creditMock } }));
 vi.mock('../../services/notificationService.js', () => ({ default: { createNotification: vi.fn(async () => ({})) } }));
 
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery } = vi.hoisted(() => {
+  if (!process.env.ADMIN_RECEIVER_NAME) {
+    process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
+  }
+  // This suite asserts straight-through auto-approval: enable it explicitly.
+  // Production default (unset) is the secure external-confirmation fallback.
+  process.env.PAYMENT_AUTO_APPROVE = 'true';
+  return {
+    runOCR: vi.fn(),
+    runAmountRecoveryOCR: vi.fn(),
+    runAdditionalOCRPasses: vi.fn(),
+    runDeepAmountRecovery: vi.fn(),
+  };
+});
+vi.mock('../../services/ocrService.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
+});
+
 import { supabase } from '../../db/supabase.js';
 void supabase;
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
+
+const VALID_IMAGE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
 const past = () => new Date(Date.now() - 60000).toISOString();
 const future = () => new Date(Date.now() + 30 * 60000).toISOString();
 
@@ -150,36 +174,43 @@ describe('top-up pre-upload gates', () => {
     expect(uploadMock).not.toHaveBeenCalled();
   });
 
-  it('valid-looking OCR without provider confirmation goes to manual review without wallet credit', async () => {
+  it('valid receipt proof completes through the shared engine and credits both wallets', async () => {
     reset();
     db.state.topupRow = freshTopup();
-    runScreenshotVerification.mockResolvedValue({
-      verificationResult: {
-        decision: 'approved',
-        reason: null,
-        utr: 'SYNTHETIC-UTR',
-        amountMatch: true,
-        upiMatch: true,
-      },
-      verificationTime: new Date(),
-      utr: 'SYNTHETIC-UTR',
+    runOCR.mockResolvedValue({
+      text: [
+        'Payment Successful',
+        '\u20B9120',
+        'To Jayaraj',
+        RECEIVER_UPI,
+        `Date: ${(() => {
+          const ist = new Date(Date.now() - 2 * 60000 + 5.5 * 3600000);
+          const pad = n => String(n).padStart(2, '0');
+          let h = ist.getUTCHours(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+          return `${pad(ist.getUTCDate())}/${pad(ist.getUTCMonth() + 1)}/${ist.getUTCFullYear()}, ${h}:${pad(ist.getUTCMinutes())} ${ap}`;
+        })()}`,
+        'UPI transaction ID: THARDEN001',
+      ].join('\n'),
+      confidence: 90,
     });
+    runAmountRecoveryOCR.mockResolvedValue([]);
+    runAdditionalOCRPasses.mockResolvedValue([]);
+    runDeepAmountRecovery.mockResolvedValue([]);
 
     const result = await submitTopupProof(
       'top-1',
-      { originalname: 'synthetic.png', mimetype: 'image/png', buffer: Buffer.from('synthetic-image') },
+      { originalname: 'synthetic.png', mimetype: 'image/png', buffer: VALID_IMAGE },
       'sender-1'
     );
 
-    expect(result.manualReview).toBe(true);
-    expect(result.credited).toBe(false);
-    expect(db.state.topupRow.status).toBe('manual_review');
+    expect(result.credited).toBe(true);
+    expect(result.manualReview).toBe(false);
+    expect(db.state.topupRow.status).toBe('completed');
     expect(db.state.topupRow.verification_result).toMatchObject({
-      decision: 'manual_review',
-      ocrDecision: 'approved',
-      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+      decision: 'approved',
+      engine: 'paymentValidationEngine/v1',
     });
-    expect(creditMock).not.toHaveBeenCalled();
+    expect(creditMock).toHaveBeenCalledTimes(1);
   });
 });
 

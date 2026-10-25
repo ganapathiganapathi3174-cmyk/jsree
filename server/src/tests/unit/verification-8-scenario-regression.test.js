@@ -108,8 +108,8 @@ describe('scenario 2: incorrect amount', () => {
     expect(verificationResult.checks.amount.expected).toBe(120);
     expect(verificationResult.checks.amount.detected).not.toBe(120);
     // UPI matched, so the recovery escalation must have been attempted.
-    expect(runAmountRecoveryOCR).toHaveBeenCalledTimes(1);
-    expect(runAmountRecoveryOCR).toHaveBeenCalledWith(expect.anything(), 120);
+    expect(runAmountRecoveryOCR).toHaveBeenCalledTimes(2); // top-region probe + full-height scan
+    expect(runAmountRecoveryOCR).toHaveBeenCalledWith(expect.anything(), 120, expect.objectContaining({ scan: 'probe' }));
   });
 });
 
@@ -226,10 +226,12 @@ describe('scenario 8: timeout and recovery error paths', () => {
 
     const { verificationResult } = await verify({ text: receipt({ includeAmount: false }) });
 
-    expect(runAmountRecoveryOCR).toHaveBeenCalledTimes(1);
+    expect(runAmountRecoveryOCR).toHaveBeenCalledTimes(2); // top-region probe + full-height scan
     expect(runDeepAmountRecovery).toHaveBeenCalledTimes(1);
     expect(verifyAmountWithCurrencyRecovery).toHaveBeenCalledTimes(1);
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    // Every recovery stage failed, so no amount could be read -> the attempt
+    // is INCONCLUSIVE, never a rejection and never an approval.
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('AMOUNT_NOT_DETECTED');
   });
 });

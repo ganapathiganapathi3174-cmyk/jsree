@@ -8,9 +8,40 @@
 // absolute UTC instant — never comparing IST clock text against UTC.
 // ─────────────────────────────────────────────────────────────
 
-import { IST_UTC_OFFSET_MS, TIMEZONE } from '../config/paymentConfig.js';
+import { IST_UTC_OFFSET_MS, TIMEZONE, PLAN_AMOUNTS } from '../config/paymentConfig.js';
 
-export { IST_UTC_OFFSET_MS, TIMEZONE };
+export { IST_UTC_OFFSET_MS, TIMEZONE, PLAN_AMOUNTS };
+
+// ─────────────────────────────────────────────────────────────
+// Authoritative plan → amount resolution (Rule A).
+//
+// The CLIENT only ever selects a plan key. The amount is ALWAYS resolved
+// server-side from the single configured plan table (config/paymentConfig),
+// so a frontend-supplied amount can never bypass server-side pricing.
+//
+// Accepts a plan key ('120') or the plan amount itself (120 / '120') — the
+// top-up flow posts the amount, the register flow posts the plan key. Any
+// value that is not a configured plan resolves to null and the caller MUST
+// reject it (never fall back to a client-provided number).
+// ─────────────────────────────────────────────────────────────
+export function resolvePlanAmount(plan) {
+  if (plan === null || plan === undefined || plan === '') return null;
+  const key = String(plan).trim();
+  if (!key) return null;
+  if (Object.prototype.hasOwnProperty.call(PLAN_AMOUNTS, key)) return PLAN_AMOUNTS[key];
+  // Numeric forms: 120, '120', 120.0, ' 120 '
+  const numeric = Number(key);
+  if (Number.isFinite(numeric) && Object.prototype.hasOwnProperty.call(PLAN_AMOUNTS, String(numeric))) {
+    return PLAN_AMOUNTS[String(numeric)];
+  }
+  return null;
+}
+
+// True when the value is a configured plan amount (used by the top-up flow
+// to reject an amount that is not one of the published plans).
+export function isConfiguredPlanAmount(amount) {
+  return resolvePlanAmount(amount) !== null;
+}
 
 export function normalizeAmount(text) {
   if (typeof text === 'number') return text;
@@ -78,4 +109,27 @@ export function istWallClockParts(date) {
   const hh = shifted.getUTCHours();
   const mm = shifted.getUTCMinutes();
   return { day: d, month: m, year: y, hour: hh, minute: mm };
+}
+
+// Calendar day key (YYYY-MM-DD) of an instant, in the configured timezone.
+// Two instants share a key exactly when they fall on the same IST calendar
+// day — the comparison Rule C (transaction date == current India date) is
+// built on. Never uses the server machine's local timezone.
+export function istCalendarDayKey(date) {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return null;
+  const { year, month, day } = istWallClockParts(date);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+// Number of IST calendar days between two instants:
+//   0  → same IST calendar day
+//  -1  → `a` is the previous IST calendar day
+//   1  → `a` is the next IST calendar day
+// Returns null when either instant is invalid.
+export function istCalendarDayDiff(a, b) {
+  const ka = istCalendarDayKey(a);
+  const kb = istCalendarDayKey(b);
+  if (!ka || !kb) return null;
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  return Math.round((Date.parse(`${ka}T00:00:00Z`) - Date.parse(`${kb}T00:00:00Z`)) / MS_PER_DAY);
 }

@@ -121,14 +121,15 @@ describe('runScreenshotVerification — real UPI receipt formats (false-rejectio
     runOCR.mockResolvedValue({ text: receipt(120, RECEIVER_UPI, 'Date: 16/08/2026'), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({ imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW() });
     expect(verificationResult.dateValid).toBe(false);
-    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 
   it('date-only on a DIFFERENT (old) IST day -> rejected INVALID_PAYMENT_DATE', async () => {
     runOCR.mockResolvedValue({ text: receipt(120, RECEIVER_UPI, 'Date: 15/08/2026'), confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({ imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW() });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 
   it('receipt that says "Failed" -> REJECTED', async () => {
@@ -193,7 +194,7 @@ describe('Structured verification result (admin debugging)', () => {
   it('exposes checks + detected fields with Asia/Kolkata timezone', async () => {
     runOCR.mockResolvedValue({ text: `Payment Successful\nAmount \u20B9120\nTo: ${RECEIVER_UPI}\nDate: 16/08/2026 13:00\nUTR: ABC123456`, confidence: 90 });
     const { verificationResult } = await runScreenshotVerification({ imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW() });
-    expect(verificationResult.checks.amount).toEqual({ passed: true, expected: 120, detected: 120 });
+    expect(verificationResult.checks.amount).toEqual({ passed: true, expected: 120, detected: 120, detectedAny: true, recoveryBudgetExhausted: false });
     expect(verificationResult.checks.receiverUpi.passed).toBe(true);
     expect(verificationResult.checks.transactionDate.timezone).toBe('Asia/Kolkata');
     expect(verificationResult.checks.transactionDate.passed).toBe(true);

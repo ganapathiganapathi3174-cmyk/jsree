@@ -7,26 +7,30 @@ import {
 } from '../../services/verificationService.js';
 import { applyTopupVerification, getTopupsForUser } from '../../services/topupService.js';
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => {
+const { runOCR, runAmountRecoveryOCR, runDeepAmountRecovery, runAdditionalOCRPasses } = vi.hoisted(() => {
   if (!process.env.ADMIN_RECEIVER_NAME) {
     process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
   }
+  // These suites assert straight-through auto-approval: enable it explicitly.
+  // Production default (unset) is the secure external-confirmation fallback.
+  process.env.PAYMENT_AUTO_APPROVE = 'true';
   return {
     runOCR: vi.fn(),
     runAmountRecoveryOCR: vi.fn(),
+    runDeepAmountRecovery: vi.fn(),
     runAdditionalOCRPasses: vi.fn(),
   };
 });
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runDeepAmountRecovery, runAdditionalOCRPasses };
 });
 
-// ─────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Flexible Supabase mock that CAPTURES every UPDATE payload so the
 // test can assert exactly what status the real service persists.
-// ─────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const { db } = vi.hoisted(() => {
   const state = {
     // Mutable rows: updates MERGE so re-selects observe new status.
@@ -92,6 +96,14 @@ void supabase;
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 const NOW = () => new Date('2026-08-24T07:30:00.000Z'); // 13:00 IST
 
+// A real (decodable) 1x1 PNG: the validation engine's integrity stage probes
+// magic bytes AND decodability before any OCR runs, so tests must hand it an
+// actual image rather than an arbitrary byte string.
+const VALID_IMAGE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 // verifyPayment uses the REAL server clock (no injected now), so runtime
 // receipt timestamps must be generated relative to Date.now().
 function istDateLine(minutesBeforeUpload) {
@@ -137,6 +149,7 @@ function resetDb(paymentRow) {
 beforeEach(() => {
   vi.clearAllMocks();
   runAmountRecoveryOCR.mockResolvedValue([]);
+  runDeepAmountRecovery.mockResolvedValue([]);
   runAdditionalOCRPasses.mockResolvedValue([]);
   resetDb(seedPaymentRow());
 });
@@ -152,23 +165,25 @@ const PROVIDERS = [
 
 describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
   for (const [name, makeText] of PROVIDERS) {
-    it(`${name}: valid-looking receipt -> manual review until provider confirmation`, async () => {
+    it(`${name}: valid receipt -> approved through the validation engine`, async () => {
       runOCR.mockResolvedValue({ text: makeText(), confidence: 90 });
       resetDb(seedPaymentRow());
 
-      const result = await verifyPayment('pay-1', Buffer.from('img'));
+      const result = await verifyPayment('pay-1', VALID_IMAGE);
 
       const payUpdates = db.state.updates.payments || [];
       const persistedStatuses = payUpdates.map(u => u.status);
       const finalRow = { ...seedPaymentRow(), ...payUpdates[payUpdates.length - 1] };
 
-      expect(result.decision).toBe('manual_review');
-      expect(result.reason).toBe('EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED');
-      expect(result.verificationResult.ocrDecision).toBe('approved');
-      expect(persistedStatuses).toContain('manual_review');
-      expect(persistedStatuses.every(s => s !== 'approved')).toBe(true);
-      expect(finalRow.status).toBe('manual_review');
-      expect(db.state.updates.users || []).toHaveLength(0);
+      expect(result.decision).toBe('approved');
+      expect(result.reason).toBeNull();
+      expect(result.verificationResult.engine).toBe('paymentValidationEngine/v1');
+      expect(result.verificationResult.checks.amount.passed).toBe(true);
+      expect(persistedStatuses).toContain('approved');
+      expect(persistedStatuses.every(s => s !== 'manual_review')).toBe(true);
+      expect(finalRow.status).toBe('approved');
+      // The UTR was atomically reserved before the approval committed.
+      expect(db.state.inserts.approved_utrs || []).toHaveLength(1);
     });
   }
 
@@ -177,48 +192,48 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
       text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: attacker@paytm', 'To Jayaraj', 'UPI Ref No: NEG000000001', istDateLine(2)].join('\n'),
       confidence: 90,
     });
-    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    const result = await verifyPayment('pay-1', VALID_IMAGE);
     const statuses = (db.state.updates.payments || []).map(u => u.status);
-    console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ case: 'wrong-upi', apiDecision: result.decision, apiReason: result.reason, persistedStatuses: statuses }));
     expect(result.decision).toBe('rejected');
     expect(result.reason).toBe('UPI_MISMATCH');
     expect(statuses).toContain('rejected');
-    expect(statuses.every(s => s !== 'manual_review')).toBe(true);
+    expect(statuses.every(s => s !== 'manual_review' && s !== 'approved')).toBe(true);
   });
 
-  it('OCR UTR is not reserved before external verification', async () => {
+  it('UTR already approved elsewhere -> DUPLICATE_UTR rejection, never approved', async () => {
     runOCR.mockResolvedValue({
       text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'UPI Ref No: DUP000000001', istDateLine(2)].join('\n'),
       confidence: 90,
     });
     db.state.results.approved_utrs = { data: null, error: { code: '23505', message: 'unique violation' } };
 
-    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    const result = await verifyPayment('pay-1', VALID_IMAGE);
     const statuses = (db.state.updates.payments || []).map(u => u.status);
-    expect(result.decision).toBe('manual_review');
-    expect(result.reason).toBe('EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED');
-    expect(statuses).toContain('manual_review');
-    expect(db.state.inserts.approved_utrs || []).toHaveLength(0);
+    expect(result.decision).toBe('rejected');
+    expect(result.reason).toBe('DUPLICATE_UTR');
+    expect(statuses).toContain('rejected');
+    expect(statuses.every(s => s !== 'approved')).toBe(true);
+    expect(db.state.updates.users || []).toHaveLength(0);
   });
 
-  it('legacy manual_review row stays in review when retried through POST /verify', async () => {
+  it('legacy manual_review row resolves to a decision when retried through POST /verify', async () => {
     runOCR.mockResolvedValue({
       text: ['Paytm', 'Money Sent Successfully', '\u20B9120', 'To: jayarajj126-3@okicici', 'To Jayaraj', 'UPI Ref No: FIX000000001', istDateLine(2)].join('\n'),
       confidence: 90,
     });
     resetDb(seedPaymentRow({ status: 'manual_review' }));
 
-    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    const result = await verifyPayment('pay-1', VALID_IMAGE);
     const statuses = (db.state.updates.payments || []).map(u => u.status);
-    expect(result.decision).toBe('manual_review');
-    expect(statuses).toContain('manual_review');
+    expect(result.decision).toBe('approved');
+    expect(statuses).toContain('approved');
   });
 });
 
 
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TOP-UP RUNTIME PATH: same engine, binary persistence only.
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
   const seedTopup = (overrides = {}) => ({
     id: 'top-1',
@@ -305,9 +320,9 @@ describe('RUNTIME PATH: applyTopupVerification persisted status', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // USER-FACING API: legacy manual_review never reaches the frontend.
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 describe('USER-FACING API: getUserPayments maps manual_review -> pending', () => {
   it('legacy manual_review row returned as pending to the user', async () => {
     db.state.paymentRow = { id: 'pay-lr', status: 'manual_review', selected_plan: 120, expected_amount: 120, expires_at: new Date(Date.now() + 30 * 60000).toISOString() };
@@ -320,9 +335,9 @@ describe('USER-FACING API: getUserPayments maps manual_review -> pending', () =>
   });
 });
 
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // DEMO/SAMPLE SCREENSHOT: runtime rejection through verifyPayment.
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 describe('RUNTIME PATH: DEMO/SAMPLE screenshot rejected', () => {
 
   function resetDbForDemo() {
@@ -337,13 +352,13 @@ describe('RUNTIME PATH: DEMO/SAMPLE screenshot rejected', () => {
     runOCR.mockResolvedValue({
       text: [
         'Google Pay', 'DEMO', 'Payment Successful',
-        '₹120', `To Jayaraj`, RECEIVER_UPI,
+        'â‚¹120', `To Jayaraj`, RECEIVER_UPI,
         `Date: ${istDateLine(2)}`, 'UPI Ref No: DEMO123456'
       ].join('\n'),
       confidence: 90,
     });
     runAmountRecoveryOCR.mockResolvedValue([120]);
-    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    const result = await verifyPayment('pay-1', VALID_IMAGE);
     const statuses = (db.state.updates.payments || []).map(u => u.status);
     console.log('VERIFICATION_DIAGNOSTIC', JSON.stringify({ flow: 'demo-rejected', decision: result.decision, reason: result.reason, persistedStatuses: statuses }));
     expect(result.decision).toBe('rejected');
@@ -357,13 +372,13 @@ describe('RUNTIME PATH: DEMO/SAMPLE screenshot rejected', () => {
     runOCR.mockResolvedValue({
       text: [
         'PhonePe', 'SAMPLE', 'Transaction Successful',
-        '₹120', `Paid to ${RECEIVER_UPI}`,
+        'â‚¹120', `Paid to ${RECEIVER_UPI}`,
         '25/08/2026, 9:50 AM', 'UTR: SAMP123456789'
       ].join('\n'),
       confidence: 88,
     });
     runAmountRecoveryOCR.mockResolvedValue([120]);
-    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    const result = await verifyPayment('pay-1', VALID_IMAGE);
     expect(result.decision).toBe('rejected');
     expect(result.reason).toBe('DEMO_SCREENSHOT');
   });
@@ -373,13 +388,13 @@ describe('RUNTIME PATH: DEMO/SAMPLE screenshot rejected', () => {
     runOCR.mockResolvedValue({
       text: [
         'UPI', 'TEST PAYMENT', 'Completed',
-        '₹120', RECEIVER_UPI,
+        'â‚¹120', RECEIVER_UPI,
         'Ref No: TEST999888', '25/08/2026, 9:50 AM'
       ].join('\n'),
       confidence: 85,
     });
     runAmountRecoveryOCR.mockResolvedValue([120]);
-    const result = await verifyPayment('pay-1', Buffer.from('img'));
+    const result = await verifyPayment('pay-1', VALID_IMAGE);
     expect(result.decision).toBe('rejected');
     expect(result.reason).toBe('DEMO_SCREENSHOT');
   });

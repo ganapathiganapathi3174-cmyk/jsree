@@ -145,7 +145,8 @@ describe('Missing or ambiguous date/time → REJECT', () => {
       now: NOW(),
     });
     expect(verificationResult.hasTimeComponent).toBe(false);
-    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 
   it('missing date entirely → REJECTED', async () => {
@@ -159,8 +160,10 @@ describe('Missing or ambiguous date/time → REJECT', () => {
       receiverUpi: RECEIVER_UPI,
       now: NOW(),
     });
+    // No date could be read at all -> INCONCLUSIVE -> manual review.
     expect(verificationResult.dateValid).toBe(false);
-    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_DATE_NOT_DETECTED');
   });
 
   it('wrong date → REJECTED', async () => {
@@ -388,7 +391,7 @@ describe('Field confidence gate — all fields must be high', () => {
       now: NOW(),
     });
     expect(verificationResult.fieldConfidence.transactionDate.confidence).toBe('none');
-    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.decision).toBe('manual_review');
   });
 
   it('wrong UPI → receiverUpi confidence low → rejected', async () => {
@@ -534,7 +537,8 @@ describe('Any single condition invalid → REJECT', () => {
       receiverUpi: RECEIVER_UPI,
       now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 });
 

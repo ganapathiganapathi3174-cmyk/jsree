@@ -42,12 +42,26 @@ export default function TopUps() {
   // rejection — surfacing that as a success toast would tell the user the
   // money was credited when it was refused. A verification parked for manual
   // review is neither credited nor rejected, so it gets an informational toast.
-  const announceProofResult = (message, fallback, manualReview) => {
+  // A verification that produced NO decision (OCR timeout / unreadable image)
+  // is inconclusive: it is neither credited nor refused, and the record stays
+  // resubmittable.
+  const announceProofResult = (message, fallback, manualReview, inconclusive) => {
     const text = message || fallback;
-    if (manualReview || /review/i.test(text)) toast(text, { icon: '\u23F3' });
+    if (inconclusive) toast.error(text);
+    else if (manualReview || /review/i.test(text)) toast(text, { icon: '\u23F3' });
     else if (/reject/i.test(text)) toast.error(text);
     else toast.success(text);
   };
+
+  // A 504 OCR_TIMEOUT / 400 OCR_FAILED means no decision was reached. The
+  // top-up is still pending and can be resubmitted — it was NOT rejected.
+  const isInconclusiveError = (code) =>
+    code === 'OCR_TIMEOUT' || code === 'OCR_FAILED' || code === 'OCR_UNREADABLE';
+
+  const inconclusiveMessage = (code) =>
+    code === 'OCR_TIMEOUT'
+      ? 'Verification took too long to finish. Your top-up is still pending — please upload the screenshot again.'
+      : 'We could not read your screenshot. Your top-up is still pending — please upload a clearer screenshot.';
 
   const handleProof = async () => {
     if (!screenshot) { toast.error('Upload screenshot'); return; }
@@ -57,13 +71,15 @@ export default function TopUps() {
       fd.append('screenshot', screenshot);
       fd.append('reference_id', refId);
       const res = await api.post(`/topups/${proofModal.id}/proof`, fd);
-      announceProofResult(res.data.message, 'Proof submitted!', res.data.data?.manualReview);
+      announceProofResult(res.data.message, 'Proof submitted!', res.data.data?.manualReview, res.data.data?.inconclusive);
       setProofModal(null); setScreenshot(null); setRefId('');
       load();
     } catch (err) {
       const code = err.response?.data?.code;
       const msg = err.response?.data?.message;
-      if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
+      if (isInconclusiveError(code)) {
+        toast.error(inconclusiveMessage(code));
+      } else if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
         toast.error('Verification timed out. The server is taking too long (possibly a cold start). Please try again in a moment.');
       } else if (code === 'DUPLICATE_REQUEST') {
         toast.error('A verification for this screenshot is already in progress. Please wait for the result.');
@@ -84,19 +100,21 @@ export default function TopUps() {
         fd.append('amount', payAmount);
         if (summary?.sponsorId) fd.append('receiverId', summary.sponsorId);
         const res = await api.post('/topups/direct', fd);
-        announceProofResult(res.data.message, 'Payment proof submitted!', res.data.data?.manualReview);
+        announceProofResult(res.data.message, 'Payment proof submitted!', res.data.data?.manualReview, res.data.data?.inconclusive);
       } else {
         const targetId = payTarget || targets[0].id;
         const fd = new FormData();
         fd.append('screenshot', file);
         const res = await api.post(`/topups/${targetId}/proof`, fd);
-        announceProofResult(res.data.message, 'Payment proof submitted!', res.data.data?.manualReview);
+        announceProofResult(res.data.message, 'Payment proof submitted!', res.data.data?.manualReview, res.data.data?.inconclusive);
       }
       load();
     } catch (err) {
       const code = err.response?.data?.code;
       const msg = err.response?.data?.message;
-      if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
+      if (isInconclusiveError(code)) {
+        toast.error(inconclusiveMessage(code));
+      } else if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
         toast.error('Verification timed out. The server is taking too long (possibly a cold start). Please try again in a moment.');
       } else if (code === 'DUPLICATE_REQUEST') {
         toast.error('A verification for this screenshot is already in progress. Please wait for the result.');

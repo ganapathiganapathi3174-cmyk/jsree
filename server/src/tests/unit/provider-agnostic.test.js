@@ -779,8 +779,8 @@ describe('Strict rejection: ambiguous date (same day, no time) -> REJECTED', () 
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 });
 
@@ -992,8 +992,10 @@ describe('Freshness window: recent payments approved, stale/replayed rejected', 
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.dateValid).toBe(true);
-    expect(verificationResult.decision).toBe('approved');
+    // Rule D: a transaction timestamp in the future is never valid.
+    expect(verificationResult.dateValid).toBe(false);
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
   });
 
   it('transaction 30 minutes in the future -> APPROVED (boundary)', async () => {
@@ -1004,8 +1006,11 @@ describe('Freshness window: recent payments approved, stale/replayed rejected', 
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.dateValid).toBe(true);
-    expect(verificationResult.decision).toBe('approved');
+    // Rule D: the window is forward-only, so even the exact +30 min boundary
+    // in the future is invalid.
+    expect(verificationResult.dateValid).toBe(false);
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
   });
 
   it('transaction 31 minutes in the future -> REJECTED (beyond window)', async () => {
@@ -1031,8 +1036,8 @@ describe('Forward-only window: correct date, no time -> REJECTED', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.dateValid).toBe(false);
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 
   it('date-only receipt on wrong day -> REJECTED', async () => {
@@ -1044,8 +1049,8 @@ describe('Forward-only window: correct date, no time -> REJECTED', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.dateValid).toBe(false);
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 });
 
@@ -1102,7 +1107,7 @@ describe('Field-level confidence scoring', () => {
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
     expect(verificationResult.fieldConfidence.transactionDate.confidence).toBe('medium');
-    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.decision).toBe('manual_review');
   });
 
   it('no UTR in receipt returns none confidence -> REJECTED', async () => {

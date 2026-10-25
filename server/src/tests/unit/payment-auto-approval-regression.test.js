@@ -1,20 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, walletCreditBatch } = vi.hoisted(() => {
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery, walletCreditBatch } = vi.hoisted(() => {
   if (!process.env.ADMIN_RECEIVER_NAME) {
     process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
   }
+  // These suites assert straight-through auto-approval: enable it explicitly.
+  // Production default (unset) is the secure external-confirmation fallback.
+  process.env.PAYMENT_AUTO_APPROVE = 'true';
   return {
     runOCR: vi.fn(),
     runAmountRecoveryOCR: vi.fn(),
     runAdditionalOCRPasses: vi.fn(),
+    runDeepAmountRecovery: vi.fn(),
     walletCreditBatch: vi.fn(),
   };
 });
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
 });
 vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: walletCreditBatch } }));
 
@@ -123,9 +127,14 @@ vi.mock('../../db/supabase.js', () => {
 
 import { uploadScreenshot } from '../../controllers/paymentController.js';
 import { approvePayment, verifyPayment } from '../../services/paymentService.js';
-import { applyTopupVerification } from '../../services/topupService.js';
+import { applyTopupVerification, submitTopupProof } from '../../services/topupService.js';
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
+
+const VALID_IMAGE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
 
 function istDateLine(minutesBeforeUpload) {
   const ist = new Date(Date.now() - minutesBeforeUpload * 60000 + 5.5 * 3600000);
@@ -187,7 +196,7 @@ function mockRes() {
 const reqFor = () => ({
   params: { paymentId: 'pay-1' },
   user: { id: 'user-1', role: 'user' },
-  file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+  file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
 });
 
 const paymentUpdates = () => (db.state.updates.payments || []);
@@ -197,46 +206,48 @@ beforeEach(() => {
   runOCR.mockResolvedValue({ text: VALID_RECEIPT, confidence: 90 });
   runAmountRecoveryOCR.mockResolvedValue([]);
   runAdditionalOCRPasses.mockResolvedValue([]);
+  runDeepAmountRecovery.mockResolvedValue([]);
   walletCreditBatch.mockResolvedValue([{ credited: true }, { credited: true }]);
   seed();
 });
 
 // ─────────────────────────────────────────────────────────────
-// 1. OCR-only evidence must never produce a final approval
+// 1. FULL ENGINE EVIDENCE -> ATOMIC APPROVAL (engine + UTR reservation)
 // ─────────────────────────────────────────────────────────────
-describe('S1 valid-looking OCR requires external payment confirmation', () => {
-  it('controller returns manual review without activating the user', async () => {
+describe('S1 valid receipt auto-approves through the engine', () => {
+  it('controller approves the payment and activates the user', async () => {
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
 
     expect(res.body.success).toBe(true);
-    expect(res.body.data.verification.status).toBe('manual_review');
-    expect(PAY().status).toBe('manual_review');
-    expect(paymentUpdates().some(u => u.status === 'approved')).toBe(false);
-    expect(USR().status).toBe('pending');
+    expect(res.body.data.verification.status).toBe('approved');
+    expect(PAY().status).toBe('approved');
+    expect(USR().status).toBe('active');
+    expect(USR().current_plan).toBe(120);
   });
 
-  it('records the OCR candidate but does not reserve its UTR or set approval fields', async () => {
+  it('reserves the UTR atomically and persists approval fields', async () => {
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
 
     const row = PAY();
     expect(row.verification_result).toMatchObject({
-      decision: 'manual_review',
-      ocrDecision: 'approved',
-      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+      decision: 'approved',
+      engine: 'paymentValidationEngine/v1',
     });
     expect(row.verified_at).toBeTruthy();
-    expect(row.transaction_id).toBeNull();
-    expect(row.approved_at).toBeUndefined();
-    expect(db.state.store.approved_utrs).toHaveLength(0);
+    expect(row.transaction_id).toBe('T7GHD240824');
+    expect(row.approved_at).toBeTruthy();
+    expect(db.state.store.approved_utrs).toHaveLength(1);
+    expect(db.state.store.approved_utrs[0]).toMatchObject({ utr: 'T7GHD240824', reference_type: 'payment' });
   });
 
-  it('keeps a prior manual-review payment in manual review', async () => {
+  it('a prior manual_review payment resolves to approved on resubmission', async () => {
     seed({ paymentStatus: 'manual_review' });
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
-    expect(PAY().status).toBe('manual_review');
+    expect(PAY().status).toBe('approved');
+    expect(USR().status).toBe('active');
   });
 });
 
@@ -293,13 +304,15 @@ describe('S2 invalid payments are never approved', () => {
     expect(PAY().verification_result.reason).toBe('LOW_OCR_CONFIDENCE');
   });
 
-  it('OCR-only UTR is not reserved or treated as an approved duplicate', async () => {
+  it('UTR already reserved elsewhere -> rejected DUPLICATE_UTR, never approved', async () => {
     db.state.forcedErrors.approved_utrs = { code: '23505', message: 'duplicate key value' };
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
-    expect(PAY().status).toBe('manual_review');
-    expect(PAY().verification_result.reason).toBe('EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED');
+    expect(PAY().status).toBe('rejected');
+    expect(PAY().verification_result.reason).toBe('DUPLICATE_UTR');
+    expect(PAY().transaction_id).toBeNull();
     expect(USR().status).toBe('pending');
+    expect(paymentUpdates().some(u => u.status === 'approved')).toBe(false);
   });
 });
 
@@ -323,19 +336,21 @@ describe('S3 OCR failure leaves a retryable pending row (never approved)', () =>
 });
 
 // ─────────────────────────────────────────────────────────────
-// 4. SCREENSHOT OCR MUST NOT TRIGGER APPROVAL SIDE EFFECTS
+// 4. APPROVAL SIDE EFFECTS REQUIRE A FULLY SUCCESSFUL COMMIT
 // ─────────────────────────────────────────────────────────────
-describe('S4 OCR-only evidence cannot trigger approval side effects', () => {
-  it('does not activate the user or emit approval notifications', async () => {
-    db.state.forcedErrors.notifications = { code: 'XX000', message: 'insert blocked' };
+describe('S4 failed activation rolls back everything the engine reserved', () => {
+  it('user missing -> payment back to pending, UTR released, no credit/notifications', async () => {
+    db.state.store.users = []; // the account vanished between OCR and commit
+
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
 
-    expect(PAY().verification_result?.decision).toBe('manual_review');
-    expect(PAY().status).toBe('manual_review');
-    expect(USR().status).toBe('pending');
+    expect(res.statusCode).toBe(200);
+    expect(PAY().status).toBe('pending');
+    expect(db.state.store.approved_utrs).toHaveLength(0); // reservation released
     expect(db.state.store.notifications).toHaveLength(0);
     expect(db.state.store.wallet_transactions).toHaveLength(0);
+    expect(res.body.data.verification?.inconclusive ?? res.body.success).toBeTruthy();
   });
 });
 
@@ -423,5 +438,185 @@ describe('manual registration approval evidence', () => {
     });
     expect(PAY().status).toBe('pending');
     expect(USR().status).toBe('pending');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 7. B1 CONFIG FLAG: PAYMENT_AUTO_APPROVE OFF (PRODUCTION DEFAULT)
+//    An OCR-approved screenshot must NOT finalize; it parks for human
+//    external confirmation (HEAD parity): decision 'manual_review',
+//    ocrDecision 'approved', no UTR reservation, no activation, no credit.
+// ─────────────────────────────────────────────────────────────
+describe('S7 PAYMENT_AUTO_APPROVE off (secure default): external confirmation', () => {
+  beforeEach(() => {
+    delete process.env.PAYMENT_AUTO_APPROVE;
+  });
+
+  it('valid receipt -> manual_review, no activation, no UTR reservation', async () => {
+    const res = mockRes();
+    await uploadScreenshot(reqFor(), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(PAY().status).toBe('manual_review');
+    expect(USR().status).toBe('pending');
+    expect(PAY().verification_result).toMatchObject({
+      decision: 'manual_review',
+      ocrDecision: 'approved',
+      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+      engine: 'paymentValidationEngine/v1',
+    });
+    expect(PAY().verified_at).toBeTruthy();
+    expect(PAY().transaction_id).toBeNull();
+    expect(PAY().approved_at).toBeFalsy();
+    expect(PAY().rejected_at).toBeFalsy();
+    expect(db.state.store.approved_utrs).toHaveLength(0);
+    expect(db.state.store.wallet_transactions).toHaveLength(0);
+    expect(db.state.store.notifications).toHaveLength(0);
+    expect(paymentUpdates().some(u => u.status === 'approved')).toBe(false);
+  });
+
+  it('manual_review row is re-uploadable and finalizes once the flag is enabled', async () => {
+    await uploadScreenshot(reqFor(), mockRes());
+    expect(PAY().status).toBe('manual_review');
+
+    process.env.PAYMENT_AUTO_APPROVE = 'true';
+    const res = mockRes();
+    await uploadScreenshot(reqFor(), res);
+
+    expect(res.body.data.verification.status).toBe('approved');
+    expect(PAY().status).toBe('approved');
+    expect(USR().status).toBe('active');
+    expect(PAY().transaction_id).toBe('T7GHD240824');
+    expect(db.state.store.approved_utrs).toHaveLength(1);
+  });
+
+  it('flag off never swallows rejections: invalid receipt still rejects outright', async () => {
+    runOCR.mockResolvedValue({ text: VALID_RECEIPT.replace(RECEIVER_UPI, 'attacker@paytm'), confidence: 90 });
+    const res = mockRes();
+    await uploadScreenshot(reqFor(), res);
+    expect(PAY().status).toBe('rejected');
+    expect(PAY().verification_result.reason).toBe('UPI_MISMATCH');
+  });
+
+  it('top-up proof parks manual_review with no wallet credit and no UTR', async () => {
+    seed();
+    db.state.store.topups.push({
+      id: 'top-1',
+      sender_id: 'user-1',
+      receiver_id: 'user-2',
+      amount: 120,
+      status: 'payment_pending',
+      expires_at: new Date(Date.now() + 30 * 60000).toISOString(),
+    });
+    db.state.store.users.push({
+      id: 'user-2', status: 'active', current_plan: 120,
+      wallet_balance: 0, referred_by: 'user-1', referral_code: 'REFY', role: 'user',
+    });
+
+    const out = await submitTopupProof(
+      'top-1',
+      { buffer: VALID_IMAGE, mimetype: 'image/png', originalname: 'proof.png' },
+      'user-1'
+    );
+
+    expect(TOP().status).toBe('manual_review');
+    expect(out).toMatchObject({
+      credited: false,
+      manualReview: true,
+      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+    });
+    expect(out.message).toMatch(/manual review/i);
+    expect(walletCreditBatch).not.toHaveBeenCalled();
+    expect(db.state.store.approved_utrs).toHaveLength(0);
+    expect(TOP().verification_result).toMatchObject({
+      decision: 'manual_review',
+      ocrDecision: 'approved',
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 8. AFTERNOON (PM) RECEIPTS — AM/PM conversion, end-to-end
+//    Controlled clock: system time is pinned to 14:55 IST so the receipt
+//    istDateLine() renders as "2:53 PM". These tests exercise the exact
+//    production path (registration upload + top-up proof) with afternoon
+//    timestamps deterministically, regardless of when they run.
+// ─────────────────────────────────────────────────────────────
+describe('S8 afternoon (PM) timestamps approve registration and top-up', () => {
+  beforeEach(() => {
+    // S7 (earlier in this file) deletes the flag; set it explicitly so these
+    // approval assertions do not depend on suite execution order.
+    process.env.PAYMENT_AUTO_APPROVE = 'true';
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-25T14:55:00+05:30'));
+    // Re-seed under the controlled clock so expires_at anchors to 14:55 IST.
+    seed();
+    // Outer beforeEach seeded with the real clock and a real-time receipt;
+    // rebuild the receipt at the pinned time (renders "2:53 PM").
+    runOCR.mockResolvedValue({ text: pmReceipt(), confidence: 90 });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function pmReceipt(minutesBefore = 2) {
+    return [
+      'Payment Successful',
+      '\u20B9120',
+      'To Jayaraj',
+      RECEIVER_UPI,
+      `Date: ${istDateLine(minutesBefore)}`,
+      'UPI transaction ID: T7GHD240824',
+    ].join('\n');
+  }
+
+  it('registration: 2:53 PM receipt approves, activates, reserves the UTR', async () => {
+    const res = mockRes();
+    await uploadScreenshot(reqFor(), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(PAY().status).toBe('approved');
+    expect(USR().status).toBe('active');
+    expect(PAY().transaction_id).toBe('T7GHD240824');
+    expect(db.state.store.approved_utrs).toHaveLength(1);
+    expect(PAY().verification_result.decision).toBe('approved');
+  });
+
+  it('top-up: 2:53 PM receipt completes and credits exactly once', async () => {
+    db.state.store.users.push({
+      id: 'user-2', status: 'active', current_plan: 120,
+      wallet_balance: 0, referred_by: 'user-1', referral_code: 'REFY', role: 'user',
+    });
+    db.state.store.topups.push({
+      id: 'top-1',
+      sender_id: 'user-1',
+      receiver_id: 'user-2',
+      amount: 120,
+      status: 'payment_pending',
+      expires_at: new Date(Date.now() + 30 * 60000).toISOString(),
+    });
+
+    const out = await submitTopupProof(
+      'top-1',
+      { buffer: VALID_IMAGE, mimetype: 'image/png', originalname: 'proof.png' },
+      'user-1'
+    );
+
+    expect(TOP().status).toBe('completed');
+    expect(out.credited).toBe(true);
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
+    expect(db.state.store.approved_utrs).toHaveLength(1);
+  });
+
+  it('afternoon receipt outside the 30-minute window still rejects (window preserved)', async () => {
+    runOCR.mockResolvedValue({ text: pmReceipt(90), confidence: 90 }); // 13:25 PM vs 14:55
+    const res = mockRes();
+    await uploadScreenshot(reqFor(), res);
+
+    expect(PAY().status).toBe('rejected');
+    expect(PAY().verification_result.reason).toBe('INVALID_PAYMENT_DATE');
+    expect(USR().status).toBe('pending');
+    expect(db.state.store.approved_utrs).toHaveLength(0);
   });
 });

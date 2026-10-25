@@ -1,21 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => {
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery } = vi.hoisted(() => {
   // Ensure receiver name is configured so the name gate does not block
   // auto-approval in these tests.
   if (!process.env.ADMIN_RECEIVER_NAME) {
     process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
   }
+  // These suites assert straight-through auto-approval: enable it explicitly.
+  // Production default (unset) is the secure external-confirmation fallback.
+  process.env.PAYMENT_AUTO_APPROVE = 'true';
   return {
     runOCR: vi.fn(),
     runAmountRecoveryOCR: vi.fn(),
     runAdditionalOCRPasses: vi.fn(),
+    runDeepAmountRecovery: vi.fn(),
   };
 });
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
 });
 
 const { db } = vi.hoisted(() => {
@@ -75,6 +79,11 @@ import { uploadScreenshot } from '../../controllers/paymentController.js';
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 
+const VALID_IMAGE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 // Real production GPay receipt text (validated earlier by diagnostic test).
 const GPAY_TEXT = [
   'Payment Successful',
@@ -121,29 +130,34 @@ beforeEach(() => {
   runOCR.mockResolvedValue({ text: GPAY_TEXT, confidence: 90 });
   runAmountRecoveryOCR.mockResolvedValue([]);
   runAdditionalOCRPasses.mockResolvedValue([]);
+  runDeepAmountRecovery.mockResolvedValue([]);
   seed();
 });
 
 describe('E2E: valid screenshot through paymentController.uploadScreenshot', () => {
-  it('requires external confirmation instead of approving from OCR alone', async () => {
+  it('full engine evidence approves the payment and activates the user', async () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = mockRes();
 
     await uploadScreenshot(req, res);
 
     expect(res.body.success).toBe(true);
-    expect(res.body.data.verification.status).toBe('manual_review');
-    expect(db.state.paymentRow.status).toBe('manual_review');
+    expect(res.body.data.verification.status).toBe('approved');
+    expect(db.state.paymentRow.status).toBe('approved');
+    expect(db.state.paymentRow.transaction_id).toBe('T7GHD240824');
     expect(db.state.paymentRow.verification_result).toMatchObject({
-      decision: 'manual_review',
-      ocrDecision: 'approved',
-      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+      decision: 'approved',
+      engine: 'paymentValidationEngine/v1',
     });
-    expect(db.state.userRow.status).toBe('pending');
-    expect(db.state.userRow.current_plan).toBeNull();
+    expect(db.state.userRow.status).toBe('active');
+    expect(db.state.userRow.current_plan).toBe(120);
+    // The reserved UTR is recorded exactly once.
+    const utrInserts = (db.state.inserts.approved_utrs || []);
+    expect(utrInserts).toHaveLength(1);
+    expect(utrInserts[0].utr).toBe('T7GHD240824');
   });
 });

@@ -382,7 +382,10 @@ describe('Strict rejection: wrong amount', () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
+    // The corrupted header amount is not readable as an amount at all ->
+    // INCONCLUSIVE -> manual review (never a fuzzy match).
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('AMOUNT_NOT_DETECTED');
     expect(verificationResult.amountMatch).toBe(false);
   });
 
@@ -391,7 +394,8 @@ describe('Strict rejection: wrong amount', () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 500, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('AMOUNT_NOT_DETECTED');
     expect(verificationResult.amountMatch).toBe(false);
   });
 });
@@ -426,8 +430,8 @@ describe('Strict rejection: missing/invalid time', () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 
   it('old date → REJECTED', async () => {
@@ -543,8 +547,10 @@ describe('GPay stylized amount recovery (pipeline simulation)', () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    // Neither the primary pass nor any recovery stage produced a readable
+    // amount -> INCONCLUSIVE -> manual review (never a silent approval).
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('AMOUNT_NOT_DETECTED');
   });
 
   it('₹500: recovery finds it → APPROVED', async () => {
@@ -716,8 +722,8 @@ describe('Currency-symbol corruption recovery (evidence-based)', () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 120, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('AMOUNT_NOT_DETECTED');
     expect(verificationResult.amountMatch).toBe(false);
   });
 
@@ -732,8 +738,8 @@ describe('Currency-symbol corruption recovery (evidence-based)', () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'), expectedAmount: 500, receiverUpi: RECEIVER_UPI, now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('AMOUNT_NOT_DETECTED');
   });
 
   it('pipeline: exact ₹120 match → APPROVED (no recovery needed)', async () => {

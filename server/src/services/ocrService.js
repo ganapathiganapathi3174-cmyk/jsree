@@ -86,12 +86,62 @@ async function getOCRScheduler() {
 
 // Drop-in replacement for `Tesseract.recognize(buffer, 'eng', {})`.
 // Returns the identical { text, confidence } shape.
-async function recognizeWithSharedWorker(buffer) {
+//
+// Optional `deadline` (epoch ms) bounds execution: a job that would start
+// after — or run past — the deadline rejects with code OCR_TIMEOUT instead
+// of hanging the request. The in-flight tesseract job still settles in the
+// worker (its result is simply discarded), which is safe because the shared
+// scheduler serializes jobs anyway.
+function ocrTimeoutError() {
+  const err = new Error('Screenshot verification exceeded its OCR time budget');
+  err.code = 'OCR_TIMEOUT';
+  return err;
+}
+
+function pastDeadline(deadline) {
+  return deadline != null && Date.now() >= deadline;
+}
+
+// Recovery-budget stop check.
+//
+// `deadline` is the HARD deadline for the whole verification attempt: when it
+// is reached the attempt fails closed with OCR_TIMEOUT (an inconclusive,
+// retryable outcome that can never be read as an approval).
+//
+// `softDeadline` is the RECOVERY BUDGET for the current stage: when it is
+// reached the stage stops and returns the evidence it has collected so far.
+// Cutting a stage must not throw away what was already read — that evidence
+// is what decides "amount unreadable" vs "amount read but wrong".
+//
+// Returns 'hard' (throw OCR_TIMEOUT), 'soft' (stop, keep partial results) or
+// null (there is time left).
+function budgetStop(deadline, softDeadline) {
+  if (pastDeadline(deadline)) return 'hard';
+  if (pastDeadline(softDeadline)) return 'soft';
+  return null;
+}
+
+async function recognizeWithSharedWorker(buffer, deadline) {
+  if (pastDeadline(deadline)) throw ocrTimeoutError();
   const _t0 = Date.now();
   const scheduler = await getOCRScheduler();
-  const result = await scheduler.addJob('recognize', buffer, {});
-  (globalThis.__OCRSTATS ||= []).push(Date.now() - _t0);
-  return { text: result.data.text || '', confidence: result.data.confidence || 0 };
+  if (pastDeadline(deadline)) throw ocrTimeoutError();
+  const job = scheduler.addJob('recognize', buffer, {});
+  let timer = null;
+  try {
+    const result = deadline != null
+      ? await Promise.race([
+          job,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(ocrTimeoutError()), Math.max(1, deadline - Date.now()));
+          }),
+        ])
+      : await job;
+    (globalThis.__OCRSTATS ||= []).push(Date.now() - _t0);
+    return { text: result.data.text || '', confidence: result.data.confidence || 0 };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // Preprocessing is deterministic for identical input bytes, and every stage
@@ -729,38 +779,91 @@ export function normalizeName(name) {
   return s || null;
 }
 
+// Significant tokens of a normalized name. Tokens shorter than 3 characters
+// (initials such as "K" in "Jayaraj K Alagar") carry no identity signal and
+// are excluded from subset comparisons.
+function nameTokens(normalized) {
+  if (!normalized) return [];
+  return normalized.split(' ').filter(t => t.length >= 3);
+}
+
 // Compares extracted payee names against the configured receiver name.
-// Returns { match, method, expected, candidates, matched }.
-//   exact       – identical after normalization
-//   token_subset – every significant token of the shorter name is present
-//                  in the longer one (handles extra middle/last names)
-// Conservative by design: it never "fuzzy" guesses unrelated names.
+//
+// Returns { match, method, expected, candidates, matched, partial }.
+//
+//   exact          – identical after normalization
+//   exact_compact  – identical after normalization AND ignoring spaces
+//                    inside words (OCR splits "JAYARAJ ALAGAR" as
+//                    "JAYA RAJ ALAGAR")
+//   token_subset   – the receipt shows AT LEAST the configured name
+//                    (extra middle/last names are tolerated)
+//   partial        – the receipt shows only PART of the configured name
+//                    (e.g. "JAYARAJ" for "JAYARAJ ALAGAR"). Incomplete
+//                    evidence: never auto-approved.
+//   mismatch       – a complete but different payee name
+//   no_config      – no receiver name is configured
+//   not_found      – no candidate name could be read at all
+//
+// The subset direction matters: a receipt that reads FEWER tokens than the
+// configured name is INCOMPLETE evidence, not proof of identity. Accepting
+// it would let "JAYARAJ" alone satisfy the configured "JAYARAJ ALAGAR",
+// which is exactly the "contains the name" shortcut that must not approve.
 export function matchReceiverName(extractedNames, receiverName) {
   const expected = normalizeName(receiverName);
   const candidates = (extractedNames || []).map(normalizeName).filter(Boolean);
-  const base = { match: false, method: 'none', expected, candidates, matched: null };
+  const base = { match: false, method: 'none', expected, candidates, matched: null, partial: false };
   if (!expected) return { ...base, method: 'no_config' };
   if (candidates.length === 0) return { ...base, method: 'not_found' };
 
+  const expectedTokens = nameTokens(expected);
+
+  // 1. Exact match after normalization (case / whitespace / punctuation).
   for (const c of candidates) {
-    if (c === expected) return { match: true, method: 'exact', expected, candidates, matched: c };
+    if (c === expected) return { ...base, match: true, method: 'exact', matched: c };
   }
 
-  const expTokens = expected.split(' ').filter(t => t.length >= 3);
+  // 2. Exact match ignoring OCR-introduced spaces inside words.
+  const expectedCompact = expected.replace(/\s+/g, '');
   for (const c of candidates) {
-    const cTokens = c.split(' ').filter(t => t.length >= 3);
-    const [shorter, longer] = expTokens.length <= cTokens.length ? [expTokens, cTokens] : [cTokens, expTokens];
-    if (shorter.length > 0 && shorter.every(t => longer.includes(t))) {
-      return { match: true, method: 'token_subset', expected, candidates, matched: c };
+    if (c.replace(/\s+/g, '') === expectedCompact) {
+      return { ...base, match: true, method: 'exact_compact', matched: c };
     }
   }
 
-  return base;
+  // 3. Token-subset match — ONLY in the direction "the receipt shows AT
+  //    LEAST the configured name". The configured name must never be a
+  //    strict subset of what the receipt shows.
+  for (const c of candidates) {
+    const cTokens = nameTokens(c);
+    if (cTokens.length === 0) continue;
+    if (cTokens.length >= expectedTokens.length && expectedTokens.every(t => cTokens.includes(t))) {
+      return { ...base, match: true, method: 'token_subset', matched: c };
+    }
+  }
+
+  // 4. Partial / truncated / ambiguous read — the receipt shares AT LEAST ONE
+  //    significant token with the configured name but does not cover it
+  //    completely ("JAYARAJ" for "JAYARAJ ALAGAR"). Uncertain evidence:
+  //    routed to manual review, never approved. A candidate with no
+  //    significant token at all is equally uncertain (a truncated read).
+  for (const c of candidates) {
+    const cTokens = nameTokens(c);
+    if (cTokens.length === 0) {
+      return { ...base, method: 'partial', matched: c, partial: true };
+    }
+    const shared = cTokens.filter(t => expectedTokens.includes(t));
+    if (shared.length > 0 && shared.length < expectedTokens.length) {
+      return { ...base, method: 'partial', matched: c, partial: true };
+    }
+  }
+
+  // 5. A complete but different payee name.
+  return { ...base, method: 'mismatch' };
 }
 
-export async function runOCR(imageBuffer) {
+export async function runOCR(imageBuffer, opts = {}) {
   const processed = await preprocessImage(imageBuffer);
-  return recognizeWithSharedWorker(processed);
+  return recognizeWithSharedWorker(processed, opts.deadline);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -775,6 +878,17 @@ export async function runOCR(imageBuffer) {
 // reliably reads the dropped amount text — and returns ONLY the
 // extra amount tokens. It deliberately does not return UPI/UTR/date
 // data so the rest of the verification pipeline is untouched.
+//
+// `opts.scan` selects how much of the scan runs:
+//   'all'   (default) — top-region probe AND the full-height scan
+//   'probe' — the cheap top-region probe only
+//   'full'  — the full-height scan only (skips the probe)
+//
+// Splitting the two lets the verification engine run the CHEAP
+// top-region strategies before the expensive full-height scan: on a
+// receipt whose large-font amount sits in the top 45% (the common
+// Google Pay layout) the full-height scan — ~60 OCR jobs — is then
+// never reached.
 //
 // The strip OCR output may contain bare numbers without currency
 // symbols (e.g. just "120" instead of "₹120").  A narrow fallback
@@ -835,7 +949,8 @@ function extractAmountsFromStrips(text) {
 //
 // Both run in parallel to minimize latency.
 // ─────────────────────────────────────────────────────────────
-export async function runAdditionalOCRPasses(imageBuffer) {
+export async function runAdditionalOCRPasses(imageBuffer, opts = {}) {
+  const deadline = opts.deadline ?? null;
   // Generated and recognized ONE AT A TIME, in this exact order. The shared
   // worker already serialized these two jobs, so the recognized texts and their
   // order are unchanged — but only one variant buffer is alive at a time
@@ -846,7 +961,7 @@ export async function runAdditionalOCRPasses(imageBuffer) {
     .grayscale()
     .normalize()
     .toBuffer();
-  const upscaledResult = await recognizeWithSharedWorker(upscaledBuf);
+  const upscaledResult = await recognizeWithSharedWorker(upscaledBuf, deadline);
 
   const thresholdBuf = await sharp(imageBuffer)
     .resize({ width: 1200, withoutEnlargement: true })
@@ -854,7 +969,7 @@ export async function runAdditionalOCRPasses(imageBuffer) {
     .normalize()
     .threshold(145)
     .toBuffer();
-  const thresholdResult = await recognizeWithSharedWorker(thresholdBuf);
+  const thresholdResult = await recognizeWithSharedWorker(thresholdBuf, deadline);
 
   return [
     { text: upscaledResult.text, confidence: upscaledResult.confidence, pass: 'upscaled' },
@@ -862,7 +977,12 @@ export async function runAdditionalOCRPasses(imageBuffer) {
   ];
 }
 
-export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null) {
+export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null, opts = {}) {
+  const deadline = opts.deadline ?? null;
+  const softDeadline = opts.softDeadline ?? null;
+  const scanMode = opts.scan || 'all';
+  const runProbe = scanMode === 'all' || scanMode === 'probe';
+  const runFullScan = scanMode === 'all' || scanMode === 'full';
   const processed = await preprocessImage(imageBuffer);
   const meta = await sharp(processed).metadata();
   const W = meta.width, H = meta.height;
@@ -883,9 +1003,12 @@ export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null) {
   // jobs and falls through to the scan exactly as before — recall and the
   // decision are unchanged either way. Diagnostic calls (no expectedAmount)
   // skip the probe and keep the full scan.
-  if (expectedAmount != null) {
+  if (runProbe && expectedAmount != null) {
     const TOP_REGION_H = Math.floor(H * 0.45);
     for (let y = 0; y < TOP_REGION_H; y += 90) {
+      const stop = budgetStop(deadline, softDeadline);
+      if (stop === 'hard') throw ocrTimeoutError();
+      if (stop === 'soft') break;
       const h = Math.min(180, TOP_REGION_H - y);
       try {
         const bandBuf = await sharp(processed)
@@ -894,13 +1017,15 @@ export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null) {
           .toBuffer();
         for (const t of [80, 120]) {
           const variant = await sharp(bandBuf).threshold(t).png().toBuffer();
-          const r = await recognizeWithSharedWorker(variant);
+          const r = await recognizeWithSharedWorker(variant, deadline);
           if (r.text) recovered.push(r.text);
           if (hitExpected()) return extractAmountsFromStrips(recovered.join('\n'));
         }
-      } catch (_) { /* best-effort */ }
+      } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
     }
   }
+
+  if (!runFullScan) return extractAmountsFromStrips(recovered.join('\n'));
 
   // Full-height scan: every band, all 4 variants (recall unchanged). The
   // expected-amount check runs after EACH variant instead of once per band —
@@ -909,35 +1034,38 @@ export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null) {
   // variant that reads the amount. When no expectedAmount is supplied the
   // full scan runs (diagnostic use).
   scan: for (let y = 0; y < H; y += (STRIP_H - OVERLAP)) {
+    const stop = budgetStop(deadline, softDeadline);
+    if (stop === 'hard') throw ocrTimeoutError();
+    if (stop === 'soft') break scan;
     const h = Math.min(STRIP_H, H - y);
     const strip = await sharp(processed)
       .extract({ left: 0, top: y, width: W, height: h })
       .png()
       .toBuffer();
 
-    const r = await recognizeWithSharedWorker(strip);
+    const r = await recognizeWithSharedWorker(strip, deadline);
     if (r.text) recovered.push(r.text);
     if (hitExpected()) break scan;
 
     try {
       const thresholdBuf = await sharp(strip).threshold(145).png().toBuffer();
-      const r2 = await recognizeWithSharedWorker(thresholdBuf);
+      const r2 = await recognizeWithSharedWorker(thresholdBuf, deadline);
       if (r2.text) recovered.push(r2.text);
-    } catch (_) { /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
     if (hitExpected()) break scan;
 
     try {
       const thresholdBuf = await sharp(strip).threshold(100).png().toBuffer();
-      const r3 = await recognizeWithSharedWorker(thresholdBuf);
+      const r3 = await recognizeWithSharedWorker(thresholdBuf, deadline);
       if (r3.text) recovered.push(r3.text);
-    } catch (_) { /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
     if (hitExpected()) break scan;
 
     try {
       const invertedBuf = await sharp(strip).negate().normalize().png().toBuffer();
-      const r4 = await recognizeWithSharedWorker(invertedBuf);
+      const r4 = await recognizeWithSharedWorker(invertedBuf, deadline);
       if (r4.text) recovered.push(r4.text);
-    } catch (_) { /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
     if (hitExpected()) break scan;
   }
   return extractAmountsFromStrips(recovered.join('\n'));
@@ -958,7 +1086,9 @@ export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null) {
 //
 // Returns additional amount candidates (may be empty).
 // ─────────────────────────────────────────────────────────────
-export async function runDeepAmountRecovery(imageBuffer, expectedAmount = null) {
+export async function runDeepAmountRecovery(imageBuffer, expectedAmount = null, opts = {}) {
+  const deadline = opts.deadline ?? null;
+  const softDeadline = opts.softDeadline ?? null;
   const processed = await preprocessImage(imageBuffer);
   const meta = await sharp(processed).metadata();
   const W = meta.width, H = meta.height;
@@ -992,16 +1122,22 @@ export async function runDeepAmountRecovery(imageBuffer, expectedAmount = null) 
     ];
 
     for (const build of strategies) {
+      const stop = budgetStop(deadline, softDeadline);
+      if (stop === 'hard') throw ocrTimeoutError();
+      if (stop === 'soft') break;
       const buf = await build();
-      const r = await recognizeWithSharedWorker(buf);
+      const r = await recognizeWithSharedWorker(buf, deadline);
       if (r.text) candidates.push(r.text);
       if (expectedFound()) break;
     }
-  } catch (_) { /* best-effort */ }
+  } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
 
   const STRIP_H = 180;
   const OVERLAP = 90;
   for (let y = 0; !expectedFound() && y < TOP_REGION_H; y += (STRIP_H - OVERLAP)) {
+    const stop = budgetStop(deadline, softDeadline);
+    if (stop === 'hard') throw ocrTimeoutError();
+    if (stop === 'soft') break;
     const h = Math.min(STRIP_H, TOP_REGION_H - y);
     try {
       const stripBuf = await sharp(processed)
@@ -1022,13 +1158,16 @@ export async function runDeepAmountRecovery(imageBuffer, expectedAmount = null) 
       // above. The upscaled W*2 variant is the expensive one, so it is now the
       // only strip-sized buffer in flight.
       for (const build of stripStrategies) {
+        const stop = budgetStop(deadline, softDeadline);
+        if (stop === 'hard') throw ocrTimeoutError();
+        if (stop === 'soft') break;
         const buf = await build();
-        const r = await recognizeWithSharedWorker(buf);
+        const r = await recognizeWithSharedWorker(buf, deadline);
         if (r.text) candidates.push(r.text);
         if (expectedFound()) break;
       }
       if (expectedFound()) break;
-    } catch (_) { /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
   }
 
   return extractAmountsFromStrips(candidates.join('\n'));
@@ -1077,7 +1216,9 @@ export function matchAmount(extractedAmounts, expectedAmount) {
 // EVIDENCE-based — we never infer corruption from the numeric
 // string alone.
 // ─────────────────────────────────────────────────────────────
-export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmount) {
+export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmount, opts = {}) {
+  const deadline = opts.deadline ?? null;
+  const softDeadline = opts.softDeadline ?? null;
   const processed = await preprocessImage(imageBuffer);
   const meta = await sharp(processed).metadata();
   const W = meta.width, H = meta.height;
@@ -1137,8 +1278,11 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
   // skipping the remaining OCR calls — a no-match run still executes all 12
   // strategies. Only one variant buffer is alive at a time.
   for (let i = 0; i < strategies.length; i++) {
+    const stop = budgetStop(deadline, softDeadline);
+    if (stop === 'hard') throw ocrTimeoutError();
+    if (stop === 'soft') return { verified: false, method: 'recovery_budget_exhausted', evidence: '' };
     const buf = await strategies[i].build();
-    const r = await recognizeWithSharedWorker(buf);
+    const r = await recognizeWithSharedWorker(buf, deadline);
     const text = r.text || '';
     if (textContainsExpected(text)) {
       return {
@@ -1153,6 +1297,9 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
   const STRIP_H = 180;
   const OVERLAP = 90;
   for (let y = 0; y < TOP_REGION_H; y += (STRIP_H - OVERLAP)) {
+    const stop = budgetStop(deadline, softDeadline);
+    if (stop === 'hard') throw ocrTimeoutError();
+    if (stop === 'soft') return { verified: false, method: 'recovery_budget_exhausted', evidence: '' };
     const h = Math.min(STRIP_H, TOP_REGION_H - y);
     try {
       const stripBuf = await sharp(processed)
@@ -1170,8 +1317,11 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
       // Checked per variant: first evidence returns (same method/evidence
       // as the batched check over all four, in the same order).
       for (const build of stripStrategies) {
+        const stop = budgetStop(deadline, softDeadline);
+        if (stop === 'hard') throw ocrTimeoutError();
+        if (stop === 'soft') return { verified: false, method: 'recovery_budget_exhausted', evidence: '' };
         const buf = await build();
-        const r = await recognizeWithSharedWorker(buf);
+        const r = await recognizeWithSharedWorker(buf, deadline);
         const text = r.text || '';
         if (textContainsExpected(text)) {
           return {
@@ -1181,7 +1331,7 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
           };
         }
       }
-    } catch (_) { /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
   }
 
   return { verified: false, method: 'no_evidence', evidence: '' };
@@ -1252,11 +1402,14 @@ export function matchUPIWithRecovery(extractedUPIs, receiverUPI) {
     // OCR renders GPay's leading "••••" mask bullets as letters/dots/zeros
     // (e.g. "••••26-3@okicici" -> "ee26-3@okicici", "es0026-3@okicici").
     // Before the suffix test, strip ONE leading run of mask-noise characters
-    // [A-Za-z0] from the candidate local-part. The stripped remainder must
+    // [A-Za-z0] from the candidate local-part — bounded to 4 characters,
+    // because the mask is exactly four bullets. A longer bound lets a REAL
+    // differently-named UPI ("attacker126-3@okicici" -> strip "attacker" ->
+    // "126-3") impersonate the expected one. The stripped remainder must
     // still start with a digit and pass the same suffix+domain+length checks
     // below — never a match on the noise itself.
     const stripMaskNoise = (local) => {
-      const stripped = local.replace(/^[A-Za-z0]{1,8}/, '');
+      const stripped = local.replace(/^[A-Za-z0]{1,4}/, '');
       return stripped !== local && /^\d/.test(stripped) ? stripped : null;
     };
     for (const c of allCandidates) {
@@ -1304,6 +1457,35 @@ export function isWithinTimeWindow(date, now, windowMinutes) {
   const diff = now.getTime() - date.getTime();
   const bound = windowMinutes * 60 * 1000;
   return diff >= -bound && diff <= bound;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Payment freshness window (Rule D).
+//
+// The authoritative reference is the SERVER-generated upload/verification
+// start time, captured once per verification attempt and reused for every
+// stage (OCR retries, image preprocessing, recovery passes). It is never
+// taken from the client.
+//
+// The window is FORWARD-ONLY from that reference:
+//
+//     0 <= uploadReferenceTime - transactionTime <= windowMinutes
+//
+// A genuine payment always happens BEFORE the screenshot is uploaded, so:
+//   - a transaction timestamp in the FUTURE is invalid (clock skew, a
+//     tampered screenshot, or a receipt dated ahead of the server clock)
+//   - a transaction older than the window is stale
+//   - a transaction exactly `windowMinutes` old is accepted (inclusive bound)
+//
+// `isWithinTimeWindow` above is the generic SYMMETRIC helper and must NOT
+// be used for payment freshness — it would accept future transactions.
+// ─────────────────────────────────────────────────────────────
+export function isWithinPaymentWindow(transactionTime, uploadReferenceTime, windowMinutes) {
+  if (!(transactionTime instanceof Date) || !(uploadReferenceTime instanceof Date)) return false;
+  if (isNaN(transactionTime.getTime()) || isNaN(uploadReferenceTime.getTime())) return false;
+  const diff = uploadReferenceTime.getTime() - transactionTime.getTime();
+  const bound = windowMinutes * 60 * 1000;
+  return diff >= 0 && diff <= bound;
 }
 
 // Forward-only time window: transaction must be >= serverTime AND

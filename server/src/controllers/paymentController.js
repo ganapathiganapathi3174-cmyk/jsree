@@ -39,10 +39,10 @@ export async function uploadScreenshot(req, res) {
     try {
       verificationResult = await paymentService.verifyPayment(paymentId, req.file.buffer);
     } catch (verifyErr) {
-      // Verification produced NO decision (OCR failure, or the process was
-      // killed before it could return). Persist that fact instead of dropping
-      // it: the payment stays pending and resubmittable, but is no longer an
-      // unexplained pending row. Never a silent success.
+      // Verification produced NO decision (OCR failure, OCR timeout, or the
+      // process was killed before it could return). Persist that fact instead
+      // of dropping it: the payment stays pending and resubmittable, but is no
+      // longer an unexplained pending row. Never a silent success.
       console.error('[payments] verification did not complete', {
         paymentId,
         code: verifyErr?.code,
@@ -54,6 +54,10 @@ export async function uploadScreenshot(req, res) {
         .catch(() => null) || { error: verifyErr.message, code: verifyErr.code };
     }
 
+    // The HTTP status stays 200: the screenshot WAS received and stored, and
+    // the record is explicitly flagged as inconclusive and resubmittable.
+    // `verification.reason` tells the client exactly what happened
+    // (OCR_TIMEOUT / OCR_FAILED / OCR_UNREADABLE).
     res.json({
       success: true,
       data: {
@@ -123,10 +127,13 @@ export async function verifyPaymentManual(req, res) {
                    error.code === 'UNAUTHORIZED' ? 403 :
                    error.code === 'PAYMENT_NOT_PENDING' ? 400 :
                    error.code === 'PAYMENT_EXPIRED' ? 410 :
+                   error.code === 'OCR_TIMEOUT' ? 504 :
                    error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE' ? 422 : 500;
     res.status(status).json({
       success: false,
-      message: error.message || 'Verification failed',
+      message: error.code === 'OCR_TIMEOUT'
+        ? 'Screenshot verification took too long to complete. The payment is still pending — please upload the screenshot again.'
+        : (error.message || 'Verification failed'),
       code: error.code || 'VERIFY_FAILED'
     });
   }

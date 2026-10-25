@@ -11,15 +11,21 @@ import {
 // Mocks Supabase + OCR; never touches the real database.
 // ─────────────────────────────────────────────────────────────
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
-  runOCR: vi.fn(),
-  runAmountRecoveryOCR: vi.fn(),
-  runAdditionalOCRPasses: vi.fn(),
-}));
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery } = vi.hoisted(() => {
+  if (!process.env.ADMIN_RECEIVER_NAME) {
+    process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
+  }
+  return {
+    runOCR: vi.fn(),
+    runAmountRecoveryOCR: vi.fn(),
+    runAdditionalOCRPasses: vi.fn(),
+    runDeepAmountRecovery: vi.fn(),
+  };
+});
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
 });
 
 const { db } = vi.hoisted(() => {
@@ -69,6 +75,11 @@ void supabase;
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 
+const VALID_IMAGE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 function istDateLine(minutesBeforeUpload) {
   const ist = new Date(Date.now() - minutesBeforeUpload * 60000 + 5.5 * 3600000);
   const pad = n => String(n).padStart(2, '0');
@@ -92,6 +103,7 @@ function resetState() {
   vi.clearAllMocks();
   runAmountRecoveryOCR.mockResolvedValue([]);
   runAdditionalOCRPasses.mockResolvedValue([]);
+  runDeepAmountRecovery.mockResolvedValue([]);
 }
 
 describe('PHASE 6 — exact 30-minute boundary matrix', () => {
@@ -126,15 +138,15 @@ describe('PHASE 6 — exact 30-minute boundary matrix', () => {
 describe('PHASE 7 — expiry race: valid at OCR start, expired at commit', () => {
   it('rejects with PAYMENT_EXPIRED, releases UTR, never approves', async () => {
     resetState();
-    // Expires 60ms from now; OCR takes 200ms → post-OCR re-check must fire.
+    // Expires 100ms from now; OCR takes 300ms → post-OCR re-check must fire.
     db.state.paymentRow = {
       id: 'pay-race', user_id: 'user-1', selected_plan: 120, expected_amount: 120,
-      screenshot_url: 'https://x/s.png', upi_id: RECEIVER_UPI, status: 'pending',
-      expires_at: new Date(Date.now() + 60).toISOString(),
+      screenshot_url: 'https://x/s.png', upi_id: RECEIVER_UPI, receiver_upi: RECEIVER_UPI, status: 'pending',
+      expires_at: new Date(Date.now() + 100).toISOString(),
     };
-    runOCR.mockImplementation(() => new Promise(r => setTimeout(() => r({ text: GPAY_VALID(), confidence: 90 }), 200)));
+    runOCR.mockImplementation(() => new Promise(r => setTimeout(() => r({ text: GPAY_VALID(), confidence: 90 }), 300)));
 
-    const result = await verifyPayment('pay-race', Buffer.from('img'));
+    const result = await verifyPayment('pay-race', VALID_IMAGE);
 
     expect(result.decision).toBe('rejected');
     expect(result.reason).toBe('PAYMENT_EXPIRED');

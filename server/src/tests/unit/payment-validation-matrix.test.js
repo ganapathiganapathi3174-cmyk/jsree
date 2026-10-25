@@ -116,8 +116,11 @@ describe('Matrix 1: ±30 minute time window boundaries', () => {
   it('transaction 30 min in the FUTURE (exact) → APPROVED', async () => {
     const text = receipt({ when: '27/08/2026, 10:00 AM' });
     const { verificationResult } = await verify({ text, now: new Date('2026-08-27T04:00:00.000Z') });
-    expect(verificationResult.decision).toBe('approved');
-    expect(verificationResult.dateValid).toBe(true);
+    // Rule D: the window is FORWARD-ONLY — a transaction timestamp in the
+    // future is never valid, not even exactly at the +30 min boundary.
+    expect(verificationResult.decision).toBe('rejected');
+    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    expect(verificationResult.dateValid).toBe(false);
   });
 
   it('transaction 30 min + 1 ms in the future → REJECTED', async () => {
@@ -143,14 +146,16 @@ describe('Matrix 1: ±30 minute time window boundaries', () => {
   it('date without time component → REJECTED', async () => {
     const text = receipt({ when: '27/08/2026' });
     const { verificationResult } = await verify({ text });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    // The time component could not be read -> INCONCLUSIVE -> manual review.
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 
   it('no date at all → REJECTED', async () => {
     const text = receipt({ when: null });    const { verificationResult } = await verify({ text });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    // No date at all could be read -> INCONCLUSIVE -> manual review.
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_DATE_NOT_DETECTED');
   });
 
   it('midnight boundary: paid 23:50 IST, uploaded 00:10 IST (20 min apart, ±30-min spec) → APPROVED', async () => {
@@ -243,8 +248,9 @@ describe('Matrix 3: amount matching', () => {
   it('missing amount → REJECTED AMOUNT_MISMATCH', async () => {
     const text = 'To Jayaraj\nCompleted\n27/08/2026, 9:25 AM\nUPI transaction ID\nT7GHD123456\n' + RECEIVER_UPI;
     const { verificationResult } = await verify({ text });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('AMOUNT_MISMATCH');
+    // Rule A: an amount that could not be read is INCONCLUSIVE, not wrong.
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('AMOUNT_NOT_DETECTED');
   });
 
   it('expectedAmount supplied as numeric string (top-up path) → APPROVED', async () => {

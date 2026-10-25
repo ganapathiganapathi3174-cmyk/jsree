@@ -39,16 +39,33 @@ export async function submitProof(req, res) {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'Proof file is required', code: 'NO_FILE' });
     const result = await topupService.submitTopupProof(req.params.topupId, req.file, req.user.id);
-    res.json({ success: true, message: result.message, data: { topupId: result.topupId, credited: result.credited || false, manualReview: result.manualReview || false, reason: result.reason || null } });
+    res.json({
+      success: true,
+      message: result.message,
+      data: {
+        topupId: result.topupId,
+        credited: result.credited || false,
+        manualReview: result.manualReview || false,
+        inconclusive: result.inconclusive || false,
+        reason: result.reason || null,
+      },
+    });
   } catch (error) {
     const status = error.code === 'TOPUP_NOT_FOUND' ? 404
       : error.code === 'UNAUTHORIZED' ? 403
       : error.code === 'TOPUP_NOT_SUBMITTABLE' ? 400
       : error.code === 'PAYMENT_EXPIRED' ? 410
       : error.code === 'DUPLICATE_SCREENSHOT' ? 409
+      : error.code === 'OCR_TIMEOUT' ? 504
       : error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE' ? 400
       : 500;
-    res.status(status).json({ success: false, message: error.message || 'Failed to submit proof', code: error.code || 'SUBMIT_FAILED' });
+    res.status(status).json({
+      success: false,
+      message: error.code === 'OCR_TIMEOUT'
+        ? 'Screenshot verification took too long to complete. The top-up is still pending — please upload the screenshot again.'
+        : (error.message || 'Failed to submit proof'),
+      code: error.code || 'SUBMIT_FAILED'
+    });
   }
 }
 
@@ -79,7 +96,17 @@ export async function directTopup(req, res) {
       receiverId: req.body.receiverId || null,
       file: req.file || null,
     });
-    res.status(result.created ? 201 : 200).json({ success: true, message: result.message, data: { topupId: result.topupId, credited: result.credited || false, manualReview: result.manualReview || false, reason: result.reason || null } });
+    res.status(result.created ? 201 : 200).json({
+      success: true,
+      message: result.message,
+      data: {
+        topupId: result.topupId,
+        credited: result.credited || false,
+        manualReview: result.manualReview || false,
+        inconclusive: result.inconclusive || false,
+        reason: result.reason || null,
+      },
+    });
   } catch (error) {
     const status = error.code === 'INVALID_AMOUNT' || error.code === 'NO_SPONSOR' || error.code === 'RECEIVER_INACTIVE' || error.code === 'TOPUP_NOT_SUBMITTABLE'
       ? 400
@@ -91,9 +118,17 @@ export async function directTopup(req, res) {
             ? 410
             : error.code === 'DUPLICATE_SCREENSHOT'
               ? 409
-              : error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE'
-                ? 400
-                : 500;
-    res.status(status).json({ success: false, message: error.message || 'Failed to process top-up', code: error.code || 'DIRECT_TOPUP_FAILED' });
+              : error.code === 'OCR_TIMEOUT'
+                ? 504
+                : error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE'
+                  ? 400
+                  : 500;
+    res.status(status).json({
+      success: false,
+      message: error.code === 'OCR_TIMEOUT'
+        ? 'Screenshot verification took too long to complete. The top-up is still pending — please upload the screenshot again.'
+        : (error.message || 'Failed to process top-up'),
+      code: error.code || 'DIRECT_TOPUP_FAILED'
+    });
   }
 }

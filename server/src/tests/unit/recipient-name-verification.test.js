@@ -122,10 +122,27 @@ describe('matchReceiverName', () => {
     expect(matchReceiverName(['JAYARAJ ALAGAR'], 'jayaraj alagar').method).toBe('exact');
   });
 
-  it('matches when the shorter name is a token-subset of the longer one', () => {
+  it('does NOT match a partial read of the configured name (token-subset the other way)', () => {
+    // "Jayaraj" alone does not cover the configured "JAYARAJ ALAGAR".
+    // A subset match is only allowed in the direction "the receipt shows AT
+    // LEAST the configured name"; the other direction is incomplete
+    // evidence and must never auto-approve.
     const r = matchReceiverName(['Jayaraj'], 'JAYARAJ ALAGAR');
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('partial');
+    expect(r.partial).toBe(true);
+  });
+
+  it('matches a receipt that shows MORE than the configured name (extra middle/last name)', () => {
+    const r = matchReceiverName(['Jayaraj Kumar Alagar'], 'JAYARAJ ALAGAR');
     expect(r.match).toBe(true);
     expect(r.method).toBe('token_subset');
+  });
+
+  it('matches ignoring OCR-introduced spaces inside words', () => {
+    const r = matchReceiverName(['JAYA RAJ ALAGAR'], 'JAYARAJ ALAGAR');
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('exact_compact');
   });
 
   it('matches when the configured name is the shorter one', () => {
@@ -212,8 +229,17 @@ describe('runScreenshotVerification — recipient-name gate (end to end)', () =>
     expect(verificationResult.detected.receiverNames).toContain('Jayaraj');
   });
 
-  it('approves a token-subset match (extra middle/last name)', async () => {
+  it('routes a PARTIAL payee name to manual_review (never auto-approves)', async () => {
+    // The receipt only shows "Jayaraj" — incomplete evidence for the
+    // configured "JAYARAJ ALAGAR".
     const { verificationResult } = await verify('JAYARAJ ALAGAR');
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('RECEIVER_NAME_INCOMPLETE');
+    expect(verificationResult.nameDiagnostics.matchMethod).toBe('partial');
+  });
+
+  it('approves a receipt that shows MORE than the configured name', async () => {
+    const { verificationResult } = await verify('JAYARAJ ALAGAR', receipt({ nameLine: 'To Jayaraj Kumar Alagar' }));
     expect(verificationResult.decision).toBe('approved');
     expect(verificationResult.nameDiagnostics.matchMethod).toBe('token_subset');
   });

@@ -1,19 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => {
+const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery } = vi.hoisted(() => {
   if (!process.env.ADMIN_RECEIVER_NAME) {
     process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
   }
+  // These suites assert straight-through auto-approval: enable it explicitly.
+  // Production default (unset) is the secure external-confirmation fallback.
+  process.env.PAYMENT_AUTO_APPROVE = 'true';
   return {
     runOCR: vi.fn(),
     runAmountRecoveryOCR: vi.fn(),
     runAdditionalOCRPasses: vi.fn(),
+    runDeepAmountRecovery: vi.fn(),
   };
 });
 
 vi.mock('../../services/ocrService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses };
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
 });
 
 const { reserveApprovedUtrMock } = vi.hoisted(() => ({
@@ -82,6 +86,11 @@ import { uploadScreenshot } from '../../controllers/paymentController.js';
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 
+const VALID_IMAGE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 function seedPayment() {
   db.state.updates = {};
   db.state.inserts = {};
@@ -118,7 +127,7 @@ function istClock(minOffset = 0) {
 function makeText(amount, upi, utr, date) {
   const utrLine = utr ? `UTR: ${utr}` : '';
   const dateLine = date ? `Date: ${date}` : '';
-  return `Payment Successful\nAmount \u20B9${amount}\nTo: ${upi}\n${utrLine}\n${dateLine}`;
+  return `Payment Successful\nAmount \u20B9${amount}\nTo: Jayaraj\nTo: ${upi}\n${utrLine}\n${dateLine}`;
 }
 
 describe('E2E: Payment Verification Flow (controller + service)', () => {
@@ -129,31 +138,32 @@ describe('E2E: Payment Verification Flow (controller + service)', () => {
     runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, 'TESTUTR123', istClock()), confidence: 90 });
     runAmountRecoveryOCR.mockResolvedValue([]);
     runAdditionalOCRPasses.mockResolvedValue([]);
+    runDeepAmountRecovery.mockResolvedValue([]);
   });
 
-  it('valid ₹120 screenshot -> manual_review (RECEIVER_NAME_UNREADABLE since name not detected)', async () => {
+  it('valid ₹120 screenshot -> APPROVED end-to-end (engine evidence + atomic UTR)', async () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
 
     await uploadScreenshot(req, res);
 
     expect(res.body.success).toBe(true);
-    expect(res.body.data.verification.status).toBe('manual_review');
-    expect(db.state.paymentRow.status).toBe('manual_review');
-    // Name not detected in OCR text -> RECEIVER_NAME_UNREADABLE
+    expect(res.body.data.verification.status).toBe('approved');
+    expect(db.state.paymentRow.status).toBe('approved');
+    expect(db.state.paymentRow.transaction_id).toBe('TESTUTR123');
     expect(db.state.paymentRow.verification_result).toMatchObject({
-      decision: 'manual_review',
-      reason: 'RECEIVER_NAME_UNREADABLE',
+      decision: 'approved',
+      engine: 'paymentValidationEngine/v1',
     });
-    expect(db.state.userRow.status).toBe('pending');
-    expect(db.state.userRow.current_plan).toBeNull();
+    expect(db.state.userRow.status).toBe('active');
+    expect(db.state.userRow.current_plan).toBe(120);
   });
 
-  it('valid ₹500 screenshot -> manual_review', async () => {
+  it('valid ₹500 screenshot -> APPROVED', async () => {
     db.state.paymentRow.expected_amount = 500;
     db.state.paymentRow.selected_plan = 500;
     runOCR.mockResolvedValue({ text: makeText(500, RECEIVER_UPI, 'TESTUTR456', istClock()), confidence: 90 });
@@ -161,17 +171,18 @@ describe('E2E: Payment Verification Flow (controller + service)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
 
     await uploadScreenshot(req, res);
 
     expect(res.body.success).toBe(true);
-    expect(res.body.data.verification.status).toBe('manual_review');
+    expect(res.body.data.verification.status).toBe('approved');
+    expect(db.state.userRow.status).toBe('active');
   });
 
-  it('valid ₹1000 screenshot -> manual_review', async () => {
+  it('valid ₹1000 screenshot -> APPROVED', async () => {
     db.state.paymentRow.expected_amount = 1000;
     db.state.paymentRow.selected_plan = 1000;
     runOCR.mockResolvedValue({ text: makeText(1000, RECEIVER_UPI, 'TESTUTR789', istClock()), confidence: 90 });
@@ -179,14 +190,15 @@ describe('E2E: Payment Verification Flow (controller + service)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
 
     await uploadScreenshot(req, res);
 
     expect(res.body.success).toBe(true);
-    expect(res.body.data.verification.status).toBe('manual_review');
+    expect(res.body.data.verification.status).toBe('approved');
+    expect(db.state.userRow.status).toBe('active');
   });
 });
 
@@ -194,6 +206,10 @@ describe('Verification rejection and failure cases (controller layer)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     reserveApprovedUtrMock.mockResolvedValue({ reserved: true, duplicate: false, utr: 'TESTUTR123' });
+    runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, 'TESTUTR123', istClock()), confidence: 90 });
+    runAmountRecoveryOCR.mockResolvedValue([]);
+    runAdditionalOCRPasses.mockResolvedValue([]);
+    runDeepAmountRecovery.mockResolvedValue([]);
   });
 
   it('amount mismatch -> AMOUNT_MISMATCH', async () => {
@@ -201,7 +217,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -219,7 +235,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -239,7 +255,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -257,7 +273,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -269,13 +285,13 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     expect(res.body.data.verification.reason).toBe('MISSING_UTR');
   });
 
-  it('duplicate UTR -> manual_review (RECEIVER_NAME_UNREADABLE since name gate fails first)', async () => {
+  it('duplicate UTR -> rejected DUPLICATE_UTR (atomic reservation loses the race)', async () => {
     reserveApprovedUtrMock.mockResolvedValueOnce({ duplicate: true, reserved: false, utr: 'DUPUTR123' });
     runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, 'DUPUTR123', istClock()), confidence: 90 });
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -283,9 +299,10 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     await uploadScreenshot(req, res);
 
     expect(res.body.success).toBe(true);
-    // Duplicate UTR is checked after OCR approval, but name gate fails first -> manual_review
-    expect(res.body.data.verification.status).toBe('manual_review');
-    expect(res.body.data.verification.reason).toBe('RECEIVER_NAME_UNREADABLE');
+    expect(res.body.data.verification.status).toBe('rejected');
+    expect(res.body.data.verification.reason).toBe('DUPLICATE_UTR');
+    expect(db.state.userRow.status).toBe('pending');
+    expect(db.state.paymentRow.transaction_id).toBeNull();
   });
 
   it('OCR throws -> returns error in verification object with OCR_FAILED', async () => {
@@ -293,7 +310,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -311,7 +328,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -323,23 +340,29 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     expect(res.body.data.verification.reason).toBe('OCR_UNREADABLE');
   });
 
-  it('empty receiver name config -> manual_review (RECEIVER_NAME_UNREADABLE since name not configured and not detected)', async () => {
-    delete process.env.ADMIN_RECEIVER_NAME;
-    runOCR.mockResolvedValue({ text: makeText(120, RECEIVER_UPI, 'TESTUTR123', istClock()), confidence: 90 });
+  it('receiver name missing from receipt -> inconclusive RECEIVER_NAME_UNREADABLE, stays pending', async () => {
+    runOCR.mockResolvedValue({ text: `Payment Successful\nAmount \u20B9120\nTo: ${RECEIVER_UPI}\nUTR: TESTUTR123\nDate: ${istClock()}`, confidence: 90 });
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
 
     await uploadScreenshot(req, res);
 
+    expect(res.statusCode).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.data.verification.status).toBe('manual_review');
-    // When receiver name config is empty and name not detected in OCR -> RECEIVER_NAME_UNREADABLE
-    expect(res.body.data.verification.reason).toBe('RECEIVER_NAME_UNREADABLE');
+    // Missing evidence is never a decision: explicit inconclusive record,
+    // payment stays pending and resubmittable.
+    expect(res.body.data.verification).toMatchObject({
+      decision: null,
+      inconclusive: true,
+      reason: 'RECEIVER_NAME_UNREADABLE',
+    });
+    expect(db.state.paymentRow.status).toBe('pending');
+    expect(db.state.userRow.status).toBe('pending');
   });
 
   it('low OCR confidence -> LOW_OCR_CONFIDENCE', async () => {
@@ -347,7 +370,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -365,7 +388,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();
@@ -382,7 +405,7 @@ describe('Verification rejection and failure cases (controller layer)', () => {
     const req = {
       params: { paymentId: 'pay-1' },
       user: { id: 'user-1', role: 'user' },
-      file: { buffer: Buffer.from('img'), originalname: 'shot.png', mimetype: 'image/png' },
+      file: { buffer: VALID_IMAGE, originalname: 'shot.png', mimetype: 'image/png' },
     };
     const res = { statusCode: 200, body: null, status: (c) => { res.statusCode = c; return res; }, json: (b) => { res.body = b; return res; } };
     seedPayment();

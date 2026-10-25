@@ -410,8 +410,9 @@ describe('Security gates: correct masked UPI + failing gate → REJECTED', () =>
       receiverUpi: RECEIVER_UPI,
       now: NOW(),
     });
-    expect(verificationResult.decision).toBe('rejected');
-    expect(verificationResult.reason).toBe('INVALID_PAYMENT_DATE');
+    // Date read, time missing -> INCONCLUSIVE -> manual review.
+    expect(verificationResult.decision).toBe('manual_review');
+    expect(verificationResult.reason).toBe('PAYMENT_TIME_NOT_DETECTED');
   });
 
   it('failed transaction status → REJECTED (TRANSACTION_FAILED)', async () => {

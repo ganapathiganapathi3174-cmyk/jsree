@@ -38,18 +38,30 @@ export default function RegisterPage() {
     switch (reason) {
       case 'AMOUNT_MISMATCH':
         return 'The screenshot amount does not match your plan amount. Please pay the exact amount and upload that screenshot.';
+      case 'AMOUNT_NOT_DETECTED':
+        return 'We could not read the amount from your screenshot. Please upload a clearer, uncropped screenshot of the full payment confirmation.';
       case 'UPI_MISMATCH':
         return 'The screenshot shows a different recipient. Please pay to the UPI ID shown on this screen.';
       case 'RECEIVER_NAME_MISMATCH':
         return 'The screenshot shows a different recipient name. Please pay to the account shown on this screen.';
+      case 'RECEIVER_NAME_INCOMPLETE':
+        return 'The recipient name in your screenshot is only partially visible. Please upload a screenshot showing the full recipient name.';
+      case 'RECEIVER_NAME_NOT_CONFIGURED':
+        return 'Your payment is being reviewed by our team because we could not confirm the recipient name.';
       case 'INVALID_PAYMENT_DATE':
         return 'This screenshot is too old or its date could not be read. Please upload the screenshot from your current payment.';
+      case 'PAYMENT_DATE_NOT_DETECTED':
+        return 'We could not read the payment date from your screenshot. Please upload a screenshot that shows the transaction date.';
+      case 'PAYMENT_TIME_NOT_DETECTED':
+        return 'We could not read the payment time from your screenshot. Please upload a screenshot that shows the date AND time of the transaction.';
       case 'TRANSACTION_FAILED':
         return 'The screenshot shows a failed or pending transaction. Only completed payments can be verified.';
       case 'MISSING_UTR':
         return 'No transaction ID was found in the screenshot. Please upload the full confirmation screen.';
       case 'LOW_OCR_CONFIDENCE':
         return 'The screenshot was not clear enough to verify. Please upload a sharper, uncropped screenshot.';
+      case 'LOW_FIELD_CONFIDENCE':
+        return 'We could not read every detail of your payment with enough confidence. Please upload a sharper, uncropped screenshot.';
       case 'DUPLICATE_UTR':
         return 'This payment has already been used. Please complete a fresh payment and upload its screenshot.';
       case 'DEMO_SCREENSHOT':
@@ -60,6 +72,13 @@ export default function RegisterPage() {
         return 'Payment could not be verified. Please resubmit a valid screenshot from your current payment.';
     }
   };
+
+  // A verification that produced NO decision (OCR timeout, unreadable image,
+  // crashed worker) is INCONCLUSIVE, never an approval and never a rejection.
+  // It stays resubmittable, so the user is told to try again.
+  const isInconclusive = (verification) =>
+    verification?.inconclusive === true ||
+    ['OCR_TIMEOUT', 'OCR_FAILED', 'OCR_UNREADABLE'].includes(verification?.reason);
 
   const validateStep1 = () => {
     if (!form.name || !form.email || !form.mobile || !form.password || !form.confirmPassword) {
@@ -159,8 +178,15 @@ export default function RegisterPage() {
       } else if (verification?.status === 'manual_review') {
         toast('Your payment is being reviewed by our team. We will notify you once it is verified.', { icon: '\u23F3' });
         navigate('/payment-status');
+      } else if (isInconclusive(verification)) {
+        // No decision was reached (OCR timeout / unreadable screenshot). The
+        // payment is still pending and resubmittable — never a silent success.
+        toast.error(verification?.reason === 'OCR_TIMEOUT'
+          ? 'Verification took too long to finish. Your payment is still pending — please upload the screenshot again.'
+          : 'We could not read your screenshot. Your payment is still pending — please upload a clearer screenshot.');
+        navigate('/payment-status');
       } else {
-        toast.success('Registration complete! Payment verification could not finish — please resubmit your screenshot.');
+        toast.error('Payment verification could not finish. Your payment is still pending — please upload the screenshot again.');
         navigate('/payment-status');
       }
     } catch (err) {
@@ -168,6 +194,8 @@ export default function RegisterPage() {
       if (code === 'PAYMENT_EXPIRED') {
         toast.error('Payment request expired. Please create a new payment request.');
         setPaymentData(null);
+      } else if (code === 'OCR_TIMEOUT') {
+        toast.error('Verification took too long to finish. Your payment is still pending — please upload the screenshot again.');
       } else if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT' || isTimeoutError(err)) {
         debug('verify:timeout', { paymentId: paymentData?.id });
         toast.error('Verification timed out. The server is taking too long (possibly a cold start). Please try again in a moment.');

@@ -1,23 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createDirectTopup, computeTopupSummary, TOPUP_RECEIVED_REQUIRED } from '../../services/topupService.js';
 
-const { supabaseMock, walletCreditBatch, runScreenshotVerification } = vi.hoisted(() => ({
-  supabaseMock: { from: vi.fn(), storage: { from: vi.fn() } },
-  walletCreditBatch: vi.fn(),
-  runScreenshotVerification: vi.fn(),
-}));
+const { supabaseMock, walletCreditBatch, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery } = vi.hoisted(() => {
+  if (!process.env.ADMIN_RECEIVER_NAME) {
+    process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
+  }
+  // These suites assert straight-through auto-approval: enable it explicitly.
+  // Production default (unset) is the secure external-confirmation fallback.
+  process.env.PAYMENT_AUTO_APPROVE = 'true';
+  return {
+    supabaseMock: { from: vi.fn(), storage: { from: vi.fn() } },
+    walletCreditBatch: vi.fn(),
+    runOCR: vi.fn(),
+    runAmountRecoveryOCR: vi.fn(),
+    runAdditionalOCRPasses: vi.fn(),
+    runDeepAmountRecovery: vi.fn(),
+  };
+});
 
 vi.mock('../../db/supabase.js', () => ({ supabase: supabaseMock }));
 vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: walletCreditBatch } }));
 vi.mock('../../services/verificationService.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, runScreenshotVerification };
+  return { ...actual, runScreenshotVerification: vi.fn() };
+});
+vi.mock('../../services/ocrService.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
 });
 
 let chains;
 beforeEach(() => {
   vi.clearAllMocks();
   walletCreditBatch.mockResolvedValue([{ credited: true }, { credited: true }]);
+  runAmountRecoveryOCR.mockResolvedValue([]);
+  runAdditionalOCRPasses.mockResolvedValue([]);
+  runDeepAmountRecovery.mockResolvedValue([]);
   chains = {};
   supabaseMock.from.mockImplementation((table) => chains[table] || makeFallbackChain());
   supabaseMock.storage.from.mockReturnValue({
@@ -68,11 +86,41 @@ function makeWalletChain(limitResult) {
 const SENDER = { data: { id: 'sender-1', referred_by: 'sponsor-1', current_plan: 120 }, error: null };
 const RECEIVER = { data: { id: 'sponsor-1', full_name: 'Sponsor', status: 'active' }, error: null };
 const NO_PENDING = { data: null, error: { code: 'PGRST116' } };
+const RECEIVER_UPI = 'jayarajj126-3@okicici';
+
+const VALID_IMAGE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+function istLine(minutesBefore = 2) {
+  const ist = new Date(Date.now() - minutesBefore * 60000 + 5.5 * 3600000);
+  const pad = n => String(n).padStart(2, '0');
+  let h = ist.getUTCHours();
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${pad(ist.getUTCDate())}/${pad(ist.getUTCMonth() + 1)}/${ist.getUTCFullYear()}, ${h}:${pad(ist.getUTCMinutes())} ${ap}`;
+}
+
+function receiptText(amount, upi, utr) {
+  return [
+    'Payment Successful',
+    `\u20B9${amount}`,
+    'To Jayaraj',
+    upi,
+    `Date: ${istLine()}`,
+    `UPI transaction ID: ${utr}`,
+  ].join('\n');
+}
+
+function mockApprovedReceipt(amount, utr) {
+  runOCR.mockResolvedValue({ text: receiptText(amount, RECEIVER_UPI, utr), confidence: 90 });
+}
+
 const FUTURE_EXPIRY = new Date(Date.now() + 30 * 60000).toISOString();
 const CREATED_TOPUP = { data: { id: 'topup-new-1', sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, plan: 120, status: 'created', expires_at: FUTURE_EXPIRY }, error: null };
 const PENDING_TOPUP = { data: { id: 'pending-1', sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, plan: 120, status: 'created', expires_at: FUTURE_EXPIRY }, error: null };
-const fakeFile = { buffer: Buffer.from('img'), mimetype: 'image/png', originalname: 'proof.png' };
-const APPROVED_VERIFICATION = { verificationResult: { decision: 'approved', reason: null, utr: null }, verificationTime: new Date('2026-08-18T12:00:00.000Z'), utr: null };
+const fakeFile = { buffer: VALID_IMAGE, mimetype: 'image/png', originalname: 'proof.png' };
 
 function installHappyChains({ approvalSelect }) {
   chains.users = makeUsersChain([SENDER, RECEIVER, SENDER]);
@@ -85,35 +133,38 @@ function installHappyChains({ approvalSelect }) {
 // DIRECT TOP-UP (no pre-existing sponsor request required)
 // ─────────────────────────────────────────────────────────────
 describe('createDirectTopup', () => {
-  it('D1: screenshot OCR alone routes a new sponsor top-up to manual review', async () => {
+  it('D1: engine-verified screenshot completes a new sponsor top-up and credits both wallets', async () => {
     installHappyChains({ approvalSelect: { data: [{ id: 'topup-new-1', status: 'completed' }], error: null } });
-    runScreenshotVerification.mockResolvedValue(APPROVED_VERIFICATION);
+    mockApprovedReceipt(120, 'TDIRECT001');
 
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
 
-    expect(result.credited).toBe(false);
-    expect(result.manualReview).toBe(true);
+    expect(result.credited).toBe(true);
+    expect(result.manualReview).toBe(false);
     expect(result.topupId).toBe('topup-new-1');
     expect(chains.topups.insert).toHaveBeenCalledWith(expect.objectContaining({
       sender_id: 'sender-1', receiver_id: 'sponsor-1', amount: 120, status: 'created',
     }));
-    expect(chains.topups.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'manual_review' }));
-    expect(walletCreditBatch).not.toHaveBeenCalled();
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
+    expect(walletCreditBatch).toHaveBeenCalledWith([
+      expect.objectContaining({ userId: 'sender-1', amount: 120, referenceId: 'topup-new-1', referenceType: 'topup' }),
+      expect.objectContaining({ userId: 'sponsor-1', amount: 120, referenceId: 'topup-new-1', referenceType: 'topup' }),
+    ]);
   });
 
-  it('D2: a pending request is reused, but OCR alone does not credit it', async () => {
+  it('D2: a pending request is reused and verified through the engine (credited once)', async () => {
     chains.users = makeUsersChain([SENDER, RECEIVER, SENDER]);
     chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP], approvalSelect: { data: [{ id: 'pending-1', status: 'completed' }], error: null } });
     chains.wallet_transactions = makeWalletChain();
     chains.audit_logs = { insert: vi.fn().mockReturnValue({}) };
-    runScreenshotVerification.mockResolvedValue(APPROVED_VERIFICATION);
+    mockApprovedReceipt(120, 'TDIRECT002');
 
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
 
     expect(result.topupId).toBe('pending-1');
-    expect(result.manualReview).toBe(true);
+    expect(result.credited).toBe(true);
     expect(chains.topups.insert).not.toHaveBeenCalled();
-    expect(walletCreditBatch).not.toHaveBeenCalled();
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
   });
 
   it('D3: no sponsor (no referred_by) -> NO_SPONSOR error', async () => {
@@ -121,18 +172,20 @@ describe('createDirectTopup', () => {
     await expect(createDirectTopup({ senderId: 'sender-1', amount: 120 })).rejects.toMatchObject({ code: 'NO_SPONSOR' });
   });
 
-  it('D4: rejected decision (UPI_MISMATCH) -> record rejected, NO credit, NO completed count', async () => {
+  it('D4: engine UPI mismatch -> record rejected, NO credit, NO completed count', async () => {
     chains.users = makeUsersChain([SENDER, RECEIVER, SENDER]);
     chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP] });
     chains.wallet_transactions = makeWalletChain();
     chains.audit_logs = { insert: vi.fn().mockReturnValue({}) };
-    runScreenshotVerification.mockResolvedValue({ verificationResult: { decision: 'rejected', reason: 'UPI_MISMATCH', utr: null }, verificationTime: new Date(), utr: null });
+    runOCR.mockResolvedValue({ text: receiptText(120, 'attacker@paytm', 'TBADUPI001'), confidence: 90 });
 
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
 
     expect(result.credited).toBe(false);
     expect(walletCreditBatch).not.toHaveBeenCalled();
-    expect(result.message).toBe('Topup rejected');
+    expect(result.reason).toBe('UPI_MISMATCH');
+    expect(result.message).toBe('Topup rejected: the screenshot shows a different recipient');
+    expect(chains.topups.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'rejected', rejection_reason: 'UPI_MISMATCH' }));
   });
 
   it('D5: no screenshot -> creates a pending record (credit later via proof flow)', async () => {
@@ -145,7 +198,7 @@ describe('createDirectTopup', () => {
     expect(result.created).toBe(true);
     expect(result.credited).toBe(false);
     expect(result.topupId).toBe('topup-new-1');
-    expect(runScreenshotVerification).not.toHaveBeenCalled();
+    expect(runOCR).not.toHaveBeenCalled(); // no screenshot -> no engine run
   });
 
   it('D6: explicit receiverId bypasses the referred_by lookup', async () => {

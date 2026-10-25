@@ -3,7 +3,7 @@ import {
   extractPaymentData,
   matchAmount,
   matchUPIWithRecovery,
-  isWithinTimeWindow,
+  isWithinPaymentWindow,
   dateTimeEntryToDate,
   isDemoScreenshot,
   runAdditionalOCRPasses,
@@ -18,23 +18,63 @@ import {
   PAYMENT_TIME_WINDOW_MINUTES,
   MIN_OCR_CONFIDENCE_APPROVE,
   TIMEZONE,
+  OCR_VERIFICATION_BUDGET_MS,
+  OCR_AMOUNT_RECOVERY_BUDGET_MS,
+  OCR_RECOVERY_STAGE_BUDGET_MS,
 } from '../config/paymentConfig.js';
+import { istCalendarDayDiff } from '../utils/paymentNormalize.js';
 import { supabase } from '../db/supabase.js';
 
 // ─────────────────────────────────────────────────────────────
 // Strict automatic verification engine (payments AND top-ups).
 //
-// DECISION RULE — binary for the strong identity/amount gates, with a
-// single manual-review branch for the SECONDARY recipient-name check:
+// ONE decision engine for BOTH flows: the register payment path
+// (paymentService.verifyPayment) and the top-up path
+// (topupService.uploadAndVerifyTopupProof) both call
+// runScreenshotVerification() below, which resolves every rule and hands
+// the outcome to decidePaymentVerification(). There is no second,
+// flow-specific rule set.
+//
+// THE FOUR PAYMENT RULES
+//
+//   Rule A — EXACT AMOUNT
+//     The OCR-extracted transaction amount must equal the amount the
+//     SERVER resolved for the authenticated user's plan / top-up. A
+//     confidently read amount that differs is an AMOUNT_MISMATCH. An
+//     amount that could not be read at all (or was ambiguous) is
+//     INCONCLUSIVE, not wrong, and routes to manual_review.
+//
+//   Rule B — RECEIVER NAME
+//     The payee name read from the screenshot must match the configured
+//     receiver name (admin-configurable, DB/env backed). Case, whitespace
+//     and punctuation differences are normalized away. A partial read
+//     ("JAYARAJ" for "JAYARAJ ALAGAR") is incomplete evidence and routes
+//     to manual_review; a complete but different name is rejected.
+//
+//   Rule C — TRANSACTION DATE
+//     The transaction date must fall on the current calendar day in the
+//     configured India timezone (Asia/Kolkata). The single documented
+//     exception is the midnight straddle (paid 23:5x IST, uploaded shortly
+//     after midnight IST), which stays valid because the payment is still
+//     inside the freshness window.
+//
+//   Rule D — TRANSACTION TIME / 30-MINUTE WINDOW
+//     0 <= uploadReferenceTime - transactionTime <= 30 minutes, where
+//     uploadReferenceTime is the SERVER-generated upload/verification
+//     start time, captured ONCE per attempt and reused by every stage.
+//
+// DECISION RULE — binary for the strong identity/amount gates, with
+//   manual_review branches for every INCONCLUSIVE (unreadable/ambiguous)
+//   input and for the SECONDARY recipient-name check:
 //   approved      = upiMatch && amountMatch && dateValid && utrPresent
 //                   && transactionStatusOk && ocrConfident
 //                   && allFieldConfidenceHigh
 //                   && (name gate disabled OR receiver name matches)
-//   manual_review = a strong gate passed but the recipient-name evidence is
-//                   missing/unreadable, or no receiver name is configured
-//                   (fail safe — never auto-approve blindly)
-//   rejected      = any strong gate fails, or a name IS present but does not
-//                   match the configured recipient
+//   manual_review = an input could not be read with confidence, or the
+//                   recipient-name evidence is missing/partial, or no
+//                   receiver name is configured (fail safe)
+//   rejected      = any strong gate fails on CONFIDENT evidence, or a
+//                   complete receiver name IS present but does not match
 //
 // The name gate is ACTIVE only when a receiver name is supplied
 // (receiverName !== undefined). Direct engine callers/tests that omit it keep
@@ -44,8 +84,9 @@ import { supabase } from '../db/supabase.js';
 // APPROVE conditions (ALL must pass):
 //   1. Receiver UPI matches expected
 //   2. Transaction amount exactly matches expected amount
-//   3. Transaction timestamp within ±30 min of the SERVER-SIDE upload time
-//      (complete timestamp required — a date-only reading fails the window)
+//   3. Transaction timestamp within the 30-minute window of the SERVER-SIDE
+//      upload time AND on the current India calendar date
+//      (complete timestamp required — a date-only reading fails)
 //   4. Payment status explicitly indicates success/completed/paid
 //   5. A valid UTR/reference ID is detected
 //   6. OCR confidence >= MIN_OCR_CONFIDENCE_APPROVE
@@ -54,29 +95,55 @@ import { supabase } from '../db/supabase.js';
 //
 // REJECT conditions (ANY triggers rejection):
 //   - Wrong UPI
-//   - Wrong amount
-//   - Date/time outside the ±30-minute window (older than 30 min OR more than
-//     30 min in the future) — including date-only / missing timestamps
+//   - Wrong amount (confidently read, different value)
+//   - Transaction outside the 30-minute window (older than 30 min OR in the
+//     future) or on a different calendar date
 //   - Missing or non-success transaction status
 //   - Missing UTR
 //   - Low OCR confidence
 //   - Any field confidence below "high"
 //   - Recipient name present but different from the configured name
 //   - Duplicate UTR (handled by reserveApprovedUtr)
+//
+// MANUAL-REVIEW conditions (inconclusive — never auto-approved):
+//   - Amount could not be read at all
+//   - Transaction date could not be read at all
+//   - Transaction date read, but the time component is missing
+//   - Recipient name could not be read, or was read only partially
+//   - No receiver name is configured
 // ─────────────────────────────────────────────────────────────
 export function decidePaymentVerification({
   upiMatch, amountMatch, dateValid, utrPresent,
   transactionStatusOk, ocrConfidence,
   receiverName, nameMatch, nameFound, nameConfigured,
+  // Optional refinements. `undefined` keeps the legacy behaviour (a hard
+  // rejection) so direct engine callers and older tests are unaffected;
+  // `false` means "the field could NOT be read" and fails closed into
+  // manual_review.
+  amountDetected,
+  dateDetected,
+  timeDetected,
+  namePartial,
 }) {
   // Gate 1: UPI must match
   if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
 
-  // Gate 2: Amount must match
-  if (amountMatch !== true) return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
+  // Gate 2 (Rule A): Amount must match the server-resolved expected amount.
+  if (amountMatch !== true) {
+    // No amount could be read at all — the screenshot is inconclusive,
+    // not wrong. Fail closed into manual review instead of accusing the
+    // user of paying the wrong amount.
+    if (amountDetected === false) return { decision: 'manual_review', reason: 'AMOUNT_NOT_DETECTED' };
+    return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
+  }
 
-  // Gate 3: Date/time must be within the ±30-minute freshness window
-  if (dateValid !== true) return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
+  // Gate 3 (Rules C + D): The transaction timestamp must be inside the
+  // 30-minute freshness window AND on the current India calendar date.
+  if (dateValid !== true) {
+    if (dateDetected === false) return { decision: 'manual_review', reason: 'PAYMENT_DATE_NOT_DETECTED' };
+    if (timeDetected === false) return { decision: 'manual_review', reason: 'PAYMENT_TIME_NOT_DETECTED' };
+    return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
+  }
 
   // Gate 4: Transaction status must explicitly indicate success
   if (transactionStatusOk !== true) return { decision: 'rejected', reason: 'TRANSACTION_FAILED' };
@@ -97,6 +164,11 @@ export function decidePaymentVerification({
       return { decision: 'manual_review', reason: 'RECEIVER_NAME_NOT_CONFIGURED' };
     }
     if (nameMatch !== true) {
+      if (namePartial === true) {
+        // The payee name was read only partially ("JAYARAJ" for
+        // "JAYARAJ ALAGAR") — incomplete evidence, needs a human.
+        return { decision: 'manual_review', reason: 'RECEIVER_NAME_INCOMPLETE' };
+      }
       if (nameFound === true) {
         // A payee name was read and it is a DIFFERENT person — hard reject.
         return { decision: 'rejected', reason: 'RECEIVER_NAME_MISMATCH' };
@@ -124,20 +196,51 @@ export function requireExternalPaymentConfirmation(verificationResult) {
 // ─────────────────────────────────────────────────────────────
 // Runs OCR on a screenshot and produces the verification result.
 //
-// Throws OCR_FAILED / OCR_UNREADABLE when the screenshot cannot be
-// processed (caller keeps the record in a retryable state). On success
-// returns { verificationResult, verificationTime, utr }. The result is
+// Throws OCR_FAILED / OCR_UNREADABLE / OCR_TIMEOUT when the screenshot
+// cannot be processed (caller keeps the record in a retryable state). On
+// success returns { verificationResult, verificationTime, utr }. The result is
 // structured ({ decision, reason, checks, detected, ... }) for admin
 // debugging; decision/reason remain the primary contract.
+//
+// TIME BUDGET
+// One attempt gets at most `budgetMs` (default OCR_VERIFICATION_BUDGET_MS)
+// of wall-clock time for ALL OCR work: the primary pass, the additional
+// passes and the three amount-recovery stages. The deadline is computed
+// ONCE and passed down, so a slow screenshot is abandoned deterministically
+// with OCR_TIMEOUT instead of running until the HTTP request times out.
+// An OCR timeout is INCONCLUSIVE — it can never be read as an approval.
+//
+// The amount-recovery stages additionally run under `recoveryBudget`
+// (default OCR_AMOUNT_RECOVERY_BUDGET_MS, the targeted phase) and
+// `stageBudget` (default OCR_RECOVERY_STAGE_BUDGET_MS, per stage). A stage
+// that exhausts its budget stops and keeps the evidence it already read; the
+// decision then follows the normal rules (an unreadable amount → manual
+// review).
 // ─────────────────────────────────────────────────────────────
-export async function runScreenshotVerification({ imageBuffer, screenshotUrl, expectedAmount, receiverUpi, receiverName, now, referenceId = null, referenceType = null }) {
+export async function runScreenshotVerification({
+  imageBuffer,
+  screenshotUrl,
+  expectedAmount,
+  receiverUpi,
+  receiverName,
+  now,
+  referenceId = null,
+  referenceType = null,
+  budgetMs = OCR_VERIFICATION_BUDGET_MS,
+  recoveryBudget,
+  stageBudget,
+}) {
   // Server-side upload/receipt time — captured BEFORE the OCR run starts.
-  // The ±30-minute freshness window is measured from this instant (spec:
-  // "within ±30 min of the SERVER-SIDE upload time"). Capturing it after OCR
-  // would erode the window by the OCR duration (30-75 s in production), so a
-  // payment made 29:45 before upload could be rejected as >30 min old.
+  // The 30-minute freshness window (Rule D) is measured from this instant
+  // (spec: "within 30 min of the SERVER-SIDE upload time"). Capturing it
+  // after OCR would erode the window by the OCR duration (30-75 s in
+  // production), so a payment made 29:45 before upload could be rejected as
+  // >30 min old. It is captured EXACTLY ONCE and reused by every stage —
+  // OCR retries, image preprocessing and recovery passes never reset it.
   const receivedAt = now instanceof Date ? now : new Date();
   const ocrStart = Date.now();
+  // ONE deadline for the whole attempt (all OCR stages share it).
+  const deadline = ocrStart + (Number.isFinite(budgetMs) && budgetMs > 0 ? budgetMs : OCR_VERIFICATION_BUDGET_MS);
 
   let buffer = imageBuffer;
   let ocrText = '';
@@ -167,7 +270,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
 
     // ── Primary OCR pass ──
     const primaryStart = Date.now();
-    const ocr = await runOCR(buffer);
+    const ocr = await runOCR(buffer, { deadline });
     primaryMs = Date.now() - primaryStart;
     console.log('[VERIFICATION TIMING]', JSON.stringify({
       reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
@@ -212,7 +315,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     } else {
     try {
       const additionalStart = Date.now();
-      const additionalPasses = await runAdditionalOCRPasses(buffer);
+      const additionalPasses = await runAdditionalOCRPasses(buffer, { deadline });
       additionalMs = Date.now() - additionalStart;
       console.log('[VERIFICATION TIMING]', JSON.stringify({
         reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
@@ -257,10 +360,27 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
         }
       }
       ocrPassInfo.candidatesFromPasses = { amounts: extractedAmounts, upis: extractedUPIs, utrs: extractedUTRs };
-    } catch (e) { /* additional passes are best-effort */ }
+    } catch (e) {
+      // A budget expiry is NOT "best-effort" — it aborts the attempt.
+      if (e?.code === 'OCR_TIMEOUT') throw e;
+      /* additional passes are best-effort */
+    }
     }
 
   } catch (ocrErr) {
+    // An OCR timeout is INCONCLUSIVE, not a failure of the payment: it can
+    // never be read as an approval. It is surfaced with its own code so the
+    // caller can keep the record RESUBMITTABLE and tell the user to retry.
+    if (ocrErr?.code === 'OCR_TIMEOUT') {
+      console.log('[VERIFICATION DEBUG]', JSON.stringify({
+        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+        receivedAt: receivedAt.toISOString(),
+        ocrMs: Date.now() - ocrStart,
+        decision: 'inconclusive',
+        reason: 'OCR_TIMEOUT',
+      }));
+      throw { message: 'Screenshot verification exceeded its time budget', code: 'OCR_TIMEOUT', details: ocrErr.message };
+    }
     console.log('[VERIFICATION DEBUG]', JSON.stringify({
       reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
       receivedAt: receivedAt.toISOString(),
@@ -299,10 +419,15 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       extractedDateTimes: [],
       extractedReceiverNames: [],
       amountMatch: false,
+      amountDetected: false,
       upiMatch: false,
       utr: null,
       dateValid: false,
+      dateDetected: false,
+      timeDetected: false,
       hasTimeComponent: false,
+      timeWithinWindow: false,
+      dateOnExpectedDay: false,
       transactionStatus: null,
       decision: 'rejected',
       reason: 'DEMO_SCREENSHOT',
@@ -350,51 +475,125 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // — diagnostics only; decision and reason are unaffected.
   const skipAmountRecovery = upiMatch !== true;
 
+  // ─────────────────────────────────────────────────────────────
+  // AMOUNT-RECOVERY BUDGETS
+  //
+  // `deadline` is the shared OVERALL deadline for the whole attempt (primary
+  // pass + additional passes + every recovery stage). The recovery stages
+  // additionally get:
+  //
+  //   recoveryBudgetMs — wall-clock budget for the TARGETED recovery phase
+  //     (top-region probe → deep region → currency region).
+  //   stageBudgetMs    — cap for a SINGLE recovery stage, so one pathological
+  //     stage cannot consume the whole recovery budget.
+  //
+  // Defaults are sized from the measured per-stage latency (see
+  // config/paymentConfig.js and scripts/audit-recovery-stages.mjs): they leave
+  // ~30% headroom over the worst measured stage under load, so no proven
+  // recovery stage is truncated on a busy host.
+  //
+  // A stage that runs out of its SOFT budget stops and returns the evidence it
+  // already collected (partial results are kept — "an amount was read" is
+  // different from "no amount could be read"). Only the shared overall
+  // deadline aborts the attempt with OCR_TIMEOUT (→ HTTP 504, retryable,
+  // never an approval).
+  // ─────────────────────────────────────────────────────────────
+  const recoveryBudgetMs = Number.isFinite(recoveryBudget) && recoveryBudget > 0
+    ? recoveryBudget
+    : OCR_AMOUNT_RECOVERY_BUDGET_MS;
+  const stageBudgetMs = Number.isFinite(stageBudget) && stageBudget > 0
+    ? stageBudget
+    : OCR_RECOVERY_STAGE_BUDGET_MS;
+  const recoveryStart = Date.now();
+  const recoveryDeadline = Math.min(deadline, recoveryStart + recoveryBudgetMs);
+  const recoveryStagesRun = [];
+  let recoveryBudgetExhausted = false;
+
+  // Runs one recovery stage under the tightest applicable limit.
+  //   hard deadline → the shared overall deadline → OCR_TIMEOUT (504)
+  //   soft deadline → the stage / recovery budget → stop, keep partial results
+  // The soft deadline is only used when it is strictly EARLIER than the hard
+  // one, so a stage can never soft-stop past the overall deadline.
+  const runRecoveryStage = async (name, fn) => {
+    const stageStart = Date.now();
+    const soft = Math.min(recoveryDeadline, stageStart + stageBudgetMs);
+    const softDeadline = soft < deadline ? soft : null;
+    try {
+      const value = await fn(softDeadline);
+      const exhausted = softDeadline != null && Date.now() >= softDeadline;
+      if (exhausted) recoveryBudgetExhausted = true;
+      recoveryStagesRun.push({ stage: name, exhausted });
+      return value;
+    } catch (e) {
+      // OCR_TIMEOUT here means the HARD deadline was reached → the whole
+      // attempt is inconclusive and must surface as a retryable timeout.
+      if (e?.code === 'OCR_TIMEOUT') throw e;
+      recoveryStagesRun.push({ stage: name, error: e?.code || 'stage_error' });
+      return null;
+    }
+  };
+
   // Full-page OCR may have dropped a large-font amount line (common on UPI
   // receipts). This recovery DOES feed the decision: amountMatch is Gate 2 of
   // decidePaymentVerification() and also drives fieldConfidence.amount, which
   // the allFieldsHighConfidence gate enforces. Recovery only runs when the
   // outcome is still in play (Gate 1 passed).
+  //
+  // STAGE ORDER IS CHEAPEST-FIRST (this is the latency fix):
+  //   1. top-region probe   (~8 jobs, top 45% of the image)
+  //   2. deep region strategies (~31 jobs, top 45%, 7 preprocessing variants)
+  //   3. currency region strategies (~28 jobs, top 45%, 12 variants)
+  //   4. full-height strip scan (~60 jobs, EVERY band of the image)
+  //
+  // The full-height scan used to run FIRST, so a receipt whose large-font
+  // amount sits in the top 45% (the common Google Pay layout) paid for all
+  // ~60 full-height jobs before the deep/currency stages — which are the
+  // ones that actually recover that amount — ever ran. Reordering keeps the
+  // SAME evidence and the SAME decision, but the expensive scan is now only
+  // reached when the amount is genuinely unreadable in the top region.
   let amountMatch = matchAmount(extractedAmounts, expectedAmount);
 
+  // Merges a recovery stage's candidates into the detected set. The
+  // candidates are ALWAYS recorded, even when they do not match: "an amount
+  // was read and it is wrong" (AMOUNT_MISMATCH) is a different outcome from
+  // "no amount could be read" (manual review).
+  const mergeAmountCandidates = (candidates) => {
+    const merged = [...new Set([...extractedAmounts, ...candidates])];
+    const matched = matchAmount(merged, expectedAmount);
+    if (matched) {
+      amountMatch = true;
+      recoveredFromBands = true;
+    }
+    extractedAmounts = merged;
+    return matched;
+  };
+
   if (!amountMatch && !skipAmountRecovery) {
-    try {
-      const stripStart = Date.now();
-      const recovered = await runAmountRecoveryOCR(buffer, expectedAmount);
-      stripRecoveryMs = Date.now() - stripStart;
-      console.log('[VERIFICATION TIMING]', JSON.stringify({
-        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
-        phase: 'strip_recovery_ocr',
-        durationMs: stripRecoveryMs,
-        candidatesFound: recovered.length,
-      }));
-      const merged = [...new Set([...extractedAmounts, ...recovered])];
-      if (matchAmount(merged, expectedAmount)) {
-        amountMatch = true;
-        recoveredFromBands = true;
-        extractedAmounts = merged;
-      }
-    } catch (e) { /* recovery is best-effort; keep original result */ }
+    const stageStart = Date.now();
+    const recovered = await runRecoveryStage('probe', (softDeadline) =>
+      runAmountRecoveryOCR(buffer, expectedAmount, { deadline, softDeadline, scan: 'probe' }));
+    stripRecoveryMs = Date.now() - stageStart;
+    console.log('[VERIFICATION TIMING]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      phase: 'strip_probe_ocr',
+      durationMs: stripRecoveryMs,
+      candidatesFound: recovered ? recovered.length : 0,
+    }));
+    mergeAmountCandidates(recovered || []);
   }
 
   if (!amountMatch && !skipAmountRecovery) {
-    try {
-      const deepStart = Date.now();
-      const deepRecovered = await runDeepAmountRecovery(buffer, expectedAmount);
-      deepRecoveryMs = Date.now() - deepStart;
-      console.log('[VERIFICATION TIMING]', JSON.stringify({
-        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
-        phase: 'deep_recovery_ocr',
-        durationMs: deepRecoveryMs,
-        candidatesFound: deepRecovered.length,
-      }));
-      const merged = [...new Set([...extractedAmounts, ...deepRecovered])];
-      if (matchAmount(merged, expectedAmount)) {
-        amountMatch = true;
-        recoveredFromBands = true;
-        extractedAmounts = merged;
-      }
-    } catch (e) { /* deep recovery is best-effort */ }
+    const stageStart = Date.now();
+    const deepRecovered = await runRecoveryStage('deep', (softDeadline) =>
+      runDeepAmountRecovery(buffer, expectedAmount, { deadline, softDeadline }));
+    deepRecoveryMs = Date.now() - stageStart;
+    console.log('[VERIFICATION TIMING]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      phase: 'deep_recovery_ocr',
+      durationMs: deepRecoveryMs,
+      candidatesFound: deepRecovered ? deepRecovered.length : 0,
+    }));
+    mergeAmountCandidates(deepRecovered || []);
   }
 
   // ── Currency-symbol corruption recovery ──
@@ -405,25 +604,64 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   // It ONLY accepts when a preprocessing strategy produces the exact expected
   // amount — no numeric heuristics, no string inference.
   if (!amountMatch && !skipAmountRecovery) {
-    try {
-      const currencyStart = Date.now();
-      const currencyResult = await verifyAmountWithCurrencyRecovery(buffer, expectedAmount);
-      currencyRecoveryMs = Date.now() - currencyStart;
-      console.log('[VERIFICATION TIMING]', JSON.stringify({
-        reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
-        phase: 'currency_recovery_ocr',
-        durationMs: currencyRecoveryMs,
-        verified: currencyResult.verified,
-        method: currencyResult.method,
-      }));
-      if (currencyResult.verified) {
-        amountMatch = true;
-        recoveredFromBands = true;
-        if (!extractedAmounts.includes(expectedAmount)) {
-          extractedAmounts.push(expectedAmount);
-        }
+    const stageStart = Date.now();
+    const currencyResult = await runRecoveryStage('currency', (softDeadline) =>
+      verifyAmountWithCurrencyRecovery(buffer, expectedAmount, { deadline, softDeadline }));
+    currencyRecoveryMs = Date.now() - stageStart;
+    const verified = currencyResult?.verified === true;
+    console.log('[VERIFICATION TIMING]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      phase: 'currency_recovery_ocr',
+      durationMs: currencyRecoveryMs,
+      verified,
+      method: currencyResult?.method || 'none',
+    }));
+    if (verified) {
+      amountMatch = true;
+      recoveredFromBands = true;
+      if (!extractedAmounts.includes(expectedAmount)) {
+        extractedAmounts.push(expectedAmount);
       }
-    } catch (e) { /* currency recovery is best-effort */ }
+    }
+  }
+
+  // ── Full-height strip scan (LAST resort) ──
+  // Reached only when the amount is still unreadable in the top region.
+  // This is the most expensive stage (~60 OCR jobs over every band of the
+  // image) and it is skipped entirely whenever a cheaper stage already
+  // recovered the amount.
+  //
+  // It is ALSO skipped when the targeted recovery budget ran out AND nothing
+  // could be read at all: the targeted stages are the ones proven to recover
+  // a corrupted amount (7 of 8 measured variants, vs 0 of 8 for the currency
+  // stage), and an unreadable amount is already routed to manual_review /
+  // AMOUNT_NOT_DETECTED by the decision engine — so the sweep would only
+  // spend time on an outcome that is decided. When a WRONG amount was read,
+  // the sweep still runs (inside its own budget) so the decision stays
+  // exactly what it is today.
+  const amountUnreadable = extractedAmounts.length === 0;
+  const targetedBudgetSpent = recoveryBudgetExhausted || Date.now() >= recoveryDeadline;
+  const skipFullScan = targetedBudgetSpent && amountUnreadable;
+  if (!amountMatch && !skipAmountRecovery && !skipFullScan) {
+    const stageStart = Date.now();
+    const fullRecovered = await runRecoveryStage('full_scan', (softDeadline) =>
+      runAmountRecoveryOCR(buffer, expectedAmount, { deadline, softDeadline, scan: 'full' }));
+    stripRecoveryMs += Date.now() - stageStart;
+    console.log('[VERIFICATION TIMING]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      phase: 'strip_full_scan_ocr',
+      durationMs: Date.now() - stageStart,
+      candidatesFound: fullRecovered ? fullRecovered.length : 0,
+    }));
+    mergeAmountCandidates(fullRecovered || []);
+  } else if (skipFullScan) {
+    console.log('[VERIFICATION TIMING]', JSON.stringify({
+      reference: referenceId ? `${referenceType || 'unknown'}:${referenceId}` : null,
+      phase: 'strip_full_scan_ocr',
+      durationMs: 0,
+      skipped: true,
+      reason: 'recovery_budget_exhausted',
+    }));
   }
 
   const utr = extractedUTRs.length > 0 ? extractedUTRs[0]?.replace(/\s+/g, '').trim() || null : null;
@@ -436,21 +674,38 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   const date = dateEntry ? dateTimeEntryToDate(dateEntry) : (extractedDates[0] || null);
 
   const windowMinutes = PAYMENT_TIME_WINDOW_MINUTES;
-  // Symmetric freshness window measured from the SERVER-SIDE upload instant:
-  //   transaction time within [uploadTime - 30 min, uploadTime + 30 min]
-  // A real payment always happens shortly BEFORE the screenshot is uploaded,
-  // so requiring transaction >= serverNow rejected every genuine receipt.
+
+  // ── Rule D: freshness window, measured from the SERVER-SIDE upload instant ──
+  //   0 <= uploadReferenceTime - transactionTime <= windowMinutes
+  // The window is FORWARD-ONLY: a real payment always happens BEFORE the
+  // screenshot is uploaded, so a transaction timestamp in the future is
+  // invalid (clock skew / tampered receipt). The reference instant
+  // (receivedAt) is captured ONCE, before any OCR ran, and is NOT reset by
+  // OCR retries, image preprocessing or the recovery stages.
+  const timeWithinWindow = isWithinPaymentWindow(date, receivedAt, windowMinutes);
+
+  // ── Rule C: the transaction must fall on the current India calendar day ──
+  // Compared in the configured application timezone (Asia/Kolkata), never the
+  // server machine's local timezone.
   //
-  // NOTE: this is intentionally ONLY the ±30-minute window. An extra
-  // "same IST calendar day" condition used to be ANDed in here, which
-  // rejected genuine payments that straddle midnight (paid 23:50 IST,
-  // uploaded 00:10 IST — a 20-minute-old payment inside the window).
-  // It is redundant for replay protection: a receipt from an earlier day is
-  // always more than 30 minutes old, so the window alone excludes it, and the
-  // payment-request expiry gate (expires_at = createdAt + 30 min) independently
-  // blocks stale requests on both flows.
-  const dateValid = !!date && isWithinTimeWindow(date, receivedAt, windowMinutes);
+  // The ONLY documented exception is the midnight straddle: a payment made
+  // just before midnight IST and uploaded just after still lands inside the
+  // 30-minute window, so it is accepted even though its calendar day is the
+  // previous one. A receipt from any earlier day is always more than the
+  // window old and is excluded by the window check as well.
+  const calendarDayDiff = date ? istCalendarDayDiff(date, receivedAt) : null;
+  const sameCalendarDay = calendarDayDiff === 0;
+  const midnightStraddle = calendarDayDiff === -1 && timeWithinWindow;
+  const dateOnExpectedDay = sameCalendarDay || midnightStraddle;
+
+  const dateValid = !!date && dateOnExpectedDay && timeWithinWindow;
   const hasTimeComponent = !!(timeEntry || anyEntry)?.hasTime;
+
+  // Detection flags: distinguish "read and wrong" from "could not be read".
+  // A missing/ambiguous value is INCONCLUSIVE and must never be auto-approved.
+  const amountDetected = extractedAmounts.length > 0;
+  const dateDetected = !!date;
+  const timeDetected = hasTimeComponent;
 
   // Transaction status must explicitly indicate success.
   // null (not detected), "failed", "pending", "processing" all → false.
@@ -471,6 +726,9 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   const nameResult = nameActive ? matchReceiverName(extractedReceiverNames, receiverName) : null;
   const nameMatch = nameActive ? nameResult.match === true : true;
   const nameFound = nameActive ? nameResult.candidates.length > 0 : false;
+  // A candidate that is only a PART of the configured name ("JAYARAJ" for
+  // "JAYARAJ ALAGAR") is incomplete evidence → manual review, never approve.
+  const namePartial = nameActive ? nameResult.partial === true : false;
   const detectedReceiverNames = extractedReceiverNames.length > 0 ? extractedReceiverNames.join(', ') : null;
 
   const fieldConfidence = {
@@ -497,9 +755,11 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     transactionDate: {
       confidence: hasTimeComponent ? 'high' : (date ? 'medium' : 'none'),
       reason: dateValid
-        ? 'Date/time within forward window'
+        ? 'Transaction date/time inside the 30-minute window on the current India date'
         : (date
-          ? 'Date found but outside valid window or missing time component'
+          ? (hasTimeComponent
+            ? 'Date found but outside the 30-minute window or not on the current India date'
+            : 'Date found but the time component is missing')
           : 'No valid transaction date found'),
     },
     transactionStatus: {
@@ -512,14 +772,16 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     },
     receiverName: nameActive
       ? {
-        confidence: !nameConfigured ? 'none' : nameMatch ? 'high' : (nameFound ? 'low' : 'none'),
+        confidence: !nameConfigured ? 'none' : nameMatch ? 'high' : (namePartial ? 'medium' : (nameFound ? 'low' : 'none')),
         reason: !nameConfigured
           ? 'No receiver name configured — manual review required'
           : nameMatch
             ? 'Detected receiver name matches configured payee'
-            : (nameFound
-              ? `Detected ${detectedReceiverNames} does not match configured receiver name`
-              : 'No receiver name found in screenshot'),
+            : (namePartial
+              ? `Detected ${detectedReceiverNames} is only part of the configured receiver name — manual review required`
+              : (nameFound
+                ? `Detected ${detectedReceiverNames} does not match configured receiver name`
+                : 'No receiver name found in screenshot')),
       }
       : { confidence: 'high', reason: 'Receiver name check not enabled' },
   };
@@ -536,6 +798,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     upiMatch, amountMatch, dateValid, utrPresent,
     transactionStatusOk, ocrConfidence,
     receiverName, nameMatch, nameFound, nameConfigured,
+    amountDetected, dateDetected, timeDetected, namePartial,
   });
 
   // Enforce field confidence gate: even if the decision engine says approved,
@@ -551,16 +814,39 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
   const detectedDate = dateEntry ? dateEntry.raw : (date ? date.toISOString() : null);
 
   const checks = {
-    amount: { passed: amountMatch, expected: expectedAmount, detected: detectedAmount },
+    amount: {
+      passed: amountMatch,
+      expected: expectedAmount,
+      detected: detectedAmount,
+      detectedAny: amountDetected,
+      // True when the amount could not be read because a recovery stage ran
+      // out of its budget (the evidence read so far is still reported in
+      // `detected`). The decision for an unreadable amount is manual_review.
+      recoveryBudgetExhausted: recoveryBudgetExhausted || skipFullScan,
+    },
     receiverUpi: { passed: upiMatch, expected: receiverUpi, detected: detectedUpi },
     receiverName: {
       passed: nameActive ? nameMatch : true,
       enabled: nameActive,
       expected: typeof receiverName === 'string' ? (receiverName || null) : null,
       detected: detectedReceiverNames,
+      partial: namePartial,
     },
     utr: { passed: utrPresent, detected: utr || null },
-    transactionDate: { passed: dateValid, detected: detectedDate, timezone: TIMEZONE },
+    transactionDate: {
+      passed: dateValid,
+      detected: detectedDate,
+      timezone: TIMEZONE,
+      // Rule C — the transaction must be on the current India calendar day.
+      onExpectedCalendarDay: dateOnExpectedDay,
+      sameCalendarDay,
+      midnightStraddle,
+      calendarDayDiff,
+      // Rule D — 0 <= uploadReference - transactionTime <= window.
+      timeWithinWindow,
+      hasTimeComponent,
+      windowMinutes,
+    },
     transactionStatus: {
       passed: transactionStatusOk,
       detected: transactionStatus ? transactionStatus.matched : null,
@@ -570,11 +856,13 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
 
   const detected = {
     amount: detectedAmount,
+    amountAnyDetected: amountDetected,
     utr: utr || null,
     upi: detectedUpi,
     receiverNames: extractedReceiverNames,
     date: detectedDate,
     dateTimeMs: date && hasTimeComponent ? date.getTime() : null,
+    calendarDay: date ? (istCalendarDayDiff(date, receivedAt) === 0 ? 'same' : 'different') : null,
     status: transactionStatus ? transactionStatus.matched : null,
   };
 
@@ -599,12 +887,19 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     transactionDateTime: date ? date.toISOString() : null,
     differenceMinutes: date ? Number(((receivedAt.getTime() - date.getTime()) / 60000).toFixed(2)) : null,
     windowMinutes,
+    uploadReferenceTime: receivedAt.toISOString(),
+    timeWithinWindow,
+    dateOnExpectedCalendarDay: dateOnExpectedDay,
+    sameCalendarDay,
+    midnightStraddle,
+    calendarDayDiff,
     upiExpected: receiverUpi,
     upiDetected: detectedUpi,
     upiMatch,
     upiMethod: upiResult.method,
     amountExpected: expectedAmount,
     amountDetected: detectedAmount,
+    amountAnyDetected: amountDetected,
     amountMatch,
     utr: utr || null,
     utrPresent,
@@ -626,6 +921,8 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
     },
     decision: effectiveDecision,
     reason: effectiveReason,
+    recoveryBudgetExhausted: recoveryBudgetExhausted || skipFullScan,
+    recoveryStages: recoveryStagesRun,
   }));
 
   return {
@@ -639,13 +936,20 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
       extractedDateTimes: extractedDateTimes.map(e => ({ ...e, raw: undefined })),
       extractedReceiverNames,
       amountMatch,
+      amountDetected,
       upiMatch,
       nameMatch: nameActive ? nameMatch : null,
       nameFound,
+      namePartial,
       nameConfigured,
       utr: utr || null,
       dateValid,
+      dateDetected,
+      timeDetected,
       hasTimeComponent,
+      timeWithinWindow,
+      dateOnExpectedDay,
+      uploadReferenceTime: receivedAt.toISOString(),
       transactionStatus,
       decision: effectiveDecision,
       reason: effectiveReason,
@@ -658,6 +962,7 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
         candidates: extractedReceiverNames,
         matchMethod: nameResult ? nameResult.method : null,
         matched: nameResult ? nameResult.matched : null,
+        partial: nameResult ? nameResult.partial === true : null,
       },
       upiDiagnostics: {
         originalCandidates: upiResult.originalCandidates || [],
@@ -666,6 +971,18 @@ export async function runScreenshotVerification({ imageBuffer, screenshotUrl, ex
         matchConfidence: upiResult.confidence,
         matchedCandidate: upiResult.candidate,
         expectedUpi: receiverUpi,
+      },
+      // Recovery-budget diagnostics — why an amount was (not) recovered.
+      // `budgetExhausted` is true when a recovery stage ran out of its budget
+      // and the (expensive) full-height sweep was therefore skipped; the
+      // decision in that case is the normal one for an unreadable amount
+      // (manual_review / AMOUNT_NOT_DETECTED).
+      recovery: {
+        budgetExhausted: recoveryBudgetExhausted || skipFullScan,
+        budgetMs: recoveryBudgetMs,
+        stageBudgetMs,
+        elapsedMs: Date.now() - recoveryStart,
+        stages: recoveryStagesRun,
       },
       ocrPassInfo,
     },
