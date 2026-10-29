@@ -97,6 +97,25 @@ export async function getPaymentStatus(req, res) {
   }
 }
 
+export async function getPaymentScreenshot(req, res) {
+  try {
+    const { buffer, contentType } = await paymentService.streamPaymentScreenshot(req.params.paymentId, req.user);
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  } catch (error) {
+    const s = error.code === 'PAYMENT_NOT_FOUND' ? 404
+      : error.code === 'UNAUTHORIZED' ? 403
+        : error.code === 'NO_SCREENSHOT' || error.code === 'SCREENSHOT_UNAVAILABLE' ? 404
+          : 500;
+    res.status(s).json({
+      success: false,
+      message: error.message || 'Screenshot not available',
+      code: error.code || 'SCREENSHOT_UNAVAILABLE',
+    });
+  }
+}
+
 export async function getUserPayments(req, res) {
   try {
     const payments = await paymentService.getUserPayments(req.user.id);

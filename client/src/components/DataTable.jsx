@@ -1,105 +1,84 @@
 import EmptyState from './EmptyState';
 
-function SkeletonRow({ columns }) {
-  return (
-    <tr className="animate-pulse">
-      {columns.map((_, i) => (
-        <td key={i} className="py-3 px-4">
-          <div className="h-4 bg-gray-200 rounded w-3/4" />
-        </td>
-      ))}
-    </tr>
-  );
-}
-
-function SkeletonCard({ columns }) {
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 animate-pulse">
-      {columns.map((col, i) => (
-        <div key={i} className="flex justify-between items-center py-2">
-          <div className="h-3 bg-gray-200 rounded w-1/3" />
-          <div className="h-4 bg-gray-200 rounded w-1/2" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
+/**
+ * DataTable — consistent responsive table.
+ *
+ * columns: [{ key, label, className?, render?(row, index)? }]
+ * Desktop: scrollable table inside a panel.
+ * Mobile:   stacked cards (no horizontal overflow).
+ */
 export default function DataTable({
   columns,
   data,
   onRowClick,
   emptyMessage = 'No records found',
+  emptyIcon,
+  emptyAction,
   loading = false,
+  rowKey = (row, i) => row?.id ?? i,
 }) {
   if (loading) {
     return (
-      <>
-        <div className="hidden md:block table-shell overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50/60">
-                {columns.map((col, i) => (
-                  <th
-                    key={i}
-                    className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider py-3 px-4"
-                  >
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {[...Array(5)].map((_, i) => (
-                <SkeletonRow key={i} columns={columns} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="md:hidden space-y-3">
-          {[...Array(3)].map((_, i) => (
-            <SkeletonCard key={i} columns={columns} />
-          ))}
-        </div>
-      </>
+      <div className="table-shell" aria-busy="true">
+        {Array.from({ length: 5 }).map((_, r) => (
+          <div key={r} className={`flex gap-4 px-4 py-4 ${r > 0 ? 'border-t border-line/70' : ''}`}>
+            {columns.map((c, i) => (
+              <div key={c.key} className={`skeleton h-4 ${i === 0 ? 'w-1/4' : 'flex-1'}`} />
+            ))}
+          </div>
+        ))}
+      </div>
     );
   }
 
-  if (!data || data.length === 0) {
-    return <EmptyState title={emptyMessage} />;
+  if (!data?.length) {
+    return (
+      <div className="table-shell">
+        <EmptyState
+          icon={emptyIcon}
+          title="No records found"
+          description={emptyMessage}
+          action={emptyAction}
+        />
+      </div>
+    );
   }
 
+  const CellValue = ({ col, row, index }) =>
+    col.render ? col.render(row, index) : <span>{row[col.key]}</span>;
+
   return (
-    <>
-      <div className="hidden md:block table-shell overflow-x-auto">
-        <table className="w-full">
+    <div className="table-shell">
+      {/* Desktop / tablet */}
+      <div className="hidden md:block table-scroll">
+        <table className="data-table">
           <thead>
-            <tr className="border-b border-gray-200 bg-gray-50/60">
-              {columns.map((col, i) => (
-                <th
-                  key={i}
-                  className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider py-3 px-4"
-                >
+            <tr>
+              {columns.map((col) => (
+                <th key={col.key} className={col.className || ''} scope="col">
                   {col.label}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {data.map((row, rowIndex) => (
+          <tbody>
+            {data.map((row, i) => (
               <tr
-                key={row._id || rowIndex}
-                onClick={() => onRowClick && onRowClick(row)}
-                className={`transition-colors ${
-                  rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'
-                } ${onRowClick ? 'cursor-pointer hover:bg-primary-50/60' : 'hover:bg-gray-50/60'}`}
+                key={rowKey(row, i)}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={onRowClick ? 'cursor-pointer' : ''}
+                tabIndex={onRowClick ? 0 : undefined}
+                onKeyDown={
+                  onRowClick
+                    ? (e) => {
+                        if (e.key === 'Enter') onRowClick(row);
+                      }
+                    : undefined
+                }
               >
-                {columns.map((col, colIndex) => (
-                  <td
-                    key={colIndex}
-                    className="py-3 px-4 text-sm text-gray-700"
-                  >
-                    {col.render ? col.render(row) : row[col.key]}
+                {columns.map((col) => (
+                  <td key={col.key} className={col.className || ''}>
+                    <CellValue col={col} row={row} index={i} />
                   </td>
                 ))}
               </tr>
@@ -108,31 +87,32 @@ export default function DataTable({
         </table>
       </div>
 
-      <div className="md:hidden space-y-3">
-        {data.map((row, rowIndex) => (
+      {/* Mobile: stacked cards */}
+      <div className="md:hidden divide-y divide-line/70">
+        {data.map((row, i) => (
           <div
-            key={row._id || rowIndex}
-            onClick={() => onRowClick && onRowClick(row)}
-            className={`bg-white border border-gray-200 rounded-xl p-4 shadow-card ${
-              onRowClick ? 'cursor-pointer active:bg-gray-50' : ''
-            }`}
+            key={rowKey(row, i)}
+            onClick={onRowClick ? () => onRowClick(row) : undefined}
+            className={`p-4 space-y-2 ${onRowClick ? 'cursor-pointer active:bg-surface-2/60' : ''}`}
           >
-            {columns.map((col, colIndex) => (
+            {columns.map((col, ci) => (
               <div
-                key={colIndex}
-                className="flex justify-between items-start py-1"
+                key={col.key}
+                className={`flex items-start justify-between gap-3 ${
+                  ci === 0 ? 'text-sm font-semibold text-ink' : 'text-xs'
+                }`}
               >
-                <span className="text-xs text-gray-500 font-medium">
+                <span className="text-ink-faint uppercase tracking-wider font-medium shrink-0">
                   {col.label}
                 </span>
-                <span className="text-sm text-gray-700 text-right ml-2">
-                  {col.render ? col.render(row) : row[col.key] || 'N/A'}
+                <span className="text-right text-ink-muted min-w-0 break-words">
+                  <CellValue col={col} row={row} index={i} />
                 </span>
               </div>
             ))}
           </div>
         ))}
       </div>
-    </>
+    </div>
   );
 }

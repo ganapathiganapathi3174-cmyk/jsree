@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
-import { Receipt, Download, RefreshCw } from 'lucide-react';
+import { Receipt, Download } from 'lucide-react';
+import PageHeader from '../../components/PageHeader';
+import EmptyState from '../../components/EmptyState';
+import LoadingSpinner from '../../components/LoadingSpinner';
 
 export default function Receipts() {
   const [receipts, setReceipts] = useState([]);
@@ -38,44 +41,42 @@ export default function Receipts() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Payment Receipts</h1>
-        <p className="text-sm text-gray-500 mt-1">Download receipts for approved payments</p>
-      </div>
+      <PageHeader title="Payment Receipts" description="Download receipts for approved payments" />
 
       {loading ? (
-        <div className="flex justify-center py-12"><RefreshCw className="w-6 h-6 animate-spin text-gray-500" /></div>
+        <LoadingSpinner />
       ) : receipts.length === 0 ? (
-        <div className="table-shell text-center py-12 text-gray-500">
-          <Receipt className="w-12 h-12 mx-auto mb-3 opacity-50 text-gray-300" />
-          <p>No approved payments yet</p>
+        <div className="table-shell">
+          <EmptyState icon={<Receipt className="h-6 w-6" aria-hidden="true" />} title="No approved payments yet" description="Your downloadable receipts will appear here." />
         </div>
       ) : (
-        <div className="table-shell overflow-x-auto">
-          <table className="w-full min-w-[640px]">
-            <thead className="bg-gray-50/60">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Receipt ID</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Date</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Amount</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Plan</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {receipts.map(r => (
-                <tr key={r.paymentId} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 text-sm font-mono text-gray-600">{r.receiptId}</td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{new Date(r.createdAt).toLocaleDateString('en-IN')}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-success-600">₹{r.amount}</td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{r.planMonths} month(s)</td>
-                  <td className="px-4 py-3">
-                    <button onClick={() => viewReceipt(r.paymentId)} className="btn-secondary py-1.5 text-sm"><Download size={14} /> View</button>
-                  </td>
+        <div className="table-shell">
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Receipt ID</th>
+                  <th scope="col">Date</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Plan</th>
+                  <th scope="col">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {receipts.map(r => (
+                  <tr key={r.paymentId}>
+                    <td className="font-mono">{r.receiptId}</td>
+                    <td>{new Date(r.createdAt).toLocaleDateString('en-IN')}</td>
+                    <td className="font-semibold text-success-600 dark:text-success-400">₹{r.amount}</td>
+                    <td>{r.planMonths} month(s)</td>
+                    <td>
+                      <button onClick={() => viewReceipt(r.paymentId)} className="btn btn-secondary btn-sm"><Download className="h-4 w-4" aria-hidden="true" /> View</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

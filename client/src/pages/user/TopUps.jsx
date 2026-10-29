@@ -4,9 +4,11 @@ import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
+import PaymentScreenshot from '../../components/PaymentScreenshot';
 import EmptyState from '../../components/EmptyState';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import QRPaymentSection from '../../components/QRPaymentSection';
+import PageHeader from '../../components/PageHeader';
 
 const PAY_AMOUNTS = [120, 500, 1000];
 
@@ -16,6 +18,7 @@ export default function TopUps() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('received');
   const [proofModal, setProofModal] = useState(null);
+  const [screenshotTopup, setScreenshotTopup] = useState(null);
   const [screenshot, setScreenshot] = useState(null);
   const [refId, setRefId] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -135,46 +138,44 @@ export default function TopUps() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Top-Ups</h1>
-        <p className="text-sm text-gray-500 mt-1">Send and receive top-ups between members</p>
-      </div>
+      <PageHeader title="Top-Ups" description="Send and receive top-ups between members" />
 
       {summary && (
-        <div className={`card flex items-center justify-between gap-4 ${summary.mustTopup ? 'border-warning-300 bg-warning-50' : ''}`}>
-          <div>
-            <p className="text-sm text-gray-600">
-              Received top-ups: <span className="font-semibold text-gray-900">{summary.receivedCompletedCount}/{summary.receivedRequired}</span>
-              {summary.remaining > 0 && <span className="text-gray-500"> — {summary.remaining} more before you must top-up</span>}
+        <div className={`card flex flex-col sm:flex-row sm:items-center justify-between gap-4${summary.mustTopup ? ' border-2 border-warning-500/40' : ''}`}>
+          <div className="min-w-0">
+            <p className="text-sm text-ink-muted">
+              Received top-ups: <span className="font-semibold text-ink">{summary.receivedCompletedCount}/{summary.receivedRequired}</span>
+              {summary.remaining > 0 && <span className="text-ink-faint"> — {summary.remaining} more before you must top-up</span>}
             </p>
             {summary.receivedPendingCount > 0 && (
-              <p className="text-xs text-gray-500 mt-1">
+              <p className="text-xs text-ink-faint mt-1">
                 {summary.canClaim
                   ? `${summary.receivedClaimableCount} top-up${summary.receivedClaimableCount !== 1 ? 's' : ''} ready to claim`
                   : `${summary.receivedPendingCount} top-up${summary.receivedPendingCount !== 1 ? 's' : ''} waiting — complete your required top-up to claim`
                 }
               </p>
             )}
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-ink-faint mt-1">
               {summary.sponsorName ? `Your sponsor: ${summary.sponsorName}` : 'Only completed top-ups count towards the total.'}
             </p>
           </div>
           {summary.mustTopup && (
-            <span className="rounded-lg bg-warning-600 text-white px-3 py-1.5 text-xs font-bold whitespace-nowrap">Top-Up Required</span>
+            <span className="badge badge-warning shrink-0">Top-Up Required</span>
           )}
         </div>
       )}
 
       <div className="card">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold text-gray-900">Top-Up Payment</h3>
-          <span className="rounded bg-primary-50 px-2 py-0.5 text-xs font-semibold text-primary-600 border border-primary-100">UPI</span>
+          <h3 className="text-base font-semibold text-ink">Top-Up Payment</h3>
+          <span className="badge badge-info">UPI</span>
         </div>
-        <p className="text-sm text-gray-600 mb-4">Select the amount, pay the JSREE UPI, then upload your payment screenshot for verification.</p>
+        <p className="text-sm text-ink-muted mb-4">Select the amount, pay the JSREE UPI, then upload your payment screenshot for verification.</p>
         {eligibleForProof.length > 0 && (
           <div className="mb-4">
-            <label className="label">Attach screenshot to Pending Top-Up</label>
+            <label htmlFor="topup-pending-target" className="label">Attach screenshot to Pending Top-Up</label>
             <select
+              id="topup-pending-target"
               value={payTarget || eligibleForProof[0]?.id}
               onChange={(e) => handlePayTargetChange(e.target.value)}
               className="input-field"
@@ -196,20 +197,20 @@ export default function TopUps() {
           onVerify={handleTopupVerify}
         />
         {eligibleForProof.length === 0 && (
-          <p className="mt-3 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+          <p className="callout callout-info mt-3">
             Make the payment above using the QR, then upload your screenshot. It will be verified and recorded as a top-up to your sponsor — no prior request is needed.
           </p>
         )}
       </div>
 
-      <div className="flex gap-2">
-        <button onClick={() => setTab('received')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${tab === 'received' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>Received ({received.length})</button>
-        <button onClick={() => setTab('sent')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${tab === 'sent' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>Sent ({sent.length})</button>
+      <div className="flex gap-2" role="group" aria-label="Filter top-ups">
+        <button onClick={() => setTab('received')} aria-pressed={tab === 'received'} className={`chip${tab === 'received' ? ' chip-active' : ''}`}>Received ({received.length})</button>
+        <button onClick={() => setTab('sent')} aria-pressed={tab === 'sent'} className={`chip${tab === 'sent' ? ' chip-active' : ''}`}>Sent ({sent.length})</button>
       </div>
 
       {list.length === 0 ? (
         <div className="table-shell">
-          <EmptyState icon={<ArrowUpDown className="h-12 w-12" />} title="No top-ups" description={`No ${tab} top-ups found.`} />
+          <EmptyState icon={<ArrowUpDown className="h-6 w-6" />} title="No top-ups" description={`No ${tab} top-ups found.`} />
         </div>
       ) : (
         <div className="space-y-3">
@@ -219,26 +220,26 @@ export default function TopUps() {
 
             return (
               <div key={t.id} className="card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-semibold text-gray-900">₹{t.amount}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="font-semibold text-ink">₹{t.amount}</span>
                     <StatusBadge status={t.status} />
                     {isCompleted && (
-                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-success-50 text-success-700 border border-success-200">
-                        <CheckCircle className="h-3 w-3" />
+                      <span className="badge badge-success">
+                        <CheckCircle className="h-3 w-3" aria-hidden="true" />
                         {isReceiver ? 'Credited' : 'Completed'}
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-gray-600">{isReceiver ? `From: ${t.sender?.full_name || t.sender?.email || t.sender_id?.slice(0, 8)}` : `To: ${t.receiver?.full_name || t.receiver?.email || t.receiver_id?.slice(0, 8)}`}</p>
-                  <p className="text-xs text-gray-500">{new Date(t.created_at).toLocaleString()}</p>
+                  <p className="text-sm text-ink-muted">{isReceiver ? `From: ${t.sender?.full_name || t.sender?.email || t.sender_id?.slice(0, 8)}` : `To: ${t.receiver?.full_name || t.receiver?.email || t.receiver_id?.slice(0, 8)}`}</p>
+                  <p className="text-xs text-ink-faint">{new Date(t.created_at).toLocaleString()}</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 shrink-0">
                   {t.screenshot_url && (
-                    <a href={t.screenshot_url} target="_blank" rel="noopener noreferrer" className="btn-secondary text-sm"><Eye className="h-4 w-4" /> Screenshot</a>
+                    <button onClick={() => setScreenshotTopup(t)} className="btn btn-secondary btn-sm"><Eye className="h-4 w-4" aria-hidden="true" /> Screenshot</button>
                   )}
                   {tab === 'received' && t.status === 'payment_pending' && (
-                    <button onClick={() => setProofModal(t)} className="btn-primary text-sm"><Upload className="h-4 w-4" /> Submit Proof</button>
+                    <button onClick={() => setProofModal(t)} className="btn btn-primary btn-sm"><Upload className="h-4 w-4" aria-hidden="true" /> Submit Proof</button>
                   )}
                 </div>
               </div>
@@ -249,16 +250,32 @@ export default function TopUps() {
 
       <Modal isOpen={!!proofModal} onClose={() => setProofModal(null)} title="Submit Payment Proof">
         <div className="space-y-4">
-          <p className="text-sm text-gray-600">Upload your payment screenshot for ₹{proofModal?.amount}</p>
+          <p className="text-sm text-ink-muted">Upload your payment screenshot for ₹{proofModal?.amount}</p>
           {proofModal?.expires_at && (
-            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            <p className="callout callout-warning">
               This top-up request expires at {new Date(proofModal.expires_at).toLocaleString()}. Expired requests are rejected automatically — the server clock decides, not this display.
             </p>
           )}
-          <input type="file" accept="image/*" className="input-field" onChange={e => setScreenshot(e.target.files[0])} />
-          <input className="input-field" placeholder="Transaction/Reference ID" value={refId} onChange={e => setRefId(e.target.value)} />
-          <button onClick={handleProof} disabled={submitting} className="btn-primary w-full">{submitting ? 'Submitting...' : 'Submit Proof'}</button>
+          <div>
+            <label htmlFor="topup-proof-file" className="label">Payment Screenshot</label>
+            <input id="topup-proof-file" type="file" accept="image/*" className="input-field" onChange={e => setScreenshot(e.target.files[0])} />
+          </div>
+          <div>
+            <label htmlFor="topup-proof-ref" className="label">Transaction/Reference ID</label>
+            <input id="topup-proof-ref" className="input-field" placeholder="Transaction/Reference ID" value={refId} onChange={e => setRefId(e.target.value)} />
+          </div>
+          <button onClick={handleProof} disabled={submitting} className="btn btn-primary w-full">{submitting ? 'Submitting...' : 'Submit Proof'}</button>
         </div>
+      </Modal>
+
+      <Modal isOpen={!!screenshotTopup} onClose={() => setScreenshotTopup(null)} title="Payment Screenshot" size="lg">
+        {screenshotTopup && (
+          <PaymentScreenshot
+            endpoint={`/topups/${screenshotTopup.id}/proof`}
+            alt="Top-up payment screenshot"
+            className="w-full rounded-lg border border-line"
+          />
+        )}
       </Modal>
     </div>
   );

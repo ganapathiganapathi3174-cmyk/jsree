@@ -23,10 +23,14 @@ export default function QRCodeImage({ value, size = 260, className = '' }) {
   }, [value, size]);
 
   if (failed) {
-    return <div className="flex items-center justify-center py-8 text-sm text-gray-500">Unable to generate QR.</div>;
+    return <div className="flex items-center justify-center py-8 text-sm text-ink-muted">Unable to generate QR.</div>;
   }
   if (!dataUrl) {
-    return <div className="flex items-center justify-center py-10"><div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-primary-600" /></div>;
+    return (
+      <div className="flex items-center justify-center py-10" aria-label="Generating QR code">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-primary-600" />
+      </div>
+    );
   }
 
   return (

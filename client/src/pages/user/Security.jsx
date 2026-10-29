@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
-import { Lock, Globe, Monitor, RefreshCw, KeyRound } from 'lucide-react';
+import { Lock, Globe, Monitor, KeyRound } from 'lucide-react';
 import PasswordInput from '../../components/PasswordInput';
+import PageHeader from '../../components/PageHeader';
+import EmptyState from '../../components/EmptyState';
+import LoadingSpinner from '../../components/LoadingSpinner';
 
 export default function Security() {
   const [logs, setLogs] = useState([]);
@@ -48,72 +51,69 @@ export default function Security() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Security</h1>
-        <p className="text-sm text-gray-500 mt-1">Manage your password and view security activity</p>
-      </div>
+      <PageHeader title="Security" description="Manage your password and view security activity" />
 
-      <div className="card p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-primary-50 text-primary-500 rounded-xl flex items-center justify-center"><KeyRound className="h-5 w-5" /></div>
+      <div className="card">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 bg-primary-500/10 text-primary-600 dark:text-primary-400 rounded-xl flex items-center justify-center shrink-0"><KeyRound className="h-5 w-5" aria-hidden="true" /></div>
           <div>
-            <h3 className="font-semibold text-gray-900">Change Password</h3>
-            <p className="text-sm text-gray-500">Update your account password</p>
+            <h2 className="font-semibold text-ink">Change Password</h2>
+            <p className="text-sm text-ink-muted">Update your account password</p>
           </div>
         </div>
         <div className="space-y-4 max-w-md">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
-            <PasswordInput placeholder="Enter current password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />
+            <label htmlFor="security-current-password" className="label">Current Password</label>
+            <PasswordInput id="security-current-password" placeholder="Enter current password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-            <PasswordInput placeholder="Minimum 6 characters" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+            <label htmlFor="security-new-password" className="label">New Password</label>
+            <PasswordInput id="security-new-password" placeholder="Minimum 6 characters" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
-            <PasswordInput placeholder="Re-enter new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleChangePassword()} />
+            <label htmlFor="security-confirm-password" className="label">Confirm New Password</label>
+            <PasswordInput id="security-confirm-password" placeholder="Re-enter new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleChangePassword()} />
           </div>
           {newPassword && confirmPassword && newPassword !== confirmPassword && (
-            <p className="text-xs text-red-600">Passwords do not match</p>
+            <p className="field-error" role="alert">Passwords do not match</p>
           )}
-          <button onClick={handleChangePassword} disabled={changing || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword} className="btn-primary">
+          <button onClick={handleChangePassword} disabled={changing || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword} className="btn btn-primary">
             {changing ? 'Changing...' : 'Change Password'}
           </button>
         </div>
       </div>
 
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-3">Security Log</h2>
-        <p className="text-sm text-gray-500 mb-4">Recent sign-in and security activity</p>
+        <h2 className="page-subheading">Security Log</h2>
+        <p className="text-sm text-ink-muted mt-1">Recent sign-in and security activity</p>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12"><RefreshCw className="w-6 h-6 animate-spin text-gray-500" /></div>
+        <LoadingSpinner />
       ) : logs.length === 0 ? (
-        <div className="table-shell text-center py-12 text-gray-500">
-          <Lock className="w-12 h-12 mx-auto mb-3 opacity-50 text-gray-300" />
-          <p>No activity logged yet</p>
+        <div className="table-shell">
+          <EmptyState icon={<Lock className="h-6 w-6" aria-hidden="true" />} title="No activity logged yet" description="Sign-in and security activity will appear here." />
         </div>
       ) : (
-        <div className="table-shell overflow-hidden divide-y divide-gray-100">
+        <div className="table-shell divide-y divide-line/70">
           {logs.map(log => (
-            <div key={log.id} className="px-4 py-3 flex items-center gap-4 hover:bg-gray-50 transition-colors">
-              <span className="text-xl">{getEventIcon(log.event_type)}</span>
+            <div key={log.id} className="px-4 py-3.5 flex flex-wrap items-center gap-x-4 gap-y-2 hover:bg-surface-2/60 transition-colors">
+              <span className="text-xl shrink-0" aria-hidden="true">{getEventIcon(log.event_type)}</span>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium capitalize text-gray-900">{log.event_type.replace(/_/g, ' ')}</p>
+                <p className="text-sm font-medium capitalize text-ink">{log.event_type.replace(/_/g, ' ')}</p>
                 <div className="flex items-center gap-3 mt-1 flex-wrap">
-                  <span className="flex items-center gap-1 text-xs text-gray-500">
-                    <Globe size={12} /> {log.ip_address}
+                  <span className="flex items-center gap-1 text-xs text-ink-faint">
+                    <Globe size={12} aria-hidden="true" /> {log.ip_address}
                   </span>
                   {log.user_agent && (
-                    <span className="flex items-center gap-1 text-xs text-gray-500 truncate max-w-[200px]">
-                      <Monitor size={12} /> {log.user_agent.substring(0, 50)}
+                    <span className="flex items-center gap-1 text-xs text-ink-faint min-w-0">
+                      <Monitor size={12} aria-hidden="true" />
+                      <span className="truncate max-w-[200px]">{log.user_agent.substring(0, 50)}</span>
                     </span>
                   )}
                 </div>
               </div>
-              <p className="text-xs whitespace-nowrap text-gray-400">
+              <p className="text-xs whitespace-nowrap text-ink-faint">
                 {new Date(log.created_at).toLocaleString('en-IN')}
               </p>
             </div>
@@ -123,7 +123,7 @@ export default function Security() {
 
       {pagination.totalPages > 1 && (
         <div className="text-center">
-          <button onClick={() => fetchLogs(pagination.page + 1)} className="text-sm font-medium text-primary-600 hover:text-primary-700">Load more</button>
+          <button onClick={() => fetchLogs(pagination.page + 1)} className="btn btn-secondary btn-sm">Load more</button>
         </div>
       )}
     </div>

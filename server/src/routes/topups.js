@@ -8,6 +8,7 @@ const router = Router();
 
 router.get('/', authenticateToken, requireActiveUser, topupController.getTopups);
 router.get('/:topupId', authenticateToken, requireActiveUser, topupController.getTopupDetails);
+router.get('/:topupId/proof', authenticateToken, requireActiveUser, topupController.getTopupProof);
 router.post('/:topupId/proof', authenticateToken, requireActiveUser, uploadTopupProof, handleUploadError, deduplicateProofUpload(), topupController.submitProof);
 router.post('/direct', authenticateToken, requireActiveUser, uploadTopupProof, handleUploadError, deduplicateProofUpload(), topupController.directTopup);
 router.post('/claim', authenticateToken, requireActiveUser, topupController.claimTopup);

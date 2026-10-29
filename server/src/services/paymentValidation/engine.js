@@ -18,16 +18,18 @@
 import { validateImageIntegrity } from './stage1Integrity.js';
 import { preprocessForOCR } from './stage2Preprocess.js';
 import { extractPaymentFields } from './stage3Extraction.js';
-import { validateAmount, validateReceiver, validateDateTime, validateTransactionId } from './stageValidation.js';
+import { validateAmount, validateReceiver, validateDateTime, validateTransactionId, validateSender } from './stageValidation.js';
 import { checkDuplicateTransaction } from './stageDuplicate.js';
 import { ValidationDecisionEngine, codeForInconclusive, userMessageFor } from './decisionEngine.js';
-import { RECEIVER_UPI, RECEIVER_NAME } from '../../config/paymentConfig.js';
+import { RECEIVER_UPI, RECEIVER_NAME, SENDER_NAME_POLICY } from '../../config/paymentConfig.js';
 
 function inconclusiveResult(reason, details, timings, extra = {}) {
   return {
     success: false,
     approved: false,
     inconclusive: true,
+    review: false,
+    status: 'PENDING_VERIFICATION',
     reason,
     code: codeForInconclusive(reason),
     message: userMessageFor(reason),
@@ -63,6 +65,8 @@ export class PaymentValidationEngine {
           success: false,
           approved: false,
           inconclusive: false,
+          review: false,
+          status: 'REJECTED',
           reason: 'IMAGE_INTEGRITY_FAILED',
           code: 'IMAGE_INTEGRITY_FAILED',
           message: 'The uploaded file is not a valid image. Please upload a screenshot of your payment receipt.',
@@ -139,6 +143,16 @@ export class PaymentValidationEngine {
       const transactionIdValidation = validateTransactionId(extraction.extractedUTRs);
       timings.stage7_transactionId = Date.now() - stage7Start;
 
+      // Stage 7b: sender (payer) name — advisory identity check (Rule B).
+      // Disabled automatically when no expected payer identity is supplied
+      // or the policy is 'off'; an unreadable sender line never blocks.
+      const senderPolicy = paymentRequest.senderPolicy || SENDER_NAME_POLICY;
+      const senderValidation = validateSender(
+        extraction.extractedSenderNames,
+        paymentRequest.expectedPayerName || null,
+        senderPolicy,
+      );
+
       // Stage 8: Duplicate check (fail-closed on DB errors)
       const stage8Start = Date.now();
       const duplicateCheck = await checkDuplicateTransaction(
@@ -158,6 +172,7 @@ export class PaymentValidationEngine {
         dateTimeValidation,
         transactionIdValidation,
         duplicateCheck,
+        senderValidation,
         paymentRequest,
       });
       timings.stage9_decision = Date.now() - stage9Start;
@@ -168,6 +183,8 @@ export class PaymentValidationEngine {
         success: true,
         approved: decision.approved === true,
         inconclusive: decision.inconclusive === true,
+        review: decision.review === true,
+        status: decision.status || null,
         reason: decision.reason || null,
         code: decision.code || null,
         message: decision.message || null,
@@ -180,6 +197,7 @@ export class PaymentValidationEngine {
         transactionStatus: decision.transactionStatus,
         ocrConfidence: decision.ocrConfidence,
         extractedData: decision.extractedData,
+        senderValidation: senderValidation.applicable ? senderValidation : null,
         auditLog: decision.auditLog,
         timings,
       };

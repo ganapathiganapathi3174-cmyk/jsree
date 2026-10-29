@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
+import PageHeader from '../../components/PageHeader';
 
 export default function AuditLogs() {
   const [logs, setLogs] = useState([]);
@@ -20,50 +21,51 @@ export default function AuditLogs() {
 
   const roleBadge = (role) => {
     switch (role) {
-      case 'admin': return 'bg-primary-50 text-primary-700 border border-primary-200';
-      case 'system': return 'bg-gray-100 text-gray-600 border border-gray-200';
-      default: return 'bg-info-50 text-info-700 border border-info-200';
+      case 'admin': return 'badge-info';
+      case 'system': return 'badge-neutral';
+      default: return 'badge-review';
     }
   };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Audit Logs</h1>
-        <p className="text-sm text-gray-500 mt-1">A record of actions across the platform</p>
-      </div>
+      <PageHeader title="Audit Logs" description="A record of actions across the platform" />
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-          <input className="input-field pl-10" placeholder="Filter by action..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-faint pointer-events-none" aria-hidden="true" />
+          <input className="input-field pl-10" aria-label="Filter by action" placeholder="Filter by action..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} />
         </div>
-        <button onClick={load} className="btn-secondary">Filter</button>
+        <button onClick={load} className="btn btn-secondary">Filter</button>
       </div>
 
       {logs.length === 0 ? (
-        <EmptyState icon={<ScrollText className="h-12 w-12" />} title="No audit logs" description="System actions will appear here." />
+        <div className="table-shell">
+          <EmptyState icon={<ScrollText className="h-6 w-6" />} title="No audit logs" description="System actions will appear here." />
+        </div>
       ) : (
-        <div className="table-shell overflow-x-auto">
-          <table className="w-full text-sm min-w-[720px]">
-            <thead className="bg-gray-50/60"><tr>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Time</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actor</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Role</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Action</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Target</th>
-            </tr></thead>
-            <tbody className="divide-y divide-gray-100">
-              {logs.map(l => (
-                <tr key={l.id} className="hover:bg-gray-50/60 transition-colors">
-                  <td className="px-4 py-3 text-gray-500">{new Date(l.created_at).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-xs font-mono text-gray-600">{l.actor_id?.slice(0, 8) || 'System'}</td>
-                  <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-medium ${roleBadge(l.actor_role)}`}>{l.actor_role}</span></td>
-                  <td className="px-4 py-3 font-medium text-gray-900">{l.action}</td>
-                  <td className="px-4 py-3 text-xs font-mono text-gray-500">{l.target_id?.slice(0, 8) || '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="table-shell">
+          <div className="table-scroll">
+            <table className="data-table min-w-[640px]">
+              <thead><tr>
+                <th scope="col">Time</th>
+                <th scope="col">Actor</th>
+                <th scope="col">Role</th>
+                <th scope="col">Action</th>
+                <th scope="col">Target</th>
+              </tr></thead>
+              <tbody>
+                {logs.map(l => (
+                  <tr key={l.id}>
+                    <td className="whitespace-nowrap">{new Date(l.created_at).toLocaleString()}</td>
+                    <td><span className="text-xs font-mono">{l.actor_id?.slice(0, 8) || 'System'}</span></td>
+                    <td><span className={`badge ${roleBadge(l.actor_role)}`}>{l.actor_role}</span></td>
+                    <td className="font-medium text-ink">{l.action}</td>
+                    <td><span className="text-xs font-mono">{l.target_id?.slice(0, 8) || '-'}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

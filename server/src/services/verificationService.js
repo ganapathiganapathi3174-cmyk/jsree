@@ -189,6 +189,10 @@ export function requireExternalPaymentConfirmation(verificationResult) {
     ...verificationResult,
     ocrDecision: 'approved',
     decision: 'manual_review',
+    // Public outcome contract: an engine-approved screenshot that still
+    // needs provider/human confirmation is PENDING_VERIFICATION — never an
+    // approval, never a rejection.
+    status: 'PENDING_VERIFICATION',
     reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
   };
 }

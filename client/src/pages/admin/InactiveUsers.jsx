@@ -5,6 +5,7 @@ import api from '../../utils/api';
 import StatusBadge from '../../components/StatusBadge';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
+import PageHeader from '../../components/PageHeader';
 
 export default function InactiveUsers() {
   const [users, setUsers] = useState([]);
@@ -22,50 +23,49 @@ export default function InactiveUsers() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Inactive Users</h1>
-        <p className="text-sm text-gray-500 mt-1">Users who are currently deactivated</p>
-      </div>
+      <PageHeader title="Inactive Users" description="Users who are currently deactivated" />
       {users.length === 0 ? (
-        <div className="table-shell"><EmptyState icon={<UserX className="h-10 w-10" />} title="No inactive users" description="All registered users are currently active." /></div>
+        <div className="table-shell"><EmptyState icon={<UserX className="h-6 w-6" />} title="No inactive users" description="All registered users are currently active." /></div>
       ) : (
-        <div className="table-shell overflow-x-auto">
-          <table className="w-full text-sm min-w-[720px]">
-            <thead className="bg-gray-50/60"><tr>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">User</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Email</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Mobile</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
-              <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Action</th>
-            </tr></thead>
-            <tbody className="divide-y divide-gray-100">
-              {users.map(u => (
-                <tr key={u.id} className="hover:bg-gray-50/60 transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-gray-900">{u.full_name}</p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="flex items-center gap-1.5 text-gray-600">
-                      <Mail className="h-3.5 w-3.5 text-gray-400" /> {u.email}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="flex items-center gap-1.5 text-gray-600">
-                      <Phone className="h-3.5 w-3.5 text-gray-400" /> {u.mobile || '-'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end">
-                      <button onClick={() => handleActivate(u.id)} className="btn-success text-sm flex items-center gap-1.5">
-                        <UserCheck className="h-4 w-4" /> Activate
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="table-shell">
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead><tr>
+                <th scope="col">User</th>
+                <th scope="col">Email</th>
+                <th scope="col">Mobile</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="text-right">Action</th>
+              </tr></thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id}>
+                    <td>
+                      <p className="font-medium text-ink">{u.full_name}</p>
+                    </td>
+                    <td>
+                      <span className="flex items-center gap-1.5">
+                        <Mail className="h-3.5 w-3.5 text-ink-faint" aria-hidden="true" /> {u.email}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="flex items-center gap-1.5">
+                        <Phone className="h-3.5 w-3.5 text-ink-faint" aria-hidden="true" /> {u.mobile || '-'}
+                      </span>
+                    </td>
+                    <td><StatusBadge status={u.status} /></td>
+                    <td>
+                      <div className="flex items-center justify-end">
+                        <button onClick={() => handleActivate(u.id)} className="btn btn-success btn-sm">
+                          <UserCheck className="h-4 w-4" aria-hidden="true" /> Activate
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

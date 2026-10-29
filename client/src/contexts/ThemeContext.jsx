@@ -5,7 +5,15 @@ const ThemeContext = createContext();
 export function ThemeProvider({ children }) {
   const [dark, setDark] = useState(() => {
     const saved = localStorage.getItem('darkMode');
-    return saved ? JSON.parse(saved) : false;
+    if (saved !== null) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        /* fall through to default */
+      }
+    }
+    // Default: dark — the product's identity theme.
+    return true;
   });
 
   useEffect(() => {
@@ -17,7 +25,7 @@ export function ThemeProvider({ children }) {
     }
   }, [dark]);
 
-  const toggleDark = () => setDark(prev => !prev);
+  const toggleDark = () => setDark((prev) => !prev);
 
   return (
     <ThemeContext.Provider value={{ dark, toggleDark }}>

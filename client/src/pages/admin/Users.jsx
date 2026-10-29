@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Eye, UserCheck, UserX, Trash2, Key } from 'lucide-react';
+import { Search, Eye, UserCheck, UserX, Trash2, Key, Users as UsersIcon } from 'lucide-react';
 import PasswordInput from '../../components/PasswordInput';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
@@ -9,6 +9,7 @@ import Modal from '../../components/Modal';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
+import PageHeader from '../../components/PageHeader';
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
@@ -92,72 +93,69 @@ export default function AdminUsers() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">User Management</h1>
-          <p className="text-sm text-gray-500 mt-1">View, activate, deactivate and manage members</p>
-        </div>
-      </div>
+      <PageHeader title="User Management" description="View, activate, deactivate and manage members" />
 
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-          <input className="input-field pl-10" placeholder="Search users..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-faint pointer-events-none" aria-hidden="true" />
+          <input className="input-field pl-10" aria-label="Search users" placeholder="Search users..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} />
         </div>
-        <button onClick={() => load()} className="btn-secondary">Search</button>
+        <button onClick={() => load()} className="btn btn-secondary">Search</button>
       </div>
 
       {loading ? <LoadingSpinner /> : users.length === 0 ? (
-        <div className="table-shell"><EmptyState icon={<Users className="h-10 w-10" />} title="No users found" description="No registered users match your current search." /></div>
+        <div className="table-shell"><EmptyState icon={<UsersIcon className="h-6 w-6" />} title="No users found" description="No registered users match your current search." /></div>
       ) : (
         <>
-          <div className="table-shell overflow-x-auto">
-            <table className="w-full text-sm min-w-[680px]">
-              <thead className="bg-slate-800/50"><tr>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">User</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Email</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Plan</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Referrals</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Status</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Plan Change</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-slate-400">Actions</th>
-              </tr></thead>
-              <tbody className="divide-y divide-slate-500/10">
-                {users.map(u => (
-                  <tr key={u.id} className="hover:bg-primary-500/10 transition-colors">
-                    <td className="px-4 py-3"><p className="font-medium text-slate-100">{u.full_name}</p><p className="text-xs text-slate-500 font-mono">{u.id?.slice(0,8)}</p></td>
-                    <td className="px-4 py-3 text-slate-400">{u.email}</td>
-                    <td className="px-4 py-3">{PLAN_MAP[u.current_plan]?.label || '-'}</td>
-                    <td className="px-4 py-3">
-                      {u.referral_count > 0 ? (
-                        <button onClick={() => openUserDetail(u)} className="font-semibold text-primary-400 hover:text-primary-300 hover:underline cursor-pointer transition-colors">{u.referral_count}</button>
-                      ) : (
-                        <span className="text-gray-400">0</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
-                    <td className="px-4 py-3">
-                      {pendingPlanChanges[u.id]
-                        ? <span className="inline-flex items-center gap-1.5 text-xs rounded-full border border-warning-200 bg-warning-50 px-2.5 py-1"><span className="h-1.5 w-1.5 rounded-full bg-warning-500" /><span className="font-semibold text-warning-700">Plan Change Pending</span><span className="text-warning-600">Requested: {PLAN_MAP[pendingPlanChanges[u.id]]?.label}</span></span>
-                        : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-2">
-                        <button onClick={() => openUserDetail(u)} className="w-10 h-10 hover:bg-primary-500/15 rounded-xl border border-slate-500/20 text-slate-400 hover:text-primary-400 flex items-center justify-center" title="View details"><Eye className="h-4 w-4" /></button>
-                        {u.status !== 'active' && <button onClick={() => setConfirmAction({ action: 'activate', id: u.id, label: 'activate this user' })} className="w-10 h-10 hover:bg-success-500/15 rounded-xl border border-slate-500/20 text-success-400 flex items-center justify-center" title="Activate user"><UserCheck className="h-4 w-4" /></button>}
-                        {u.status === 'active' && <button onClick={() => setConfirmAction({ action: 'deactivate', id: u.id, label: 'deactivate this user' })} className="w-10 h-10 hover:bg-warning-500/15 rounded-xl border border-slate-500/20 text-warning-400 flex items-center justify-center" title="Deactivate user"><UserX className="h-4 w-4" /></button>}
-                         <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="w-10 h-10 hover:bg-error-500/15 rounded-xl border border-slate-500/20 text-error-400 flex items-center justify-center" title="Disable user (soft delete); preserves all data"><Trash2 className="h-4 w-4" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="table-shell">
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead><tr>
+                  <th scope="col">User</th>
+                  <th scope="col">Email</th>
+                  <th scope="col">Plan</th>
+                  <th scope="col">Referrals</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Plan Change</th>
+                  <th scope="col" className="text-right">Actions</th>
+                </tr></thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id}>
+                      <td><p className="font-medium text-ink">{u.full_name}</p><p className="text-xs text-ink-faint font-mono">{u.id?.slice(0,8)}</p></td>
+                      <td>{u.email}</td>
+                      <td>{PLAN_MAP[u.current_plan]?.label || '-'}</td>
+                      <td>
+                        {u.referral_count > 0 ? (
+                          <button onClick={() => openUserDetail(u)} className="link cursor-pointer">{u.referral_count}</button>
+                        ) : (
+                          <span className="text-ink-faint">0</span>
+                        )}
+                      </td>
+                      <td><StatusBadge status={u.status} /></td>
+                      <td>
+                        {pendingPlanChanges[u.id]
+                          ? <span className="inline-flex items-center gap-2 flex-wrap"><span className="badge badge-warning">Plan Change Pending</span><span className="text-xs text-ink-muted">Requested: {PLAN_MAP[pendingPlanChanges[u.id]]?.label}</span></span>
+                          : <span className="text-ink-faint">—</span>}
+                      </td>
+                      <td>
+                        <div className="flex items-center justify-end gap-2">
+                          <button onClick={() => openUserDetail(u)} className="btn btn-icon btn-sm btn-ghost" title="View details" aria-label="View details"><Eye className="h-4 w-4" aria-hidden="true" /></button>
+                          {u.status !== 'active' && <button onClick={() => setConfirmAction({ action: 'activate', id: u.id, label: 'activate this user' })} className="btn btn-icon btn-sm btn-ghost text-success-600 hover:text-success-700" title="Activate user" aria-label="Activate user"><UserCheck className="h-4 w-4" aria-hidden="true" /></button>}
+                          {u.status === 'active' && <button onClick={() => setConfirmAction({ action: 'deactivate', id: u.id, label: 'deactivate this user' })} className="btn btn-icon btn-sm btn-ghost text-warning-600 hover:text-warning-700" title="Deactivate user" aria-label="Deactivate user"><UserX className="h-4 w-4" aria-hidden="true" /></button>}
+                           <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="btn btn-icon btn-sm btn-ghost text-error-600 hover:text-error-700" title="Disable user (soft delete); preserves all data" aria-label="Disable user (soft delete); preserves all data"><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
           {totalPages > 1 && (
             <div className="flex justify-center gap-2">
               {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                <button key={p} onClick={() => load(p)} className={`px-3.5 py-1.5 rounded-lg text-sm font-medium border transition-colors ${p === page ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>{p}</button>
+                <button key={p} onClick={() => load(p)} className={`btn btn-sm ${p === page ? 'btn-primary' : 'btn-secondary'}`} aria-label={`Page ${p}`} aria-current={p === page ? 'page' : undefined}>{p}</button>
               ))}
             </div>
           )}
@@ -166,7 +164,7 @@ export default function AdminUsers() {
 
       <Modal isOpen={!!detailUser} onClose={() => setDetailUser(null)} title="User Details">
         {detailUser && (<>
-          {detailLoading && <p className="text-sm text-gray-400 mb-3">Loading full details...</p>}
+          {detailLoading && <p className="text-sm text-ink-muted mb-3">Loading full details...</p>}
           <dl className="space-y-3 text-sm">
             {[
               ['Name', detailUser.full_name],
@@ -177,56 +175,56 @@ export default function AdminUsers() {
               ['Referral Code', detailUser.referral_code],
               ['Joined', new Date(detailUser.created_at).toLocaleString()],
             ].map(([k, v]) => (
-              <div key={k} className="flex items-start justify-between gap-4 border-b border-gray-100 pb-2 last:border-0">
-                <dt className="text-gray-500">{k}</dt>
-                <dd className="font-medium text-gray-900 text-right break-all">{v || '-'}</dd>
+              <div key={k} className="flex items-start justify-between gap-4 border-b border-line pb-2 last:border-0">
+                <dt className="text-ink-muted">{k}</dt>
+                <dd className="font-medium text-ink text-right break-all">{v || '-'}</dd>
               </div>
             ))}
             <div className="flex items-center justify-between gap-4">
-              <dt className="text-gray-500">Status</dt>
+              <dt className="text-ink-muted">Status</dt>
               <dd><StatusBadge status={detailUser.status} /></dd>
             </div>
             {detailUser.inactive_reason && (
               <div className="flex items-start justify-between gap-4">
-                <dt className="text-gray-500">Inactive Reason</dt>
-                <dd className="font-medium text-gray-900 text-right">{detailUser.inactive_reason}</dd>
+                <dt className="text-ink-muted">Inactive Reason</dt>
+                <dd className="font-medium text-ink text-right">{detailUser.inactive_reason}</dd>
               </div>
             )}
           </dl>
 
-          <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
+          <div className="mt-4 pt-4 divider space-y-4">
             <div>
-              <p className="text-sm font-medium text-gray-700 mb-1">Referred By</p>
+              <p className="text-sm font-medium text-ink-muted mb-1">Referred By</p>
               {detailUser.referredByUser ? (
-                <div className="bg-gray-50 rounded-lg p-3 text-sm">
-                  <p className="font-medium text-gray-900">{detailUser.referredByUser.full_name}</p>
-                  <p className="text-gray-500">{detailUser.referredByUser.email}</p>
+                <div className="bg-surface-2 border border-line rounded-lg p-3 text-sm">
+                  <p className="font-medium text-ink">{detailUser.referredByUser.full_name}</p>
+                  <p className="text-ink-muted">{detailUser.referredByUser.email}</p>
                 </div>
               ) : (
-                <p className="text-sm text-gray-400">None (direct registration)</p>
+                <p className="text-sm text-ink-faint">None (direct registration)</p>
               )}
             </div>
 
             <div>
-              <p className="text-sm font-medium text-gray-700 mb-1">Referred Users ({detailUser.referrals?.length || 0})</p>
+              <p className="text-sm font-medium text-ink-muted mb-1">Referred Users ({detailUser.referrals?.length || 0})</p>
               {detailUser.referrals?.length > 0 ? (
                 <div className="space-y-2">
                   {detailUser.referrals.map(r => (
-                    <div key={r.id} className="bg-gray-50 rounded-lg p-3 text-sm">
-                      <p className="font-medium text-gray-900">{r.full_name}</p>
-                      <p className="text-gray-500">{r.email}</p>
+                    <div key={r.id} className="bg-surface-2 border border-line rounded-lg p-3 text-sm">
+                      <p className="font-medium text-ink">{r.full_name}</p>
+                      <p className="text-ink-muted">{r.email}</p>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-gray-400">None</p>
+                <p className="text-sm text-ink-faint">None</p>
               )}
             </div>
           </div>
 
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <button onClick={() => { setResetPwUser(detailUser); setNewPassword(''); setConfirmPassword(''); }} className="btn-secondary w-full flex items-center justify-center gap-2">
-              <Key className="h-4 w-4" /> Reset Password
+          <div className="mt-4 pt-4 divider">
+            <button onClick={() => { setResetPwUser(detailUser); setNewPassword(''); setConfirmPassword(''); }} className="btn btn-secondary w-full">
+              <Key className="h-4 w-4" aria-hidden="true" /> Reset Password
             </button>
           </div>
         </>)}
@@ -234,22 +232,22 @@ export default function AdminUsers() {
 
       <Modal isOpen={!!resetPwUser} onClose={() => setResetPwUser(null)} title="Reset User Password">
         <div className="space-y-4">
-          <div className="bg-gray-50 rounded-lg p-3 text-sm">
-            <p className="text-gray-900 font-medium">{resetPwUser?.full_name}</p>
-            <p className="text-gray-500">{resetPwUser?.email}</p>
+          <div className="bg-surface-2 border border-line rounded-lg p-3 text-sm">
+            <p className="text-ink font-medium">{resetPwUser?.full_name}</p>
+            <p className="text-ink-muted">{resetPwUser?.email}</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-            <PasswordInput placeholder="Minimum 6 characters" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+            <label className="label" htmlFor="reset-new-password">New Password</label>
+            <PasswordInput id="reset-new-password" placeholder="Minimum 6 characters" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-            <PasswordInput placeholder="Re-enter new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleResetPassword()} />
+            <label className="label" htmlFor="reset-confirm-password">Confirm Password</label>
+            <PasswordInput id="reset-confirm-password" placeholder="Re-enter new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleResetPassword()} />
           </div>
           {newPassword && confirmPassword && newPassword !== confirmPassword && (
-            <p className="text-xs text-error-600">Passwords do not match</p>
+            <p className="field-error" role="alert">Passwords do not match</p>
           )}
-          <button onClick={handleResetPassword} disabled={resetting || !newPassword || newPassword.length < 6 || newPassword !== confirmPassword} className="btn-primary w-full">
+          <button onClick={handleResetPassword} disabled={resetting || !newPassword || newPassword.length < 6 || newPassword !== confirmPassword} className="btn btn-primary w-full">
             {resetting ? 'Resetting...' : 'Reset Password'}
           </button>
         </div>

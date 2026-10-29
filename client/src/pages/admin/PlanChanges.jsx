@@ -8,6 +8,7 @@ import Modal from '../../components/Modal';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
+import PageHeader from '../../components/PageHeader';
 
 export default function PlanChanges() {
   const [requests, setRequests] = useState([]);
@@ -48,14 +49,14 @@ export default function PlanChanges() {
   if (loading) return <LoadingSpinner fullPage />;
 
   const Row = ({ label, value }) => (
-    <div className="flex items-start justify-between gap-4 border-b border-slate-500/10 pb-2 last:border-0">
-      <dt className="text-slate-400 shrink-0">{label}</dt>
-      <dd className="font-medium text-slate-100 text-right break-all">{value || '-'}</dd>
+    <div className="flex items-start justify-between gap-4 border-b border-line pb-2 last:border-0">
+      <dt className="text-ink-muted shrink-0">{label}</dt>
+      <dd className="font-medium text-ink text-right break-all">{value || '-'}</dd>
     </div>
   );
   const Section = ({ title, children }) => (
     <div className="mb-5">
-      <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">{title}</h4>
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-faint mb-2">{title}</h4>
       <dl className="space-y-2 text-sm">{children}</dl>
     </div>
   );
@@ -67,59 +68,58 @@ export default function PlanChanges() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Plan Change Requests</h1>
-        <p className="text-sm text-gray-500 mt-1">Review requests to change membership plans</p>
-      </div>
+      <PageHeader title="Plan Change Requests" description="Review requests to change membership plans" />
       {requests.length === 0 ? (
-        <div className="table-shell"><EmptyState icon={<RefreshCw className="h-10 w-10" />} title="No pending requests" description="There are no plan change requests waiting for review." /></div>
+        <div className="table-shell"><EmptyState icon={<RefreshCw className="h-6 w-6" />} title="No pending requests" description="There are no plan change requests waiting for review." /></div>
       ) : (
-        <div className="table-shell overflow-x-auto">
-          <table className="w-full text-sm min-w-[900px]">
-            <thead className="bg-gray-50/60"><tr>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">User</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Email</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Mobile</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Current</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Requested</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Date</th>
-              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
-              <th className="text-right px-4 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
-            </tr></thead>
-            <tbody className="divide-y divide-gray-100">
-              {requests.map(r => (
-                <tr key={r.id} className="hover:bg-gray-50/60 transition-colors">
-                  <td className="px-4 py-3"><p className="font-medium text-gray-900">{r.user?.full_name || r.user_name || r.user_email}</p><p className="text-xs text-gray-500 font-mono">{r.user_id?.slice(0, 8)}</p></td>
-                  <td className="px-4 py-3 text-gray-600">{r.user?.email || r.user_email || '-'}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.user?.mobile || '-'}</td>
-                  <td className="px-4 py-3">{PLAN_MAP[r.current_plan]?.label}</td>
-                  <td className="px-4 py-3 font-medium text-gray-900">{PLAN_MAP[r.requested_plan]?.label}</td>
-                  <td className="px-4 py-3 text-gray-500">{new Date(r.created_at).toLocaleString()}</td>
-                  <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => openDetails(r)} className="w-10 h-10 hover:bg-gray-100 rounded-xl border border-gray-200 text-gray-500 hover:text-primary-400 flex items-center justify-center" title="View user details"><Eye className="h-4 w-4" /></button>
-                      {r.status === 'pending' && <>
-                        <button onClick={() => handleApprove(r.id)} className="w-10 h-10 hover:bg-success-50 rounded-xl border border-gray-200 text-success-500 flex items-center justify-center" title="Approve request"><CheckCircle className="h-4 w-4" /></button>
-                        <button onClick={() => handleReject(r.id)} className="w-10 h-10 hover:bg-error-50 rounded-xl border border-gray-200 text-error-500 flex items-center justify-center" title="Reject request"><XCircle className="h-4 w-4" /></button>
-                      </>}
-                      <button onClick={() => setConfirmDelete(r)} className="w-10 h-10 hover:bg-error-50 rounded-xl border border-gray-200 text-error-500 flex items-center justify-center" title="Permanently delete this user and all their data"><Trash2 className="h-4 w-4" /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="table-shell">
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead><tr>
+                <th scope="col">User</th>
+                <th scope="col">Email</th>
+                <th scope="col">Mobile</th>
+                <th scope="col">Current</th>
+                <th scope="col">Requested</th>
+                <th scope="col">Date</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="text-right">Actions</th>
+              </tr></thead>
+              <tbody>
+                {requests.map(r => (
+                  <tr key={r.id}>
+                    <td><p className="font-medium text-ink">{r.user?.full_name || r.user_name || r.user_email}</p><p className="text-xs text-ink-faint font-mono">{r.user_id?.slice(0, 8)}</p></td>
+                    <td>{r.user?.email || r.user_email || '-'}</td>
+                    <td>{r.user?.mobile || '-'}</td>
+                    <td>{PLAN_MAP[r.current_plan]?.label}</td>
+                    <td className="font-medium text-ink">{PLAN_MAP[r.requested_plan]?.label}</td>
+                    <td>{new Date(r.created_at).toLocaleString()}</td>
+                    <td><StatusBadge status={r.status} /></td>
+                    <td>
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => openDetails(r)} className="btn btn-icon btn-sm btn-ghost" title="View user details" aria-label="View user details"><Eye className="h-4 w-4" aria-hidden="true" /></button>
+                        {r.status === 'pending' && <>
+                          <button onClick={() => handleApprove(r.id)} className="btn btn-icon btn-sm btn-ghost text-success-600 hover:text-success-700" title="Approve request" aria-label="Approve request"><CheckCircle className="h-4 w-4" aria-hidden="true" /></button>
+                          <button onClick={() => handleReject(r.id)} className="btn btn-icon btn-sm btn-ghost text-error-600 hover:text-error-700" title="Reject request" aria-label="Reject request"><XCircle className="h-4 w-4" aria-hidden="true" /></button>
+                        </>}
+                        <button onClick={() => setConfirmDelete(r)} className="btn btn-icon btn-sm btn-ghost text-error-600 hover:text-error-700" title="Permanently delete this user and all their data" aria-label="Permanently delete this user and all their data"><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       <Modal isOpen={!!detailUser || detailLoading} onClose={() => setDetailUser(null)} title="User Details" size="lg">
         {detailLoading ? <LoadingSpinner /> : detailUser && (
-          <div className="space-y-6 text-slate-200">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-500/20 bg-slate-800/40 px-4 py-3">
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3">
               <div>
-                <p className="font-semibold text-slate-100">{d.full_name}</p>
-                <p className="text-sm text-slate-400">{d.email} · {d.mobile}</p>
+                <p className="font-semibold text-ink">{d.full_name}</p>
+                <p className="text-sm text-ink-muted">{d.email} · {d.mobile}</p>
               </div>
               <StatusBadge status={d.status} />
             </div>

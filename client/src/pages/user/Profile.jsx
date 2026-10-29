@@ -6,6 +6,7 @@ import { PLAN_MAP } from '../../utils/constants';
 import StatusBadge from '../../components/StatusBadge';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Avatar from '../../components/Avatar';
+import PageHeader from '../../components/PageHeader';
 
 const ACCEPTED = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const MAX_SIZE = 2 * 1024 * 1024;
@@ -67,7 +68,7 @@ export default function Profile() {
   };
 
   if (loading) return <LoadingSpinner fullPage />;
-  if (!profile) return <div className="p-6 text-center text-gray-500">Failed to load profile</div>;
+  if (!profile) return <div className="callout callout-error" role="alert">Failed to load profile</div>;
 
   const startEdit = () => {
     setEditName(profile.full_name || '');
@@ -104,14 +105,11 @@ export default function Profile() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">My Profile</h1>
-        <p className="text-sm text-gray-500 mt-1">Manage your personal information</p>
-      </div>
-      <div className="card p-6">
-        <div className="flex items-center gap-5 mb-6 pb-5 border-b border-gray-100">
-          <div className="relative flex-shrink-0">
-            <div className="w-24 h-24 rounded-full overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-600 to-primary-700 ring-4 ring-gray-100">
+      <PageHeader title="My Profile" description="Manage your personal information" />
+      <div className="card">
+        <div className="flex items-center gap-5 mb-6 pb-5 border-b border-line">
+          <div className="relative shrink-0">
+            <div className="w-24 h-24 rounded-full overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-600 to-primary-700 ring-4 ring-line">
               {displayAvatar ? (
                 <img src={displayAvatar} alt={profile.full_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
@@ -120,33 +118,34 @@ export default function Profile() {
             </div>
             <button
               onClick={() => fileRef.current?.click()}
-              className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-primary-600 text-white flex items-center justify-center shadow-md hover:bg-primary-700 transition-colors"
+              className="btn btn-primary btn-icon btn-sm absolute bottom-0 right-0 shadow-md"
               title="Change photo"
+              aria-label="Change photo"
             >
-              <Camera className="h-4 w-4" />
+              <Camera className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-xl font-bold text-gray-900 truncate">{profile.full_name}</h2>
+            <h2 className="text-xl font-bold text-ink truncate">{profile.full_name}</h2>
             <div className="mt-1"><StatusBadge status={profile.status} /></div>
-            <p className="text-sm text-gray-500 mt-1 truncate">{profile.email}</p>
+            <p className="text-sm text-ink-muted mt-1 truncate">{profile.email}</p>
           </div>
         </div>
 
         {preview && (
-          <div className="mb-6 bg-primary-50 border border-primary-200 rounded-xl p-4">
+          <div className="mb-6 rounded-lg border border-primary-500/25 bg-primary-500/10 p-4">
             <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-full overflow-hidden flex-shrink-0">
+              <div className="w-16 h-16 rounded-full overflow-hidden shrink-0">
                 <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
               </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-800 mb-2">Preview your new profile picture</p>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-ink mb-2">Preview your new profile picture</p>
                 <div className="flex gap-2 flex-wrap">
-                  <button onClick={upload} disabled={uploading} className="btn-primary text-sm">
-                    <Upload className="h-4 w-4" /> {uploading ? 'Uploading...' : 'Save Photo'}
+                  <button onClick={upload} disabled={uploading} className="btn btn-primary btn-sm">
+                    <Upload className="h-4 w-4" aria-hidden="true" /> {uploading ? 'Uploading...' : 'Save Photo'}
                   </button>
-                  <button onClick={() => { setPreview(null); fileRef.current.value = ''; }} disabled={uploading} className="btn-secondary text-sm">
-                    <X className="h-4 w-4" /> Cancel
+                  <button onClick={() => { setPreview(null); fileRef.current.value = ''; }} disabled={uploading} className="btn btn-secondary btn-sm">
+                    <X className="h-4 w-4" aria-hidden="true" /> Cancel
                   </button>
                 </div>
               </div>
@@ -154,7 +153,7 @@ export default function Profile() {
           </div>
         )}
 
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex flex-wrap items-center gap-3 mb-6">
           <input
             ref={fileRef}
             type="file"
@@ -162,48 +161,48 @@ export default function Profile() {
             className="hidden"
             onChange={handleFile}
           />
-          <button onClick={() => fileRef.current?.click()} className="btn-secondary text-sm" disabled={uploading}>
-            <Camera className="h-4 w-4" /> Change Photo
+          <button onClick={() => fileRef.current?.click()} className="btn btn-secondary btn-sm" disabled={uploading}>
+            <Camera className="h-4 w-4" aria-hidden="true" /> Change Photo
           </button>
           {profile.avatar_url && (
-            <button onClick={remove} disabled={removing} className="text-sm text-error-600 hover:text-error-700 font-medium flex items-center gap-1.5">
-              <X className="h-4 w-4" /> {removing ? 'Removing...' : 'Remove Photo'}
+            <button onClick={remove} disabled={removing} className="btn btn-ghost btn-sm text-error-600 dark:text-error-400">
+              <X className="h-4 w-4" aria-hidden="true" /> {removing ? 'Removing...' : 'Remove Photo'}
             </button>
           )}
         </div>
 
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-gray-900">Account Details</h3>
+          <h3 className="page-subheading">Account Details</h3>
           {!editing ? (
-            <button onClick={startEdit} className="btn-secondary text-sm">
-              <Pencil className="h-4 w-4" /> Edit
+            <button onClick={startEdit} className="btn btn-secondary btn-sm">
+              <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
             </button>
           ) : (
             <div className="flex gap-2">
-              <button onClick={saveEdit} disabled={savingEdit} className="btn-primary text-sm">
-                {savingEdit ? <Loader className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+              <button onClick={saveEdit} disabled={savingEdit} className="btn btn-primary btn-sm">
+                {savingEdit ? <Loader className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />} Save
               </button>
-              <button onClick={() => setEditing(false)} disabled={savingEdit} className="btn-secondary text-sm">
-                <X className="h-4 w-4" /> Cancel
+              <button onClick={() => setEditing(false)} disabled={savingEdit} className="btn btn-secondary btn-sm">
+                <X className="h-4 w-4" aria-hidden="true" /> Cancel
               </button>
             </div>
           )}
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-1">
           {fields.map((f, i) => (
-            <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
-              <f.icon className="h-5 w-5 text-gray-400 flex-shrink-0" />
-              <div className="flex-1">
-                <p className="text-sm text-gray-500">{f.label}</p>
+            <div key={i} className="flex items-center gap-3 py-2.5 border-b border-line/70 last:border-0">
+              <f.icon className="h-5 w-5 text-ink-faint shrink-0" aria-hidden="true" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-ink-faint">{f.label}</p>
                 {editing && (f.label === 'Full Name' || f.label === 'Mobile') ? (
                   f.label === 'Full Name' ? (
-                    <input value={editName} onChange={e => setEditName(e.target.value)} className="input-field mt-1 text-sm" placeholder="Full name" />
+                    <input value={editName} onChange={e => setEditName(e.target.value)} className="input-field mt-1.5" placeholder="Full name" aria-label="Full name" />
                   ) : (
-                    <input value={editMobile} onChange={e => setEditMobile(e.target.value)} className="input-field mt-1 text-sm" placeholder="Mobile number" />
+                    <input value={editMobile} onChange={e => setEditMobile(e.target.value)} className="input-field mt-1.5" placeholder="Mobile number" aria-label="Mobile number" />
                   )
                 ) : (
-                  <p className="font-medium text-gray-900">{f.value}</p>
+                  <p className="font-medium text-ink break-words">{f.value}</p>
                 )}
               </div>
             </div>

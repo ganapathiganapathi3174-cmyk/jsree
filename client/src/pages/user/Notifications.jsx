@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import api from '../../utils/api';
-import { Bell, CheckCheck, Trash2, RefreshCw } from 'lucide-react';
+import { Bell, CheckCheck, Trash2 } from 'lucide-react';
+import PageHeader from '../../components/PageHeader';
+import EmptyState from '../../components/EmptyState';
+import LoadingSpinner from '../../components/LoadingSpinner';
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState([]);
@@ -43,42 +46,41 @@ export default function Notifications() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Notifications</h1>
-          <p className="text-sm text-gray-500 mt-1">Updates on your account activity</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setUnreadOnly(!unreadOnly)} className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors border ${unreadOnly ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
-            {unreadOnly ? 'Unread Only' : 'All'}
-          </button>
-          <button onClick={markAllRead} className="btn-secondary py-1.5 text-sm"><CheckCheck size={16} /> Mark all read</button>
-        </div>
-      </div>
+      <PageHeader
+        title="Notifications"
+        description="Updates on your account activity"
+        actions={
+          <div className="flex items-center gap-2">
+            <button onClick={() => setUnreadOnly(!unreadOnly)} aria-pressed={unreadOnly} className={`chip ${unreadOnly ? 'chip-active' : ''}`}>
+              {unreadOnly ? 'Unread Only' : 'All'}
+            </button>
+            <button onClick={markAllRead} className="btn btn-secondary"><CheckCheck className="h-4 w-4" aria-hidden="true" /> Mark all read</button>
+          </div>
+        }
+      />
 
       {loading ? (
-        <div className="flex justify-center py-12"><RefreshCw className="w-6 h-6 animate-spin text-gray-500" /></div>
+        <LoadingSpinner />
       ) : notifications.length === 0 ? (
-        <div className="table-shell text-center py-12 text-gray-500">
-          <Bell className="w-12 h-12 mx-auto mb-3 opacity-50 text-gray-300" />
-          <p>No notifications</p>
+        <div className="table-shell">
+          <EmptyState icon={<Bell className="h-6 w-6" aria-hidden="true" />} title="No notifications" description="Updates about your account will appear here." />
         </div>
       ) : (
-        <div className="table-shell overflow-hidden divide-y divide-gray-100">
+        <div className="table-shell divide-y divide-line/70">
           {notifications.map(n => (
-            <div key={n.id} className={`p-4 flex items-start gap-3 ${!n.read ? 'bg-primary-50/40' : ''}`}>
-              <span className="text-xl mt-0.5">{getIcon(n.type)}</span>
+            <div key={n.id} className={`p-4 flex items-start gap-3 ${!n.read ? 'bg-primary-500/5' : ''}`}>
+              <span className="text-xl mt-0.5 shrink-0" aria-hidden="true">{getIcon(n.type)}</span>
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-900">{n.title}</p>
-                <p className="text-sm mt-0.5 text-gray-600">{n.message}</p>
-                <p className="text-xs mt-1 text-gray-400">{new Date(n.created_at).toLocaleString('en-IN')}</p>
+                <p className="font-medium text-ink">{n.title}</p>
+                <p className="text-sm mt-0.5 text-ink-muted">{n.message}</p>
+                <p className="text-xs mt-1 text-ink-faint">{new Date(n.created_at).toLocaleString('en-IN')}</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 {!n.read && <>
-                  <button onClick={() => markRead(n.id)} className="text-xs text-primary-600 hover:underline font-medium">Mark read</button>
-                  <span className="w-2 h-2 bg-primary-600 rounded-full" />
+                  <button onClick={() => markRead(n.id)} className="link text-xs">Mark read</button>
+                  <span className="w-2 h-2 bg-primary-600 rounded-full" aria-hidden="true" />
                 </>}
-                <button onClick={() => deleteNotif(n.id)} className="p-1 rounded text-gray-400 hover:bg-gray-100" aria-label="Delete notification"><Trash2 size={14} /></button>
+                <button onClick={() => deleteNotif(n.id)} className="btn btn-ghost btn-icon" aria-label="Delete notification"><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
               </div>
             </div>
           ))}
@@ -87,7 +89,7 @@ export default function Notifications() {
 
       {pagination.totalPages > 1 && (
         <div className="text-center">
-          <button onClick={() => fetchNotifications(pagination.page + 1)} className="text-sm font-medium text-primary-600 hover:text-primary-700">Load more</button>
+          <button onClick={() => fetchNotifications(pagination.page + 1)} className="btn btn-secondary btn-sm">Load more</button>
         </div>
       )}
     </div>

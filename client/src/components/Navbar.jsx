@@ -1,8 +1,7 @@
-import { Menu, ChevronDown, LogOut, User as UserIcon } from 'lucide-react';
+import { Menu, ChevronDown, LogOut, User as UserIcon, Shield } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from './ThemeToggle';
 import NotificationPanel from './NotificationPanel';
 import Avatar from './Avatar';
@@ -13,12 +12,35 @@ export function logout() {
   localStorage.removeItem('user');
 }
 
+// Friendly labels for auto-generated breadcrumbs.
+const CRUMB_LABELS = {
+  dashboard: 'Dashboard',
+  profile: 'Profile',
+  payment: 'Payment',
+  topups: 'Top-Ups',
+  referrals: 'Referrals',
+  'plan-change': 'Change Plan',
+  chat: 'Chat',
+  history: 'History',
+  wallet: 'Wallet',
+  notifications: 'Notifications',
+  receipts: 'Receipts',
+  security: 'Security',
+  users: 'Users',
+  payments: 'Payments',
+  'inactive-users': 'Inactive Users',
+  'plan-changes': 'Plan Changes',
+  'audit-logs': 'Audit Logs',
+  'financial-reports': 'Financial Reports',
+  'suspicious-activity': 'Suspicious Activity',
+  'payment-settings': 'Payment Settings',
+};
+
 export default function Navbar({ onMenuToggle, isAdmin }) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
-  const { dark } = useTheme();
   const userStr = localStorage.getItem('user');
   const [user, setUser] = useState(userStr ? JSON.parse(userStr) : null);
 
@@ -50,73 +72,112 @@ export default function Navbar({ onMenuToggle, isAdmin }) {
     navigate(isAdmin ? '/admin/login' : '/login');
   };
 
-  const getBreadcrumbs = () => {
-    const parts = location.pathname.split('/').filter(Boolean);
-    return parts.map((part, i) => ({
-      label: part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' '),
-      isLast: i === parts.length - 1,
-    }));
-  };
-
-  const breadcrumbs = getBreadcrumbs();
+  const parts = location.pathname.split('/').filter(Boolean);
+  const breadcrumbs = parts.map((part, i) => ({
+    label: CRUMB_LABELS[part] || part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' '),
+    isLast: i === parts.length - 1,
+  }));
 
   return (
-    <header className="bg-slate-950/70 backdrop-blur-2xl border-b border-slate-500/15 shadow-sm shadow-black/40 sticky top-0 z-30">
-      <div className="flex items-center justify-between px-4 sm:px-6 h-16">
-        <div className="flex items-center gap-3">
-          <button onClick={onMenuToggle} className="lg:hidden p-2 rounded-xl text-slate-400 hover:bg-white/10 hover:text-primary-300 transition-colors" aria-label="Toggle menu">
+    <header className="bg-surface/85 backdrop-blur-xl border-b border-line sticky top-0 z-30">
+      <div className="flex items-center justify-between gap-3 px-4 sm:px-6 h-16">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={onMenuToggle}
+            className="btn btn-ghost btn-icon btn-sm lg:hidden"
+            aria-label="Toggle navigation menu"
+          >
             <Menu size={20} />
           </button>
-          <div className="hidden sm:flex items-center gap-2 text-sm">
+          <nav aria-label="Breadcrumb" className="hidden sm:flex items-center gap-2 text-sm min-w-0">
             {breadcrumbs.map((crumb, i) => (
-              <span key={i} className="flex items-center gap-2">
-                {i > 0 && <span className="text-slate-600">/</span>}
-                <span className={crumb.isLast ? 'text-slate-100 font-semibold text-primary-300' : 'text-slate-400'}>
+              <span key={i} className="flex items-center gap-2 min-w-0">
+                {i > 0 && (
+                  <span className="text-ink-faint" aria-hidden="true">
+                    /
+                  </span>
+                )}
+                <span
+                  className={
+                    crumb.isLast
+                      ? 'text-ink font-semibold truncate'
+                      : 'text-ink-muted truncate'
+                  }
+                  aria-current={crumb.isLast ? 'page' : undefined}
+                >
                   {crumb.label}
                 </span>
               </span>
             ))}
-          </div>
+          </nav>
+          <span className="sm:hidden text-sm font-semibold text-ink truncate">
+            {isAdmin ? 'JSREE Admin' : 'JSREE'}
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
           {!isAdmin && <NotificationPanel />}
           <ThemeToggle />
-          <span className="hidden sm:block text-sm font-bold tracking-wide text-primary-400">
-            {isAdmin ? 'JSREE ADMIN' : 'JSREE'}
-          </span>
           <div className="relative" ref={dropdownRef}>
             <button
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="flex items-center gap-2 p-1.5 rounded-xl transition-colors hover:bg-white/[0.08]"
+              onClick={() => setDropdownOpen((v) => !v)}
+              className="flex items-center gap-2 pl-1.5 pr-2 py-1.5 rounded-lg transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+              aria-haspopup="menu"
+              aria-expanded={dropdownOpen}
+              aria-label="Account menu"
             >
-              <Avatar user={user} size={36} />
-              <div className="hidden sm:block text-left">
-                <p className="text-sm font-medium text-slate-100 leading-tight">
+              <Avatar user={user} size={32} />
+              <div className="hidden sm:block text-left max-w-[10rem]">
+                <p className="text-sm font-medium text-ink leading-tight truncate">
                   {user?.fullName || user?.name || 'User'}
                 </p>
-                <p className="text-xs capitalize text-slate-500 leading-tight">
+                <p className="text-xs capitalize text-ink-faint leading-tight truncate">
                   {user?.role || 'user'}
                 </p>
               </div>
-              <ChevronDown size={16} className="hidden sm:block text-slate-500" />
+              <ChevronDown
+                size={15}
+                className={`hidden sm:block text-ink-faint transition-transform duration-150 ${
+                  dropdownOpen ? 'rotate-180' : ''
+                }`}
+                aria-hidden="true"
+              />
             </button>
 
             {dropdownOpen && (
-              <div className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-elevation border border-slate-500/20 py-1 z-50 bg-slate-900/95 backdrop-blur-2xl">
+              <div
+                role="menu"
+                className="absolute right-0 top-full mt-2 w-52 rounded-lg shadow-elevation border border-line py-1 z-50 bg-surface overflow-hidden"
+              >
+                <div className="px-4 py-2.5 border-b border-line sm:hidden">
+                  <p className="text-sm font-medium text-ink truncate">
+                    {user?.fullName || user?.name || 'User'}
+                  </p>
+                  <p className="text-xs capitalize text-ink-faint">{user?.role || 'user'}</p>
+                </div>
                 {!isAdmin && (
                   <button
-                    onClick={() => { setDropdownOpen(false); navigate('/dashboard/profile'); }}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-200 hover:bg-primary-500/10 hover:text-primary-300"
+                    role="menuitem"
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      navigate('/dashboard/profile');
+                    }}
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors"
                   >
                     <UserIcon size={16} /> Profile
                   </button>
                 )}
+                {isAdmin && (
+                  <div className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-muted">
+                    <Shield size={16} /> Admin session
+                  </div>
+                )}
                 <button
+                  role="menuitem"
                   onClick={handleLogout}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-error-400 hover:bg-error-600/15"
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-error-600 dark:text-error-400 hover:bg-error-500/10 transition-colors"
                 >
-                  <LogOut size={16} /> Logout
+                  <LogOut size={16} /> Log out
                 </button>
               </div>
             )}

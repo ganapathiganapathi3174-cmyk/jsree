@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { History as HistoryIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
+import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
 import EmptyState from '../../components/EmptyState';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -36,25 +37,28 @@ export default function History() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">History</h1>
-        <p className="text-sm text-gray-500 mt-1">Your payments and top-ups</p>
-      </div>
-      <div className="flex gap-2">
+      <PageHeader title="History" description="Your payments and top-ups" />
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter history">
         {filterTabs.map(f => (
-          <button key={f.key} onClick={() => setFilter(f.key)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${filter === f.key ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>{f.label}</button>
+          <button key={f.key} onClick={() => setFilter(f.key)} aria-pressed={filter === f.key} className={`chip ${filter === f.key ? 'chip-active' : ''}`}>{f.label}</button>
         ))}
       </div>
       {items.length === 0 ? (
         <div className="table-shell">
-          <EmptyState icon={<HistoryIcon className="h-12 w-12" />} title="No history" description="Your transactions will appear here." />
+          <EmptyState icon={<HistoryIcon className="h-6 w-6" aria-hidden="true" />} title="No history" description="Your transactions will appear here." />
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="table-shell divide-y divide-line/70">
           {items.map(i => (
-            <div key={`${i.type}-${i.id}`} className="card flex items-center justify-between">
-              <div><p className="font-medium text-gray-900">{i.type}</p><p className="text-sm text-gray-500">{new Date(i.date).toLocaleString()}</p></div>
-              <div className="text-right"><p className="font-semibold text-gray-900">₹{i.amount}</p><StatusBadge status={i.status} /></div>
+            <div key={`${i.type}-${i.id}`} className="px-4 sm:px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium text-ink">{i.type}</p>
+                <p className="text-sm text-ink-muted mt-0.5">{new Date(i.date).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-4 sm:gap-6">
+                <p className="font-semibold text-ink">₹{i.amount}</p>
+                <StatusBadge status={i.status} />
+              </div>
             </div>
           ))}
         </div>

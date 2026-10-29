@@ -102,6 +102,7 @@ export async function extractPaymentFields(buffer, options = {}) {
         unionInto(extracted.dates, p.dates, String);
         unionInto(extracted.dateTimes, p.dateTimes, d => `${d.year}-${d.month}-${d.day}-${d.hour}-${d.minute}-${d.hasTime}`);
         unionInto(extracted.receiverNames, p.receiverNames, String);
+        unionInto(extracted.senderNames, p.senderNames, String);
         ocrText += '\n' + pass.text;
         ocrConfidence = Math.max(ocrConfidence, pass.confidence || 0);
       }
@@ -123,6 +124,7 @@ export async function extractPaymentFields(buffer, options = {}) {
       extractedDates: extracted.dates || [],
       extractedDateTimes: extracted.dateTimes || [],
       extractedReceiverNames: extracted.receiverNames || [],
+      extractedSenderNames: extracted.senderNames || [],
       transactionStatus: extracted.transactionStatus || null,
     };
   } catch (error) {

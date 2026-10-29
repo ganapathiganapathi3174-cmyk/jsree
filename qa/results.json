@@ -1,0 +1,412 @@
+[
+  {
+    "viewport": "1440x900",
+    "path": "/",
+    "label": "landing",
+    "role": "anon",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": {
+        "tag": "SPAN",
+        "cls": "star-head",
+        "excess": 43
+      }
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/register",
+    "label": "register",
+    "role": "anon",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/login",
+    "label": "login",
+    "role": "anon",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/login",
+    "label": "admin-login",
+    "role": "anon",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/payment-status",
+    "label": "payment-status",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/definitely-not-a-route",
+    "label": "not-found",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard",
+    "label": "user-dashboard",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/profile",
+    "label": "user-profile",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/payment",
+    "label": "user-payment",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/topups",
+    "label": "user-topups",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/referrals",
+    "label": "user-referrals",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/plan-change",
+    "label": "user-plan-change",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/chat",
+    "label": "user-chat",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/history",
+    "label": "user-history",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/wallet",
+    "label": "user-wallet",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/notifications",
+    "label": "user-notifications",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/receipts",
+    "label": "user-receipts",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/dashboard/security",
+    "label": "user-security",
+    "role": "user",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin",
+    "label": "admin-dashboard",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/users",
+    "label": "admin-users",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/payments",
+    "label": "admin-payments",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/topups",
+    "label": "admin-topups",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/inactive-users",
+    "label": "admin-inactive-users",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/plan-changes",
+    "label": "admin-plan-changes",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/chat",
+    "label": "admin-chat",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/audit-logs",
+    "label": "admin-audit-logs",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/financial-reports",
+    "label": "admin-financial-reports",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/suspicious-activity",
+    "label": "admin-suspicious-activity",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  },
+  {
+    "viewport": "1440x900",
+    "path": "/admin/payment-settings",
+    "label": "admin-payment-settings",
+    "role": "admin",
+    "title": "JSREE — Premium Community Platform",
+    "overflow": {
+      "docOverflow": 0,
+      "worst": null
+    },
+    "consoleErrors": [],
+    "pageErrors": [],
+    "failedReqs": []
+  }
+]

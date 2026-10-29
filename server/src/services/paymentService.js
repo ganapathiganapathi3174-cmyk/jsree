@@ -18,11 +18,18 @@ import {
 // service; it survives only for unit tests that exercise OCR helpers.
 import { paymentValidationEngine } from './paymentValidationService.js';
 import { getPaymentConfig } from './configService.js';
+import { verifyTransaction, getProviderMode } from './paymentProviderService.js';
+import {
+  recordVerificationAttempt,
+  listVerificationHistory,
+  deriveOutcomeStatus,
+} from './paymentVerificationHistoryService.js';
 import {
   RECEIVER_UPI,
   RECEIVER_NAME,
   PAYMENT_TIME_WINDOW_MINUTES,
   OCR_VERIFICATION_BUDGET_MS,
+  SENDER_NAME_POLICY,
   isPaymentAutoApproveEnabled,
 } from '../config/paymentConfig.js';
 
@@ -351,6 +358,15 @@ export async function verifyPayment(paymentId, imageBuffer) {
   const paymentConfig = await getPaymentConfig();
   const receiverName = paymentConfig.receiver_name || RECEIVER_NAME || '';
 
+  // Expected payer identity (Rule B): the registering user's own full name.
+  // Used ONLY as a secondary advisory comparison against the payer name read
+  // from the screenshot; policy lives in SENDER_NAME_POLICY (off|review|reject).
+  let expectedPayerName = null;
+  if (SENDER_NAME_POLICY !== 'off') {
+    const { data: payerUser } = await supabase.from('users').select('full_name').eq('id', payment.user_id).single();
+    expectedPayerName = payerUser?.full_name || null;
+  }
+
   // Resolve the screenshot bytes: the freshly uploaded buffer when called
   // from the upload flow, otherwise the stored screenshot URL (manual
   // re-verification / admin-triggered runs).
@@ -373,6 +389,8 @@ export async function verifyPayment(paymentId, imageBuffer) {
       userId: payment.user_id,
       receiverName,
       receiverUpi: RECEIVER_UPI,
+      expectedPayerName,
+      senderPolicy: SENDER_NAME_POLICY,
     },
     serverTime: new Date(),
     timeoutMs: OCR_VERIFICATION_BUDGET_MS,
@@ -383,6 +401,20 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // (pending), stays resubmittable, and the controller records the failure
   // marker so the client gets an honest retry message.
   if (engineResult.inconclusive) {
+    await recordVerificationAttempt({
+      referenceType: 'payment',
+      referenceId: paymentId,
+      engine: VALIDATION_ENGINE,
+      status: 'PENDING_VERIFICATION',
+      decision: null,
+      reasonCode: engineResult.reason || null,
+      checks: engineResult.checks || null,
+      extractedData: engineResult.extractedData || null,
+      ocrConfidence: engineResult.ocrConfidence ?? null,
+      transactionId: engineResult.transactionId || null,
+      actorId: payment.user_id,
+      actorRole: 'user',
+    });
     throw {
       message: engineResult.message || 'Screenshot verification did not complete',
       code: engineResult.code || engineResult.reason || 'VERIFICATION_FAILED',
@@ -395,28 +427,83 @@ export async function verifyPayment(paymentId, imageBuffer) {
   let newStatus;
   let reason;
   let verificationResult;
-  if (engineResult.approved && !isPaymentAutoApproveEnabled()) {
-    // ── External-confirmation gate (PAYMENT_AUTO_APPROVE off, the default) ──
-    // The engine approved the screenshot, but straight-through auto-approval
-    // is not enabled: park the row for human confirmation (HEAD parity).
-    // decision='manual_review' keeps ocrDecision='approved' in the record, no
-    // UTR is reserved, no activation runs, and the row stays SUBMITTABLE so
-    // the user can re-upload if needed.
-    const demoted = requireExternalPaymentConfirmation({
-      ...engineResult,
-      decision: 'approved',
-      reason: null,
-    });
+  let providerResult = null;
+
+  if (engineResult.review === true) {
+    // ── Ambiguous/contradictory evidence (e.g. payer-name mismatch under
+    // the default 'review' policy): park for a human. No UTR is reserved,
+    // no activation runs, and the row stays actionable by an admin.
     newStatus = 'manual_review';
-    reason = demoted.reason || 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED';
-    verificationResult = { ...demoted, reason, engine: VALIDATION_ENGINE };
-  } else {
-    newStatus = engineResult.approved ? 'approved' : 'rejected';
-    reason = engineResult.approved ? null : (engineResult.reason || 'REJECTED');
+    reason = engineResult.reason || 'MANUAL_REVIEW';
     verificationResult = {
       ...engineResult,
-      decision: newStatus === 'approved' ? 'approved' : 'rejected',
-      reason: newStatus === 'approved' ? null : reason,
+      decision: 'manual_review',
+      status: 'MANUAL_REVIEW',
+      reason,
+      engine: VALIDATION_ENGINE,
+    };
+  } else if (engineResult.approved) {
+    // ── Provider verification (Rule F) ──
+    // When a provider integration is configured (mode != 'none'), an
+    // engine-approved screenshot is NOT enough: the transaction reference
+    // must be independently confirmed. A timeout / error / not-found
+    // response fails safe to PENDING_VERIFICATION — never an approval.
+    if (getProviderMode() !== 'none') {
+      providerResult = await verifyTransaction({
+        transactionId: engineResult.transactionId,
+        amount: engineResult.matchedAmount,
+        receiverUpi: RECEIVER_UPI,
+      });
+    }
+
+    if (providerResult && providerResult.verified !== true) {
+      newStatus = 'manual_review';
+      reason = 'PENDING_PROVIDER_VERIFICATION';
+      verificationResult = {
+        ...engineResult,
+        decision: 'manual_review',
+        status: 'PENDING_VERIFICATION',
+        reason,
+        provider: providerResult,
+        engine: VALIDATION_ENGINE,
+      };
+    } else if (!isPaymentAutoApproveEnabled()) {
+      // ── External-confirmation gate (PAYMENT_AUTO_APPROVE off, the default) ──
+      // The engine approved the screenshot (and the provider, if configured,
+      // confirmed it), but straight-through auto-approval is not enabled:
+      // park the row for human confirmation. decision='manual_review' keeps
+      // ocrDecision='approved' in the record, no UTR is reserved, no
+      // activation runs, and the row stays SUBMITTABLE.
+      const demoted = requireExternalPaymentConfirmation({
+        ...engineResult,
+        decision: 'approved',
+        reason: null,
+        provider: providerResult,
+      });
+      newStatus = 'manual_review';
+      reason = demoted.reason || 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED';
+      verificationResult = { ...demoted, reason, engine: VALIDATION_ENGINE };
+    } else {
+      newStatus = 'approved';
+      reason = null;
+      verificationResult = {
+        ...engineResult,
+        decision: 'approved',
+        status: 'APPROVED',
+        reason: null,
+        provider: providerResult,
+        engine: VALIDATION_ENGINE,
+      };
+    }
+  } else {
+    newStatus = 'rejected';
+    reason = engineResult.reason || 'REJECTED';
+    verificationResult = {
+      ...engineResult,
+      decision: 'rejected',
+      status: 'REJECTED',
+      reason,
+      utr: engineResult.transactionId || null,
       engine: VALIDATION_ENGINE,
     };
   }
@@ -433,6 +520,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
       newStatus = 'rejected';
       reason = 'DUPLICATE_UTR';
       verificationResult.decision = 'rejected';
+      verificationResult.status = 'REJECTED';
       verificationResult.reason = 'DUPLICATE_UTR';
     } else if (reserve.reserved) {
       reservedUtr = reserve.utr;
@@ -451,6 +539,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
     newStatus = 'rejected';
     reason = 'PAYMENT_EXPIRED';
     verificationResult.decision = 'rejected';
+    verificationResult.status = 'REJECTED';
     verificationResult.reason = 'PAYMENT_EXPIRED';
   }
 
@@ -514,10 +603,29 @@ export async function verifyPayment(paymentId, imageBuffer) {
     elapsedMs: elapsed,
   });
 
+  // Append-only verification history (admin dashboard audit trail).
+  await recordVerificationAttempt({
+    referenceType: 'payment',
+    referenceId: paymentId,
+    engine: VALIDATION_ENGINE,
+    status: verificationResult.status || deriveOutcomeStatus(newStatus, verificationResult),
+    decision: verificationResult.decision || newStatus,
+    reasonCode: reason || null,
+    checks: engineResult.checks || null,
+    extractedData: engineResult.extractedData || null,
+    ocrConfidence: engineResult.ocrConfidence ?? null,
+    transactionId: engineResult.transactionId || null,
+    provider: providerResult,
+    actorId: payment.user_id,
+    actorRole: 'user',
+  });
+
+  const outcome = verificationResult.status || deriveOutcomeStatus(newStatus, verificationResult);
   return {
     paymentId,
     status: newStatus,
     decision: newStatus,
+    outcome,
     reason,
     verificationResult,
     elapsed,
@@ -563,6 +671,16 @@ export async function recordVerificationFailure(paymentId, error) {
     details: record.details
   });
 
+  await recordVerificationAttempt({
+    referenceType: 'payment',
+    referenceId: paymentId,
+    engine: VALIDATION_ENGINE,
+    status: 'PENDING_VERIFICATION',
+    decision: null,
+    reasonCode: record.reason,
+    actorRole: 'system',
+  });
+
   return record;
 }
 
@@ -579,21 +697,26 @@ export async function requirePaymentOwner(paymentId, requester) {
 }
 
 export async function getPaymentStatus(paymentId) {
-  const { data: payment, error } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, created_at, expires_at, payment_request_created_at, receiver_upi, verified_at, verification_result, rejection_reason').eq('id', paymentId).single();
+  const { data: payment, error } = await supabase.from('payments').select('id, selected_plan, expected_amount, status, created_at, expires_at, payment_request_created_at, receiver_upi, verified_at, verification_result, rejection_reason, screenshot_url').eq('id', paymentId).single();
   if (error || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
+  // Public four-state outcome (APPROVED / REJECTED / PENDING_VERIFICATION /
+  // MANUAL_REVIEW) computed BEFORE the legacy manual_review→pending masking.
+  payment.outcome = deriveOutcomeStatus(payment.status, payment.verification_result);
   if (payment.status === 'manual_review') payment.status = 'pending';
   return payment;
 }
 
 export async function getUserPayments(userId) {
   const { data: payments, error } = await supabase.from('payments')
-    .select('id, selected_plan, expected_amount, status, screenshot_url, rejection_reason, verification_result, submitted_at, verified_at, approved_at, rejected_at, created_at, expires_at, payment_request_created_at, receiver_upi')
+    .select('id, selected_plan, expected_amount, status, screenshot_url, rejection_reason, verification_result, submitted_at, verified_at, approved_at, rejected_at, created_at, expires_at, payment_request_created_at, receiver_upi, transaction_id')
     .eq('user_id', userId).order('created_at', { ascending: false });
   if (error) throw { message: 'Failed to fetch payments', code: 'FETCH_FAILED' };
   // Legacy manual_review rows are never exposed to the frontend.
   // They appear as "pending" so the user can resubmit; on resubmission
-  // the binary engine resolves them to approved/rejected.
+  // the binary engine resolves them to approved/rejected. The `outcome`
+  // field preserves the honest four-state visibility for the UI.
   for (const p of payments) {
+    p.outcome = deriveOutcomeStatus(p.status, p.verification_result);
     if (p.status === 'manual_review') p.status = 'pending';
   }
   return payments;
@@ -642,6 +765,90 @@ export async function rejectPayment(paymentId, adminId, reason) {
   await logAction(adminId, 'admin', 'reject_payment', paymentId, 'payment', { userId: payment.user_id, amount: payment.expected_amount, reason });
   return { message: 'Payment rejected', paymentId };
 }
+
+// ─────────────────────────────────────────────────────────────
+// Audited manual-review resolution (admin only, enforced at the route).
+//
+// A human resolving a MANUAL_REVIEW / PENDING_VERIFICATION case must record
+// a reason — it is written into the audit log together with the action, and
+// the ordinary user can never reach this path (RBAC + ownership checks).
+// ─────────────────────────────────────────────────────────────
+export async function reviewPayment(paymentId, adminId, { action, reason } = {}) {
+  if (!['approve', 'reject'].includes(action)) {
+    throw { message: 'Action must be "approve" or "reject"', code: 'INVALID_REVIEW_ACTION' };
+  }
+  if (typeof reason !== 'string' || reason.trim().length < 3) {
+    throw { message: 'A recorded reason is required to resolve a manual review', code: 'REVIEW_REASON_REQUIRED' };
+  }
+  const recordedReason = reason.trim();
+
+  if (action === 'approve') {
+    const result = await approvePayment(paymentId, adminId);
+    await logAction(adminId, 'admin', 'manual_review_approve', paymentId, 'payment', { reason: recordedReason });
+    await recordVerificationAttempt({
+      referenceType: 'payment',
+      referenceId: paymentId,
+      status: 'APPROVED',
+      decision: 'approved',
+      reasonCode: 'ADMIN_MANUAL_APPROVE',
+      actorId: adminId,
+      actorRole: 'admin',
+    });
+    return { ...result, reason: recordedReason };
+  }
+
+  const result = await rejectPayment(paymentId, adminId, recordedReason);
+  await logAction(adminId, 'admin', 'manual_review_reject', paymentId, 'payment', { reason: recordedReason });
+  await recordVerificationAttempt({
+    referenceType: 'payment',
+    referenceId: paymentId,
+    status: 'REJECTED',
+    decision: 'rejected',
+    reasonCode: 'ADMIN_MANUAL_REJECT',
+    actorId: adminId,
+    actorRole: 'admin',
+  });
+  return { ...result, reason: recordedReason };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Authenticated screenshot streaming (access-controlled proof access).
+//
+// Screenshots are payment evidence containing personal financial data.
+// Instead of handing out the raw storage URL, the API streams the object
+// through an ownership-checked endpoint: the payment's owner or an admin
+// only. The stored bucket URL is never required by the frontend.
+// ─────────────────────────────────────────────────────────────
+function storageObjectPathFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split('/');
+    const bucketIdx = segments.indexOf('payments');
+    return bucketIdx >= 0 ? segments.slice(bucketIdx + 1).join('/') : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function streamPaymentScreenshot(paymentId, requester) {
+  const { data: payment, error } = await supabase.from('payments')
+    .select('user_id, screenshot_url')
+    .eq('id', paymentId)
+    .single();
+  if (error || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
+  if (payment.user_id !== requester?.id && requester?.role !== 'admin') {
+    throw { message: 'Unauthorized', code: 'UNAUTHORIZED' };
+  }
+  if (!payment.screenshot_url) throw { message: 'No screenshot uploaded', code: 'NO_SCREENSHOT' };
+  const objectPath = storageObjectPathFromUrl(payment.screenshot_url);
+  if (!objectPath) throw { message: 'Screenshot not available', code: 'SCREENSHOT_UNAVAILABLE' };
+  const { data: file, error: dlError } = await supabase.storage.from('payments').download(objectPath);
+  if (dlError || !file) throw { message: 'Screenshot not available', code: 'SCREENSHOT_UNAVAILABLE' };
+  const buffer = Buffer.from(await file.arrayBuffer());
+  return { buffer, contentType: file.type || 'image/png' };
+}
+
+export { listVerificationHistory };
 
 // ─────────────────────────────────────────────────────────────
 // Whether a registration/payment carries immutable financial data.

@@ -2,7 +2,6 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
-import FallingStarsBackground from './components/FallingStarsBackground';
 import LandingPage from './pages/LandingPage';
 import RegisterPage from './pages/RegisterPage';
 import LoginPage from './pages/LoginPage';
@@ -36,7 +35,6 @@ import AdminPaymentSettings from './pages/admin/PaymentSettings';
 export default function App() {
   return (
     <ThemeProvider>
-      <FallingStarsBackground />
       <div className="relative z-10">
         <Routes>
         <Route path="/" element={<LandingPage />} />

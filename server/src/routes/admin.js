@@ -18,8 +18,11 @@ router.patch('/users/:userId/password', adminController.resetUserPassword);
 router.delete('/users/:userId', adminController.deleteUser);
 
 router.get('/payments', adminController.getPayments);
+router.get('/payments/:paymentId', adminController.getPaymentDetail);
+router.get('/payments/:paymentId/screenshot', adminController.getPaymentScreenshot);
 router.put('/payments/:paymentId/approve', adminController.approvePayment);
 router.put('/payments/:paymentId/reject', adminController.rejectPayment);
+router.post('/payments/:paymentId/review', adminController.reviewPayment);
 router.delete('/payments/:paymentId', adminController.deletePayment);
 
 router.put('/payments/bulk-approve', async (req, res) => {
@@ -71,6 +74,7 @@ router.put('/payments/bulk-reject', async (req, res) => {
 });
 
 router.get('/topups', adminController.getTopups);
+router.get('/topups/:topupId/screenshot', adminController.getTopupScreenshot);
 router.put('/topups/:topupId/review', adminController.reviewTopup);
 router.delete('/topups/:topupId', adminController.deleteTopup);
 

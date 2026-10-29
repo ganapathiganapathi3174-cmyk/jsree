@@ -1,0 +1,187 @@
+{
+  "results": [
+    {
+      "name": "F1 step2 choose plan visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F1 step3 QR payment step shown",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F1 approved -> /dashboard",
+      "pass": true,
+      "detail": "http://localhost:5173/dashboard"
+    },
+    {
+      "name": "F1 user stored from API profile",
+      "pass": true,
+      "detail": "qa.user@example.test"
+    },
+    {
+      "name": "F2 rejected -> /payment-status (not dashboard)",
+      "pass": true,
+      "detail": "http://localhost:5173/payment-status"
+    },
+    {
+      "name": "F2 backend state shown, no inferred success",
+      "pass": true,
+      "detail": "successClaim=false rejected=true snippet=Payment was not approved"
+    },
+    {
+      "name": "F3 status page + retry CTA present",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F3 rejected/pending state visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F3 QR section appears after retry",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F3 post-verify user status comes from API profile",
+      "pass": true,
+      "detail": "status=active url=http://localhost:5173/dashboard"
+    },
+    {
+      "name": "F3 no wallet/credit API call during verification",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F4 wallet balance rendered from API (250)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F4 top-up history rows present",
+      "pass": true,
+      "detail": "snippet=Completed the payment in your UPI app? Upload the payment screenshot below and it will be"
+    },
+    {
+      "name": "F4 wallet unchanged (no optimistic credit)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F5 payments table renders on 360px",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F5 modal open + screenshot via authorized proxy",
+      "pass": true,
+      "detail": "img={\"w\":1} reqs=/api/payments/22222222-2222-4222-8222-222222222223/screenshot,/api/payments/22222222-2222-4222-8222-222222222223/screenshot"
+    },
+    {
+      "name": "F5 empty reason blocks approval (client validation)",
+      "pass": true,
+      "detail": "posts=0 toast=Review reason (required — recorded in the audit log)"
+    },
+    {
+      "name": "F5 review POST carries action+reason",
+      "pass": true,
+      "detail": "[{\"action\":\"approve\",\"reason\":\"Confirmed UTR with bank statement\"}]"
+    },
+    {
+      "name": "F5 approval success feedback",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F6 proof via /api/admin/topups/:id/screenshot only",
+      "pass": true,
+      "detail": "/api/admin/topups/11111111-1111-4111-8111-111111111101/screenshot,/api/admin/topups/11111111-1111-4111-8111-111111111101/screenshot"
+    },
+    {
+      "name": "F7 no token -> /login",
+      "pass": true,
+      "detail": "http://localhost:5173/login"
+    },
+    {
+      "name": "F7 login -> /dashboard",
+      "pass": true,
+      "detail": "http://localhost:5173/dashboard"
+    },
+    {
+      "name": "F7 admin blocked from user route",
+      "pass": true,
+      "detail": "http://localhost:5173/admin"
+    },
+    {
+      "name": "F7 pending user -> /payment-status",
+      "pass": true,
+      "detail": "http://localhost:5173/payment-status"
+    },
+    {
+      "name": "F7 logout -> /login + token cleared",
+      "pass": true,
+      "detail": "http://localhost:5173/login"
+    },
+    {
+      "name": "F7 401 interceptor -> /login + token cleared",
+      "pass": true,
+      "detail": "http://localhost:5173/login"
+    },
+    {
+      "name": "F8 dark is default",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F8 toggle to light + persisted",
+      "pass": true,
+      "detail": "false"
+    },
+    {
+      "name": "F8 theme survives reload",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F8 back to dark",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F9 no bearer token in console logs",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F9 no secrets in console logs",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "F9 no uncaught page errors across flows",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "consoleLog": [
+    "[F1] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+    "[F1] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+    "[F2] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+    "[F2] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+    "[F3] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+    "[F3] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+    "[F4] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+    "[F4] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+    "[F4] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+    "[F4] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+    "[F4] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+    "[F4] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+    "[F5] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+    "[F5] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+    "[F6] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+    "[F6] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath."
+  ]
+}

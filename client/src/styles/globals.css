@@ -2,29 +2,72 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ================================================================
+   Design tokens
+   Light theme on :root — dark theme on .dark (class on <html>).
+   Values are space-separated RGB triplets for Tailwind's
+   rgb(var(--x) / <alpha-value>) color syntax.
+   ================================================================ */
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light;
+
+    --canvas: 246 247 251;        /* #F6F7FB page background */
+    --surface: 255 255 255;       /* cards, panels */
+    --surface-2: 243 245 249;     /* inputs, nested surfaces, hover */
+    --line: 226 232 240;          /* borders (slate-200) */
+    --ink: 15 23 42;              /* primary text (slate-900) */
+    --ink-muted: 71 85 105;       /* secondary text (slate-600) */
+    --ink-faint: 148 163 184;     /* tertiary text / placeholders */
+
+    --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 20px -8px rgba(15, 23, 42, 0.10);
+    --shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 12px 28px -8px rgba(15, 23, 42, 0.14);
+    --shadow-elevation: 0 20px 48px -16px rgba(15, 23, 42, 0.24);
   }
+
+  .dark {
+    color-scheme: dark;
+
+    --canvas: 6 10 22;            /* #060A16 */
+    --surface: 14 20 38;          /* #0E1426 */
+    --surface-2: 19 26 47;        /* #131A2F */
+    --line: 148 163 184;          /* slate-400 — applied at low alpha */
+    --ink: 231 237 247;           /* #E7EDF7 */
+    --ink-muted: 148 163 184;     /* slate-400 */
+    --ink-faint: 100 116 139;     /* slate-500 */
+
+    --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.20), 0 8px 24px -8px rgba(0, 0, 0, 0.45);
+    --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.24), 0 16px 32px -8px rgba(0, 0, 0, 0.55);
+    --shadow-elevation: 0 24px 50px -12px rgba(0, 0, 0, 0.65);
+  }
+
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
   }
+
   body {
     @apply antialiased;
-    background-color: #020617;
-    background-image:
-      radial-gradient(circle at 20% 15%, rgba(59, 130, 246, 0.10), transparent 30%),
-      radial-gradient(circle at 80% 8%, rgba(139, 92, 246, 0.09), transparent 30%),
-      linear-gradient(180deg, #020617 0%, #080D24 50%, #020617 100%);
-    background-attachment: fixed;
-    color: #F8FAFC;
+    background-color: rgb(var(--canvas));
+    color: rgb(var(--ink));
     font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
   }
+
+  /* Consistent, visible keyboard focus everywhere */
+  :focus-visible {
+    outline: 2px solid rgba(37, 99, 235, 0.65);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
   ::selection {
-    background-color: rgba(96, 165, 250, 0.30);
+    background-color: rgba(37, 99, 235, 0.22);
   }
+
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -33,56 +76,262 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(148, 163, 184, 0.20);
+    background: rgba(148, 163, 184, 0.28);
     border-radius: 8px;
     border: 2px solid transparent;
     background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(148, 163, 184, 0.35);
+    background: rgba(148, 163, 184, 0.45);
     background-clip: content-box;
   }
+
+  /* Tables: shared header baseline */
+  th {
+    text-align: left;
+  }
 }
 
+/* ================================================================
+   Component layer — the shared design system classes
+   ================================================================ */
 @layer components {
+  /* ---------- Buttons ---------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-semibold
+      transition-colors duration-150 select-none whitespace-nowrap
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas
+      disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none;
+  }
+  .btn-sm {
+    @apply h-8 px-3 text-xs rounded-md gap-1.5;
+  }
+  .btn-lg {
+    @apply h-11 px-6 text-[15px];
+  }
+  .btn-icon {
+    @apply w-10 px-0 rounded-lg;
+  }
+  .btn-icon.btn-sm {
+    @apply w-8 px-0;
+  }
+
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 bg-primary-500 text-white h-10 px-5 rounded-xl text-sm font-semibold shadow-sm transition-all duration-200 hover:bg-primary-600 hover:shadow-glow-sm hover:-translate-y-px active:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800 shadow-sm;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 bg-white/[0.06] text-slate-100 border border-slate-500/30 h-10 px-5 rounded-xl text-sm font-medium shadow-sm transition-all duration-200 hover:bg-white/[0.12] hover:border-primary-400/40 hover:text-white hover:shadow-glow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply bg-surface text-ink border border-line hover:bg-surface-2 active:bg-line/40 shadow-sm;
+  }
+  .btn-ghost {
+    @apply bg-transparent text-ink-muted hover:bg-surface-2 hover:text-ink;
   }
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 bg-error-600 text-white h-10 px-5 rounded-xl text-sm font-medium shadow-sm transition-all duration-200 hover:bg-error-500 hover:shadow-glow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-error-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply bg-error-600 text-white hover:bg-error-700 active:bg-error-700 shadow-sm;
   }
   .btn-success {
-    @apply inline-flex items-center justify-center gap-2 bg-success-600 text-white h-10 px-5 rounded-xl text-sm font-medium shadow-sm transition-all duration-200 hover:bg-success-500 hover:shadow-glow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-success-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply bg-success-600 text-white hover:bg-success-700 active:bg-success-700 shadow-sm;
   }
+  .btn-warning {
+    @apply bg-warning-500 text-white hover:bg-warning-600 active:bg-warning-600 shadow-sm;
+  }
+  .btn-outline-primary {
+    @apply border border-primary-600/40 text-primary-700 dark:text-primary-300 bg-primary-500/5 hover:bg-primary-500/10;
+  }
+
+  /* ---------- Surfaces ---------- */
   .card {
-    @apply bg-slate-900/70 border border-slate-500/15 backdrop-blur-xl rounded-2xl shadow-card p-6;
+    @apply bg-surface border border-line rounded-card shadow-card p-5 sm:p-6;
   }
-  .glass-card {
-    @apply bg-slate-900/70 border border-slate-500/15 backdrop-blur-xl rounded-2xl shadow-card;
+  .card-flat {
+    @apply bg-surface border border-line rounded-card p-5 sm:p-6;
   }
   .stat-card {
-    @apply bg-slate-900/70 border border-slate-500/15 backdrop-blur-xl rounded-2xl shadow-card p-5 transition-all duration-200 hover:border-primary-400/25 hover:shadow-card-hover;
+    @apply bg-surface border border-line rounded-card shadow-card p-5 transition-shadow duration-200 hover:shadow-card-hover;
   }
+  .panel {
+    @apply bg-surface border border-line rounded-card shadow-card overflow-hidden;
+  }
+
+  /* ---------- Forms ---------- */
   .input-field {
-    @apply w-full h-10 px-4 border border-slate-500/30 bg-night-800/70 rounded-xl text-sm text-slate-100 placeholder-slate-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-400/25 focus:border-primary-400/60;
+    @apply w-full h-10 px-3.5 rounded-lg border border-line bg-surface-2 text-ink text-sm
+      placeholder:text-ink-faint transition-colors duration-150
+      focus:outline-none focus:ring-2 focus:ring-primary-500/25 focus:border-primary-500;
+  }
+  .input-field:disabled {
+    @apply opacity-60 cursor-not-allowed;
+  }
+  textarea.input-field {
+    @apply h-auto min-h-[96px] py-2.5;
+  }
+  select.input-field {
+    @apply appearance-none bg-no-repeat pr-9;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2394A3B8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+    background-position: right 0.7rem center;
   }
   .label {
-    @apply block text-sm font-medium text-slate-400 mb-1.5;
+    @apply block text-sm font-medium text-ink-muted mb-1.5;
   }
+  /* Required marker via CSS — stays out of the label's textContent so
+     getByLabelText('Email') style queries keep matching exactly. */
+  .label.required::after {
+    content: '*';
+    color: #EF4444;
+    margin-left: 2px;
+  }
+  .field-error {
+    @apply mt-1.5 text-xs font-medium text-error-600;
+  }
+  .dark .field-error {
+    color: #F87171;
+  }
+  .field-hint {
+    @apply mt-1.5 text-xs text-ink-faint;
+  }
+  .required-mark {
+    @apply text-error-500 ml-0.5;
+  }
+
+  /* ---------- Badges ---------- */
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap;
+  }
+  .badge-neutral {
+    @apply bg-surface-2 text-ink-muted border-line/80;
+  }
+  .badge-success {
+    @apply bg-success-500/10 text-success-700 border-success-500/25;
+  }
+  .dark .badge-success { @apply text-success-400; }
+  .badge-warning {
+    @apply bg-warning-500/10 text-warning-700 border-warning-500/25;
+  }
+  .dark .badge-warning { @apply text-warning-400; }
+  .badge-error {
+    @apply bg-error-500/10 text-error-700 border-error-500/25;
+  }
+  .dark .badge-error { @apply text-error-400; }
+  .badge-info {
+    @apply bg-info-500/10 text-info-700 border-info-500/25;
+  }
+  .dark .badge-info { @apply text-info-400; }
+  .badge-review {
+    @apply bg-accent-500/10 text-accent-600 border-accent-500/25;
+  }
+  .dark .badge-review { @apply text-accent-400; }
+
+  /* ---------- Tables ---------- */
   .table-shell {
-    @apply bg-slate-900/60 border border-slate-500/15 backdrop-blur-xl rounded-2xl shadow-card;
+    @apply bg-surface border border-line rounded-card shadow-card overflow-hidden;
+  }
+  .data-table {
+    @apply w-full text-sm text-ink;
+  }
+  .data-table thead {
+    @apply bg-surface-2/70;
+  }
+  .data-table th {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-faint whitespace-nowrap;
+  }
+  .data-table td {
+    @apply px-4 py-3.5 align-middle border-t border-line/70 text-ink-muted;
+  }
+  .data-table tbody tr {
+    @apply transition-colors duration-100;
+  }
+  .data-table tbody tr:hover {
+    @apply bg-surface-2/60;
+  }
+  .table-scroll {
+    @apply overflow-x-auto;
+  }
+
+  /* ---------- Navigation ---------- */
+  .nav-group-label {
+    @apply px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint;
+  }
+  .nav-item {
+    @apply relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-ink-muted
+      transition-colors duration-150 hover:bg-surface-2 hover:text-ink;
+  }
+  .nav-item-active {
+    @apply bg-primary-500/10 text-primary-700 dark:text-primary-300;
+  }
+  .nav-item-active .nav-icon {
+    @apply text-primary-600 dark:text-primary-400;
+  }
+
+  /* ---------- Chips / filter pills ---------- */
+  .chip {
+    @apply inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-surface text-ink-muted
+      text-xs font-medium transition-colors duration-150 hover:bg-surface-2 hover:text-ink cursor-pointer select-none;
+  }
+  .chip-active {
+    @apply bg-primary-500/10 border-primary-500/40 text-primary-700 dark:text-primary-300;
+  }
+
+  /* ---------- Callouts ---------- */
+  .callout {
+    @apply rounded-lg border px-4 py-3 text-sm flex items-start gap-2.5;
+  }
+  .callout-info {
+    @apply bg-info-500/10 border-info-500/25 text-info-700;
+  }
+  .dark .callout-info { color: #7DD3FC; }
+  .callout-success {
+    @apply bg-success-500/10 border-success-500/25 text-success-700;
+  }
+  .dark .callout-success { color: #86EFAC; }
+  .callout-warning {
+    @apply bg-warning-500/10 border-warning-500/25 text-warning-700;
+  }
+  .dark .callout-warning { color: #FCD34D; }
+  .callout-error {
+    @apply bg-error-500/10 border-error-500/25 text-error-700;
+  }
+  .dark .callout-error { color: #FCA5A5; }
+
+  /* ---------- Links ---------- */
+  .link {
+    @apply text-primary-600 dark:text-primary-400 font-medium hover:underline underline-offset-2;
+  }
+
+  /* ---------- Skeletons ---------- */
+  .skeleton {
+    @apply animate-pulse rounded-lg bg-line/50;
+  }
+  .dark .skeleton { background-color: rgba(148, 163, 184, 0.10); }
+
+  /* ---------- Misc ---------- */
+  .subheading {
+    @apply text-sm font-medium text-ink-muted;
   }
   .page-subheading {
-    @apply text-lg font-semibold text-slate-100;
+    @apply text-lg font-semibold text-ink;
+  }
+  .divider {
+    @apply border-t border-line;
   }
 }
 
-/* ---------------------------------------------------------------- */
-/*  Star field
-/* ---------------------------------------------------------------- */
+/* ================================================================
+   Landing backdrop — subtle, decorative, public pages only
+   ================================================================ */
+.landing-bg {
+  position: relative;
+  background-image:
+    radial-gradient(ellipse 60% 45% at 18% 0%, rgba(37, 99, 235, 0.10), transparent 65%),
+    radial-gradient(ellipse 50% 40% at 85% 8%, rgba(139, 92, 246, 0.07), transparent 65%);
+}
+.dark .landing-bg {
+  background-image:
+    radial-gradient(ellipse 60% 45% at 18% 0%, rgba(59, 130, 246, 0.14), transparent 65%),
+    radial-gradient(ellipse 50% 40% at 85% 8%, rgba(139, 92, 246, 0.10), transparent 65%);
+}
+
+/* ================================================================
+   Star field (landing page decoration)
+   ================================================================ */
 .star {
   position: absolute;
   border-radius: 9999px;
@@ -122,7 +371,7 @@
     opacity: 0.9;
   }
   16% {
-    opacity: 0;
+    opacity: 0.6;
     transform: translate3d(-38vw, 26vh, 0) rotate(-35deg);
   }
   100% {
@@ -143,9 +392,9 @@
   box-shadow: 0 0 8px 2px rgba(255, 255, 255, 0.55);
 }
 
-/* ---------------------------------------------------------------- */
-/*  Accessibility: reduced motion
-/* ---------------------------------------------------------------- */
+/* ================================================================
+   Accessibility: reduced motion
+   ================================================================ */
 @media (prefers-reduced-motion: reduce) {
   .shooting-star,
   .star-head {
@@ -154,6 +403,9 @@
   .star {
     animation: none;
   }
+  html {
+    scroll-behavior: auto;
+  }
   *,
   *::before,
   *::after {
@@ -161,56 +413,4 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-/* ================================================================
-   Premium dark-mode remap of light-theme utilities.
-   Elevates the many pages that were styled for the old light theme
-   to the night-sky system without touching their markup/logic.
-   Uses !important to override Tailwind's generated utilities that
-   are loaded after this file in the CSS cascade.
-   ================================================================ */
-.bg-white {
-  background-color: rgba(15, 23, 42, 0.62) !important;
-}
-.bg-gray-50  { background-color: rgba(15, 23, 42, 0.55) !important; }
-.bg-gray-100 { background-color: rgba(30, 41, 59, 0.70) !important; }
-.bg-gray-200 { background-color: rgba(38, 51, 84, 0.90) !important; }
-.bg-gray-300 { background-color: rgba(51, 65, 106, 0.90) !important; }
-
-.text-gray-900 { color: #F8FAFC !important; }
-.text-gray-800 { color: #E7EDF7 !important; }
-.text-gray-700 { color: #D7DFEC !important; }
-.text-gray-600 { color: #94A3B8 !important; }
-.text-gray-500 { color: #94A3B8 !important; }
-.text-gray-400 { color: #64748B !important; }
-.text-gray-300 { color: #475569 !important; }
-
-.border-gray-100 { border-color: rgba(148, 163, 184, 0.10) !important; }
-.border-gray-200 { border-color: rgba(148, 163, 184, 0.16) !important; }
-.border-gray-300 { border-color: rgba(148, 163, 184, 0.26) !important; }
-.border-slate-200 { border-color: rgba(148, 163, 184, 0.16) !important; }
-.border-slate-300 { border-color: rgba(148, 163, 184, 0.26) !important; }
-
-.divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(148, 163, 184, 0.10) !important; }
-.divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(148, 163, 184, 0.14) !important; }
-
-.ring-gray-100 { --tw-ring-color: rgba(148, 163, 184, 0.16) !important; }
-.ring-gray-200 { --tw-ring-color: rgba(148, 163, 184, 0.20) !important; }
-
-.hover\:bg-gray-50:hover { background-color: rgba(30, 58, 138, 0.25) !important; }
-.hover\:bg-gray-50\/60:hover { background-color: rgba(30, 58, 138, 0.20) !important; }
-.hover\:bg-gray-50\/40:hover { background-color: rgba(30, 58, 138, 0.15) !important; }
-.hover\:bg-gray-100:hover { background-color: rgba(30, 58, 138, 0.35) !important; }
-.hover\:bg-gray-100\/60:hover { background-color: rgba(30, 58, 138, 0.30) !important; }
-.hover\:bg-gray-200:hover { background-color: rgba(30, 58, 138, 0.45) !important; }
-.active\:bg-gray-50:active { background-color: rgba(30, 58, 138, 0.30) !important; }
-.active\:bg-gray-50\/60:active { background-color: rgba(30, 58, 138, 0.25) !important; }
-.active\:bg-gray-50\/40:active { background-color: rgba(30, 58, 138, 0.20) !important; }
-.hover\:border-gray-300:hover { border-color: rgba(148, 163, 184, 0.34) !important; }
-.hover\:text-gray-900:hover { color: #ffffff !important; }
-.hover\:text-gray-700:hover { color: #E7EDF7 !important; }
-
-th {
-  text-align: inherit;
 }

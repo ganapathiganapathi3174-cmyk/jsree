@@ -767,6 +767,38 @@ export function extractReceiverNames(ocrText) {
   return [...names];
 }
 
+// ─────────────────────────────────────────────────────────────
+// Sender (payer) name extraction — Rule B.
+//
+// Reads ONLY explicitly labelled payer lines ("From ...", "Paid from ...",
+// "Paid by ...", "Sender ...", "Debited to ..."). A payee line ("To ...",
+// "Paid to ...") must NEVER be read as the sender — the label regexes are
+// deliberately disjoint from NAME_LABEL_RE. UPI IDs, amounts and digit-heavy
+// tokens are rejected by the shared sanitizeNameCandidate helper.
+//
+// This is a SECONDARY, ADVISORY signal: OCR misreads of payer names are
+// common, so a missing/partial sender read never blocks a payment; only a
+// complete, clearly DIFFERENT payer name can trigger review/rejection
+// (policy-driven — see config SENDER_NAME_POLICY).
+// ─────────────────────────────────────────────────────────────
+const SENDER_LABEL_RE = /^(?:paid\s+from|paid\s+by|debited\s+to|money\s+debited\s+from|transferred\s+from|from|sender(?:'s)?(?:\s+name)?|payer(?:'s)?(?:\s+name)?)\b\s*[:\-]?\s*(.*)$/i;
+
+export function extractSenderNames(ocrText) {
+  if (!ocrText) return [];
+  const lines = String(ocrText).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const names = new Set();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(SENDER_LABEL_RE);
+    if (!m) continue;
+    let value = (m[1] || '').trim();
+    // Label on its own line ("From") → the payer name is usually next line.
+    if (!value && lines[i + 1]) value = lines[i + 1];
+    const cleaned = sanitizeNameCandidate(value);
+    if (cleaned) names.add(cleaned);
+  }
+  return [...names];
+}
+
 // Canonical name form for comparison: lowercase, punctuation stripped,
 // honorifics removed, whitespace collapsed. Deliberately conservative —
 // only cosmetic differences (case, punctuation, spacing) are erased.
@@ -860,6 +892,14 @@ export function matchReceiverName(extractedNames, receiverName) {
   // 5. A complete but different payee name.
   return { ...base, method: 'mismatch' };
 }
+
+// Sender-name matching uses the exact same normalized comparison rules
+// (case / whitespace / punctuation / honorific-insensitive, token-subset in
+// the "receipt shows at least the expected name" direction only). The
+// caller (stageValidation.validateSender) interprets `partial`/`not_found`
+// as advisory UNREADABLE evidence and `mismatch` as a policy-driven
+// review/reject — a sender match is NEVER sufficient to approve alone.
+export const matchSenderName = matchReceiverName;
 
 export async function runOCR(imageBuffer, opts = {}) {
   const processed = await preprocessImage(imageBuffer);
@@ -1194,7 +1234,8 @@ export function extractPaymentData(ocrText) {
   const dateTimes = extractDateTimes(ocrText);
   const transactionStatus = extractTransactionStatus(ocrText);
   const receiverNames = extractReceiverNames(ocrText);
-  return { amounts, upis, utrs, dates, dateTimes, transactionStatus, receiverNames, rawText: ocrText };
+  const senderNames = extractSenderNames(ocrText);
+  return { amounts, upis, utrs, dates, dateTimes, transactionStatus, receiverNames, senderNames, rawText: ocrText };
 }
 
 export function matchAmount(extractedAmounts, expectedAmount) {

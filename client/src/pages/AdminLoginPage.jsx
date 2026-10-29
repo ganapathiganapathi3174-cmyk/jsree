@@ -26,25 +26,50 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <Link to="/" className="inline-flex items-center gap-2 text-gray-500 hover:text-gray-700 mb-8 text-sm font-medium"><ArrowLeft className="h-4 w-4" /> Back to Home</Link>
+    <div className="min-h-screen landing-bg flex items-center justify-center p-4">
+      <div className="w-full max-w-md relative z-10">
+        <Link to="/" className="inline-flex items-center gap-2 text-ink-muted hover:text-ink mb-8 text-sm font-medium">
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back to Home
+        </Link>
+
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-primary-600 to-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm"><Shield className="h-8 w-8 text-white" /></div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">JSREE Admin Portal</h1>
-          <p className="text-gray-500 mt-1">Secure admin access</p>
+          <div className="w-14 h-14 bg-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Shield className="h-7 w-7 text-white" aria-hidden="true" />
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-ink">JSREE Admin Portal</h1>
+          <p className="text-ink-muted mt-1 text-sm">Secure admin access</p>
         </div>
-        <div className="card p-8">
-          <form onSubmit={handleSubmit} className="space-y-4">
+
+        <div className="card">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
               <label htmlFor="admin-login-email" className="label">Email</label>
-              <div className="relative"><Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input id="admin-login-email" className="input-field pl-10" type="email" placeholder="admin@example.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-faint pointer-events-none" aria-hidden="true" />
+                <input
+                  id="admin-login-email"
+                  className="input-field pl-10"
+                  type="email"
+                  placeholder="Enter your admin email"
+                  autoComplete="username"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                />
+              </div>
             </div>
             <div>
               <label htmlFor="admin-login-password" className="label">Password</label>
-              <PasswordInput id="admin-login-password" placeholder="Admin password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+              <PasswordInput
+                id="admin-login-password"
+                placeholder="Admin password"
+                autoComplete="current-password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+              />
             </div>
-            <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Signing in...' : 'Admin Sign In'}</button>
+            <button type="submit" disabled={loading} className="btn btn-primary w-full">
+              {loading ? 'Signing in...' : 'Admin Sign In'}
+            </button>
           </form>
         </div>
       </div>

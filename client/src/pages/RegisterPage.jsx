@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { User, Mail, Phone, ArrowRight, ArrowLeft, CreditCard, CheckCircle, Shield } from 'lucide-react';
+import { User, Mail, Phone, ArrowRight, ArrowLeft, CheckCircle, Shield } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 import toast from 'react-hot-toast';
 import api, { isTimeoutError } from '../utils/api';
@@ -176,7 +176,7 @@ export default function RegisterPage() {
         toast.error(friendlyRejectionMessage(verification.reason));
         navigate('/payment-status');
       } else if (verification?.status === 'manual_review') {
-        toast('Your payment is being reviewed by our team. We will notify you once it is verified.', { icon: '\u23F3' });
+        toast('Your payment is being reviewed by our team. We will notify you once it is verified.', { icon: '⏳' });
         navigate('/payment-status');
       } else if (isInconclusive(verification)) {
         // No decision was reached (OCR timeout / unreadable screenshot). The
@@ -209,29 +209,39 @@ export default function RegisterPage() {
     }
   };
 
+  const stepLabels = ['Your details', 'Choose a plan', 'Pay securely'];
+
   return (
-    <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-2 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-lg flex items-center justify-center shadow-sm">
-              <Shield className="h-5 w-5 text-white" />
-            </div>
-            <span className="text-2xl font-bold tracking-tight text-gray-900">JSREE</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Create Account</h1>
-          <p className="text-gray-500 mt-1">Step {step} of 3</p>
-          <div className="flex items-center justify-center gap-2 mt-3">
-            {[1, 2, 3].map(s => (
+    <div className="min-h-screen landing-bg flex items-center justify-center p-4 py-10">
+      <div className="w-full max-w-lg relative z-10">
+        {/* Header + stepper */}
+        <div className="text-center mb-7">
+          <Link to="/" className="inline-flex items-center justify-center gap-2.5 mb-5" aria-label="JSREE home">
+            <span className="w-10 h-10 bg-primary-600 rounded-lg flex items-center justify-center">
+              <Shield className="h-5 w-5 text-white" aria-hidden="true" />
+            </span>
+            <span className="text-2xl font-bold tracking-tight text-ink">JSREE</span>
+          </Link>
+          <h1 className="text-2xl sm:text-3xl font-bold text-ink">Create Account</h1>
+          <p className="text-ink-muted mt-1 text-sm">Step {step} of 3 — {stepLabels[step - 1]}</p>
+          <div
+            className="flex items-center justify-center gap-2 mt-4"
+            role="progressbar"
+            aria-valuenow={step}
+            aria-valuemin={1}
+            aria-valuemax={3}
+            aria-label="Registration progress"
+          >
+            {[1, 2, 3].map((s) => (
               <div
                 key={s}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
                   s < step
-                    ? 'bg-success-500 shadow-glow-sm'
+                    ? 'bg-success-500 w-10'
                     : s === step
-                      ? 'bg-primary-400 shadow-glow'
-                      : 'bg-slate-500/30'
-                } ${s === 1 ? 'w-16' : 'w-8'}`}
+                      ? 'bg-primary-500 w-14'
+                      : 'bg-line w-8'
+                }`}
               />
             ))}
           </div>
@@ -240,57 +250,99 @@ export default function RegisterPage() {
         <div className="card">
           {step === 1 && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Personal Information</h2>
+              <h2 className="text-base font-semibold text-ink">Personal Information</h2>
               <div>
-                <label htmlFor="register-name" className="label">Full Name</label>
-                <div className="relative"><User className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input id="register-name" className="input-field pl-10" placeholder="John Doe" value={form.name} onChange={e => set('name', e.target.value)} /></div>
+                <label htmlFor="register-name" className="label required">Full Name</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-faint pointer-events-none" aria-hidden="true" />
+                  <input id="register-name" className="input-field pl-10" placeholder="John Doe" autoComplete="name" value={form.name} onChange={e => set('name', e.target.value)} />
+                </div>
               </div>
               <div>
-                <label htmlFor="register-email" className="label">Email</label>
-                <div className="relative"><Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input id="register-email" className="input-field pl-10" type="email" placeholder="john@example.com" value={form.email} onChange={e => set('email', e.target.value)} /></div>
+                <label htmlFor="register-email" className="label required">Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-faint pointer-events-none" aria-hidden="true" />
+                  <input id="register-email" className="input-field pl-10" type="email" placeholder="john@example.com" autoComplete="email" value={form.email} onChange={e => set('email', e.target.value)} />
+                </div>
               </div>
               <div>
-                <label htmlFor="register-mobile" className="label">Mobile</label>
-                <div className="relative"><Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input id="register-mobile" className="input-field pl-10" placeholder="9876543210" value={form.mobile} onChange={e => set('mobile', e.target.value)} /></div>
+                <label htmlFor="register-mobile" className="label required">Mobile</label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-faint pointer-events-none" aria-hidden="true" />
+                  <input id="register-mobile" className="input-field pl-10" type="tel" inputMode="numeric" placeholder="9876543210" autoComplete="tel" value={form.mobile} onChange={e => set('mobile', e.target.value)} />
+                </div>
               </div>
               <div>
-                <label htmlFor="register-password" className="label">Password</label>
-                <PasswordInput id="register-password" placeholder="Min 6 characters" value={form.password} onChange={e => set('password', e.target.value)} />
+                <label htmlFor="register-password" className="label required">Password</label>
+                <PasswordInput id="register-password" placeholder="Min 6 characters" autoComplete="new-password" value={form.password} onChange={e => set('password', e.target.value)} />
               </div>
               <div>
-                <label htmlFor="register-confirm-password" className="label">Confirm Password</label>
-                <PasswordInput id="register-confirm-password" placeholder="Re-enter password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)} />
+                <label htmlFor="register-confirm-password" className="label required">Confirm Password</label>
+                <PasswordInput id="register-confirm-password" placeholder="Re-enter password" autoComplete="new-password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)} />
               </div>
               <div>
                 <label htmlFor="register-referral-code" className="label">Referral Code (optional)</label>
                 <input id="register-referral-code" className="input-field uppercase" placeholder="Enter referral code" value={form.referral_code} onChange={e => set('referral_code', e.target.value.toUpperCase())} />
               </div>
-              <button onClick={() => { if (validateStep1()) setStep(2); }} className="btn-primary w-full">Next <ArrowRight className="h-4 w-4" /></button>
-              <p className="text-center text-sm text-gray-600">Already have an account? <Link to="/login" className="text-primary-600 font-medium">Login</Link></p>
+              <button onClick={() => { if (validateStep1()) setStep(2); }} className="btn btn-primary w-full">
+                Next <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <p className="text-center text-sm text-ink-muted">
+                Already have an account? <Link to="/login" className="link">Login</Link>
+              </p>
             </div>
           )}
 
           {step === 2 && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Plan</h2>
-              <div className="space-y-3">
-                {PLANS.map(p => (
-                  <button key={p.id} onClick={() => set('plan', p.id)} className={`w-full p-4 rounded-xl border-2 text-left flex items-center justify-between transition-all ${form.plan === p.id ? 'border-primary-600 bg-primary-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                    <div><span className="font-semibold text-gray-900">{p.name}</span><span className="text-gray-500 ml-2">- {p.label}</span></div>
-                    {form.plan === p.id && <CheckCircle className="h-5 w-5 text-primary-600" />}
-                  </button>
-                ))}
+              <h2 className="text-base font-semibold text-ink">Select Plan</h2>
+              <div className="space-y-2.5" role="group" aria-label="Plans">
+                {PLANS.map((p) => {
+                  const active = form.plan === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      aria-pressed={active}
+                      onClick={() => set('plan', p.id)}
+                      className={`w-full px-4 py-3.5 rounded-lg border text-left flex items-center justify-between transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${
+                        active
+                          ? 'border-primary-600 bg-primary-500/10'
+                          : 'border-line bg-surface hover:bg-surface-2'
+                      }`}
+                    >
+                      <span>
+                        <span className={`font-semibold ${active ? 'text-primary-700 dark:text-primary-300' : 'text-ink'}`}>{p.name}</span>
+                        <span className="text-ink-muted ml-2">— {p.label}</span>
+                      </span>
+                      <CheckCircle
+                        className={`h-5 w-5 ${active ? 'text-primary-600 dark:text-primary-400' : 'text-line'}`}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  );
+                })}
               </div>
-              <div className="flex gap-3 mt-4">
-                <button onClick={() => setStep(1)} className="btn-secondary flex-1"><ArrowLeft className="h-4 w-4" /> Back</button>
-                <button onClick={() => { if (validateStep2()) handleGoToPayment(); }} className="btn-primary flex-1" disabled={loading}>{loading ? 'Setting up...' : <><span>Next</span> <ArrowRight className="h-4 w-4" /></>}</button>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setStep(1)} className="btn btn-secondary flex-1">
+                  <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
+                </button>
+                <button
+                  onClick={() => { if (validateStep2()) handleGoToPayment(); }}
+                  className="btn btn-primary flex-1"
+                  disabled={loading}
+                >
+                  {loading ? 'Setting up...' : <><span>Next</span> <ArrowRight className="h-4 w-4" aria-hidden="true" /></>}
+                </button>
               </div>
             </div>
           )}
 
           {step === 3 && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Complete Payment</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold text-ink">Complete Payment</h2>
+                {form.plan && <span className="badge badge-info">Plan: ₹{form.plan}</span>}
+              </div>
               {paymentData ? (
                 <QRPaymentSection
                   amount={form.plan}
@@ -302,11 +354,14 @@ export default function RegisterPage() {
                   expiresAt={paymentData?.expires_at || null}
                 />
               ) : (
-                <div className="text-center py-8 text-gray-500">
-                  <p>Setting up payment request...</p>
+                <div className="py-10 text-center" role="status">
+                  <div className="h-8 w-8 mx-auto mb-3 animate-spin rounded-full border-2 border-line border-t-primary-600" />
+                  <p className="text-ink-muted text-sm">Setting up payment request...</p>
                 </div>
               )}
-              <button onClick={() => setStep(2)} className="btn-secondary w-full" disabled={loading}><ArrowLeft className="h-4 w-4" /> Back</button>
+              <button onClick={() => setStep(2)} className="btn btn-secondary w-full" disabled={loading}>
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
+              </button>
             </div>
           )}
         </div>

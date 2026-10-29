@@ -67,6 +67,47 @@ export const TIMEZONE = 'Asia/Kolkata';
 export const IST_UTC_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // ─────────────────────────────────────────────────────────────
+// Sender (payer) name policy — Rule B.
+//
+// When an expected payer identity is available (the registering user's /
+// top-up sender's full name) the engine compares it against the payer name
+// read from the screenshot ("From ...", "Paid from ...").
+//
+//   off     – sender check disabled entirely (no expected name needed).
+//   review  – DEFAULT. A complete but DIFFERENT payer name routes the
+//             payment to MANUAL_REVIEW (human decides). An unreadable or
+//             partial sender line is advisory only and never blocks.
+//   reject  – a complete payer-name mismatch is a definitive rejection.
+//
+// A fuzzy/partial sender match NEVER authorizes approval on its own — the
+// receiver UPI + receiver name + amount + provider verification remain the
+// mandatory identity gates.
+// ─────────────────────────────────────────────────────────────
+const SENDER_POLICIES = new Set(['off', 'review', 'reject']);
+export const SENDER_NAME_POLICY = SENDER_POLICIES.has(process.env.SENDER_NAME_POLICY)
+  ? process.env.SENDER_NAME_POLICY
+  : 'review';
+
+// ─────────────────────────────────────────────────────────────
+// Payment-provider verification (Rule F) — abstraction switch.
+//
+//   none  – DEFAULT. No live provider integration is configured. An
+//           engine-approved screenshot is never treated as settlement
+//           proof: with PAYMENT_AUTO_APPROVE off (production default) it
+//           parks as manual_review / PENDING_VERIFICATION.
+//   mock  – development/test-only simulated provider. REFUSED in
+//           production (degrades to 'none') — never simulate successful
+//           verification where real money is involved.
+//   live  – calls PAYMENT_PROVIDER_VERIFY_URL with the transaction
+//           reference; any timeout/error fails safe to PENDING_VERIFICATION.
+// ─────────────────────────────────────────────────────────────
+export const PAYMENT_PROVIDER_VERIFY_URL = process.env.PAYMENT_PROVIDER_VERIFY_URL || '';
+export const PAYMENT_PROVIDER_API_KEY = process.env.PAYMENT_PROVIDER_API_KEY || '';
+export const PAYMENT_PROVIDER_TIMEOUT_MS = Number(process.env.PAYMENT_PROVIDER_TIMEOUT_MS || 8000);
+// Simulated provider latency/failure knob for development load-testing.
+export const PAYMENT_PROVIDER_MOCK_TIMEOUT = process.env.PAYMENT_PROVIDER_MOCK_TIMEOUT === 'true';
+
+// ─────────────────────────────────────────────────────────────
 // Verification time budget (bounded OCR execution).
 //
 // One verification attempt gets at most this much wall-clock time for ALL

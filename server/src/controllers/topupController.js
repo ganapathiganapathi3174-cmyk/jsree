@@ -35,6 +35,22 @@ export async function getTopupDetails(req, res) {
   }
 }
 
+// Authenticated proof streaming (sender / receiver / admin only).
+export async function getTopupProof(req, res) {
+  try {
+    const { buffer, contentType } = await topupService.streamTopupScreenshot(req.params.topupId, req.user);
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  } catch (error) {
+    const status = error.code === 'TOPUP_NOT_FOUND' ? 404
+      : error.code === 'UNAUTHORIZED' ? 403
+      : error.code === 'NO_SCREENSHOT' || error.code === 'SCREENSHOT_UNAVAILABLE' ? 404
+      : 500;
+    res.status(status).json({ success: false, message: error.message || 'Proof not available', code: error.code || 'SCREENSHOT_UNAVAILABLE' });
+  }
+}
+
 export async function submitProof(req, res) {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'Proof file is required', code: 'NO_FILE' });
@@ -48,6 +64,7 @@ export async function submitProof(req, res) {
         manualReview: result.manualReview || false,
         inconclusive: result.inconclusive || false,
         reason: result.reason || null,
+        outcome: result.outcome || null,
       },
     });
   } catch (error) {

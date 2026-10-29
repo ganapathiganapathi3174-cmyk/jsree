@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import api from '../../utils/api';
 import toast from 'react-hot-toast';
-import { ShieldCheck, Save, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Save, Loader2, AlertTriangle } from 'lucide-react';
+import PageHeader from '../../components/PageHeader';
+import FormField from '../../components/FormField';
+import LoadingSpinner from '../../components/LoadingSpinner';
 
 // Admin-only payment configuration.
 //
@@ -67,60 +70,65 @@ export default function PaymentSettings() {
   };
 
   if (loading) {
-    return <div className="flex justify-center py-12"><RefreshCw className="w-6 h-6 animate-spin text-gray-500" /></div>;
+    return <LoadingSpinner />;
   }
 
   const nameMissing = !form.receiver_name.trim();
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><ShieldCheck className="h-5 w-5" /></div>
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Payment Settings</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Trusted payee details used to auto-verify payment screenshots</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Payment Settings"
+        description="Trusted payee details used to auto-verify payment screenshots"
+      />
 
       <div className="card space-y-5">
-        <div>
-          <label className="label">Receiver UPI ID</label>
+        <h2 className="text-base font-semibold text-ink">Trusted payee</h2>
+        <FormField
+          label="Receiver UPI ID"
+          htmlFor="pay-settings-upi"
+          hint="Every screenshot must show this UPI ID for auto-approval."
+        >
           <input
+            id="pay-settings-upi"
             className="input-field"
             placeholder="name@bank"
             value={form.receiver_upi}
             onChange={e => set('receiver_upi', e.target.value)}
           />
-          <p className="text-xs text-gray-500 mt-1">Every screenshot must show this UPI ID for auto-approval.</p>
-        </div>
+        </FormField>
 
-        <div>
-          <label className="label">Receiver Name</label>
+        <FormField
+          label="Receiver Name"
+          htmlFor="pay-settings-name"
+          hint="The payee name shown on the payment screenshot. Must not be a UPI ID."
+        >
           <input
+            id="pay-settings-name"
             className="input-field"
             placeholder="e.g. JEYARAJ ALAGAR"
             value={form.receiver_name}
             onChange={e => set('receiver_name', e.target.value)}
           />
-          <p className="text-xs text-gray-500 mt-1">
-            The payee name shown on the payment screenshot. Must not be a UPI ID.
-          </p>
-        </div>
+        </FormField>
 
         {nameMissing && (
-          <div className="flex items-start gap-2 rounded-lg border border-warning-200 bg-warning-50 px-3 py-2.5 text-sm text-warning-700">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div className="callout callout-warning" role="status">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
             <span>
               No receiver name is configured. Auto-approval is <strong>disabled</strong> — every payment and top-up
               will be sent to manual review until a name is set.
             </span>
           </div>
         )}
+      </div>
 
+      <div className="card space-y-5">
+        <h2 className="text-base font-semibold text-ink">Verification</h2>
         <div className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Payment Window (minutes)</label>
+          <FormField label="Payment Window (minutes)" htmlFor="pay-settings-window">
             <input
+              id="pay-settings-window"
               type="number"
               className="input-field"
               min="5"
@@ -128,10 +136,10 @@ export default function PaymentSettings() {
               value={form.payment_window_minutes}
               onChange={e => set('payment_window_minutes', e.target.value)}
             />
-          </div>
-          <div>
-            <label className="label">Minimum OCR Confidence</label>
+          </FormField>
+          <FormField label="Minimum OCR Confidence" htmlFor="pay-settings-ocr">
             <input
+              id="pay-settings-ocr"
               type="number"
               className="input-field"
               min="0"
@@ -139,35 +147,35 @@ export default function PaymentSettings() {
               value={form.min_ocr_confidence}
               onChange={e => set('min_ocr_confidence', e.target.value)}
             />
-          </div>
+          </FormField>
         </div>
+      </div>
 
-        <div>
-          <label className="label">Plan Amounts (₹)</label>
-          <div className="grid sm:grid-cols-3 gap-3">
-            {Object.entries(form.plans).map(([plan, amount]) => (
-              <div key={plan}>
-                <span className="text-xs text-gray-500">Plan {plan}</span>
-                <input
-                  type="number"
-                  className="input-field"
-                  min="1"
-                  value={amount}
-                  onChange={e => setPlan(plan, e.target.value)}
-                />
-              </div>
-            ))}
-          </div>
+      <div className="card space-y-5">
+        <h2 className="text-base font-semibold text-ink">Plan amounts (₹)</h2>
+        <div className="grid sm:grid-cols-3 gap-3">
+          {Object.entries(form.plans).map(([plan, amount]) => (
+            <FormField label={`Plan ${plan}`} htmlFor={`pay-settings-plan-${plan}`} key={plan}>
+              <input
+                id={`pay-settings-plan-${plan}`}
+                type="number"
+                className="input-field"
+                min="1"
+                value={amount}
+                onChange={e => setPlan(plan, e.target.value)}
+              />
+            </FormField>
+          ))}
         </div>
-
+        <div className="divider" />
         <div className="flex justify-end">
-          <button onClick={handleSave} disabled={saving} className="btn-primary">
-            {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : <><Save className="h-4 w-4" /> Save Settings</>}
+          <button onClick={handleSave} disabled={saving} className="btn btn-primary">
+            {saving ? <><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Saving...</> : <><Save className="h-4 w-4" aria-hidden="true" /> Save Settings</>}
           </button>
         </div>
       </div>
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-ink-faint">
         Note: screenshot verification reads the image only. It does not confirm that the money actually reached the
         bank — use it as a supporting signal, not proof of settlement.
       </p>

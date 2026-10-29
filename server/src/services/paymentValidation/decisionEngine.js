@@ -80,6 +80,12 @@ export function userMessageFor(reason) {
       return 'This transaction reference has already been used for another payment.';
     case 'RECEIVER_NAME_MISMATCH':
       return 'The receiver name on the screenshot does not match the expected payment recipient.';
+    case 'SENDER_NAME_MISMATCH':
+      return 'The payer name on the screenshot does not match the expected payer. This payment needs a manual review.';
+    case 'SENDER_NAME_UNREADABLE':
+      return 'We could not read the payer name from your screenshot. Please upload a clearer image.';
+    case 'PENDING_PROVIDER_VERIFICATION':
+      return 'Your screenshot passed automated checks, but the payment could not be confirmed with the payment provider yet. It is pending verification.';
     case 'IMAGE_INTEGRITY_FAILED':
       return 'The uploaded file is not a valid image. Please upload a screenshot of your payment receipt.';
     case 'DEMO_SCREENSHOT':
@@ -102,6 +108,18 @@ export function codeForInconclusive(reason) {
   return reason; // config / engine / db reasons pass through verbatim
 }
 
+// Public four-state outcome contract shared by the engine, the API responses
+// and the admin dashboard: APPROVED / REJECTED / PENDING_VERIFICATION /
+// MANUAL_REVIEW. `inconclusive` evidence (OCR failure, missing config,
+// provider unavailable) maps to PENDING_VERIFICATION; ambiguous or
+// contradictory evidence routed to a human maps to MANUAL_REVIEW.
+export function statusForOutcome({ approved, inconclusive, review }) {
+  if (approved) return 'APPROVED';
+  if (review) return 'MANUAL_REVIEW';
+  if (inconclusive) return 'PENDING_VERIFICATION';
+  return 'REJECTED';
+}
+
 export class ValidationDecisionEngine {
   constructor() {
     this.timings = {};
@@ -115,7 +133,24 @@ export class ValidationDecisionEngine {
   _result(base) {
     const reason = base.reason || null;
     if (base.approved) {
-      return { approved: true, inconclusive: false, reason: null, ...base };
+      return { approved: true, inconclusive: false, review: false, status: 'APPROVED', reason: null, ...base };
+    }
+    // Review: evidence is ambiguous/contradictory (e.g. payer-name mismatch
+    // under the default policy) — a human must decide. Never an approval,
+    // never a definitive rejection.
+    if (base.review === true) {
+      return {
+        approved: false,
+        inconclusive: false,
+        review: true,
+        status: 'MANUAL_REVIEW',
+        reason,
+        code: reason,
+        message: userMessageFor(reason),
+        ...base,
+        review: true,
+        status: 'MANUAL_REVIEW',
+      };
     }
     // Classification: a reason in the inconclusive set (missing evidence,
     // unreadable field, missing config) is NEVER a rejection — the caller
@@ -127,16 +162,22 @@ export class ValidationDecisionEngine {
       return {
         approved: false,
         inconclusive: true,
+        review: false,
+        status: 'PENDING_VERIFICATION',
         reason,
         code: codeForInconclusive(reason),
         message: userMessageFor(reason),
         ...base,
         inconclusive: true,
+        review: false,
+        status: 'PENDING_VERIFICATION',
       };
     }
     return {
       approved: false,
       inconclusive: false,
+      review: false,
+      status: 'REJECTED',
       reason,
       code: reason,
       message: userMessageFor(reason),
@@ -153,6 +194,7 @@ export class ValidationDecisionEngine {
       dateTimeValidation,
       transactionIdValidation,
       duplicateCheck,
+      senderValidation = null,
       paymentRequest,
     } = validationResults;
 
@@ -364,6 +406,48 @@ export class ValidationDecisionEngine {
       }
     }
 
+    // Gate 7b (SECONDARY, Rule B): sender (payer) name — advisory identity
+    // signal evaluated whenever an expected payer identity is available.
+    //   - match            -> supporting evidence, never sufficient alone
+    //   - unreadable       -> advisory only, NEVER blocks the payment
+    //   - complete mismatch-> policy-driven: 'reject' = definitive rejection,
+    //                          default 'review' = MANUAL_REVIEW for a human
+    if (senderValidation?.applicable) {
+      checks.senderName = {
+        passed: senderValidation.passed,
+        reason: senderValidation.reason || null,
+        method: senderValidation.method || null,
+        expected: senderValidation.expected || null,
+        detected: senderValidation.detected?.[0] || senderValidation.matched || null,
+      };
+      if (senderValidation.reason === 'SENDER_NAME_MISMATCH') {
+        if (senderValidation.policy === 'reject') {
+          return this._result({
+            approved: false,
+            reason: 'SENDER_NAME_MISMATCH',
+            checks,
+            details: { expected: senderValidation.expected, detected: senderValidation.detected },
+            auditLog: this.auditLog,
+            timings: this.timings,
+          });
+        }
+        return this._result({
+          approved: false,
+          review: true,
+          reason: 'SENDER_NAME_MISMATCH',
+          checks,
+          details: { expected: senderValidation.expected, detected: senderValidation.detected, policy: 'review' },
+          auditLog: this.auditLog,
+          timings: this.timings,
+        });
+      }
+      if (senderValidation.reason === 'SENDER_NAME_UNREADABLE') {
+        this.log('sender', 'payer name unreadable — advisory only, not blocking', {
+          detected: senderValidation.detected,
+        });
+      }
+    }
+
     // Gate 8: duplicate transaction reference (cross-flow) — definitive.
     // The pre-check is ADVISORY: a lookup failure is logged but does not
     // block the decision, because the AUTHORITATIVE duplicate gate is the
@@ -400,6 +484,7 @@ export class ValidationDecisionEngine {
       extractedData: {
         amounts: extraction.extractedAmounts,
         receiverNames: extraction.extractedReceiverNames,
+        senderNames: extraction.extractedSenderNames || [],
         utrs: extraction.extractedUTRs,
         upis: extraction.extractedUPIs,
         dates: extraction.extractedDateTimes,

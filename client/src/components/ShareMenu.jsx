@@ -7,21 +7,21 @@ const shareOptions = [
     key: 'whatsapp',
     label: 'WhatsApp',
     icon: MessageCircle,
-    chip: 'bg-emerald-50 text-emerald-600',
+    chip: 'bg-success-500/15 text-success-700 dark:text-success-400',
     buildUrl: (link, text) => `https://wa.me/?text=${encodeURIComponent(text)}`,
   },
   {
     key: 'telegram',
     label: 'Telegram',
     icon: Send,
-    chip: 'bg-sky-50 text-sky-600',
+    chip: 'bg-info-500/15 text-info-700 dark:text-info-400',
     buildUrl: (link, text) => `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`,
   },
   {
     key: 'facebook',
     label: 'Facebook',
     icon: Facebook,
-    chip: 'bg-blue-50 text-blue-600',
+    chip: 'bg-primary-500/15 text-primary-700 dark:text-primary-400',
     buildUrl: (link) => `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link)}`,
   },
 ];
@@ -61,7 +61,7 @@ export default function ShareMenu({ link, text, label = 'Share', variant = 'seco
     setOpen(false);
   };
 
-  const buttonClass = variant === 'primary' ? 'btn-primary' : 'btn-secondary';
+  const buttonClass = variant === 'primary' ? 'btn btn-primary' : 'btn btn-secondary';
 
   return (
     <div className="relative" ref={rootRef}>
@@ -79,16 +79,16 @@ export default function ShareMenu({ link, text, label = 'Share', variant = 'seco
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-60 rounded-xl bg-slate-900/95 backdrop-blur-2xl border border-slate-500/20 shadow-elevation p-2"
+          className="absolute right-0 z-50 mt-2 w-60 rounded-lg bg-surface border border-line shadow-elevation p-2"
         >
-          <p className="px-2 pt-1 pb-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Share via</p>
+          <p className="px-2 pt-1 pb-2 text-xs font-semibold text-ink-faint uppercase tracking-wide">Share via</p>
           <div className="space-y-0.5">
             {shareOptions.map((opt) => (
               <button
                 key={opt.key}
                 role="menuitem"
                 onClick={() => openShare(opt.buildUrl(link, text))}
-                className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-left text-sm text-slate-200 hover:bg-white/[0.06] transition-colors"
+                className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-left text-sm text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors"
               >
                 <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${opt.chip}`}>
                   <opt.icon className="h-4 w-4" />
@@ -99,9 +99,9 @@ export default function ShareMenu({ link, text, label = 'Share', variant = 'seco
             <button
               role="menuitem"
               onClick={copyLink}
-              className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-left text-sm text-slate-200 hover:bg-white/[0.06] transition-colors"
+              className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-left text-sm text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors"
             >
-              <span className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/[0.08] text-slate-300">
+              <span className="w-8 h-8 rounded-lg flex items-center justify-center bg-surface-2 text-ink-muted">
                 <Copy className="h-4 w-4" />
               </span>
               Copy Link

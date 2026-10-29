@@ -6,6 +6,16 @@ import * as chatService from '../services/chatService.js';
 import { supabase } from '../db/supabase.js';
 import { logAction } from '../services/auditService.js';
 import { hashPassword } from '../utils/helpers.js';
+import { listVerificationHistory, deriveOutcomeStatus } from '../services/paymentVerificationHistoryService.js';
+import { describeProvider } from '../services/paymentProviderService.js';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseDateFilter(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
 
 export async function getDashboard(req, res) {
   try {
@@ -57,17 +67,147 @@ export async function deleteUser(req, res) {
   }
 }
 
+async function paymentStatusSummary() {
+  const statuses = ['pending', 'manual_review', 'approved', 'rejected'];
+  const counts = await Promise.all(statuses.map(status =>
+    supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', status)
+  ));
+  const byStatus = {};
+  statuses.forEach((s, i) => { byStatus[s] = counts[i].count ?? 0; });
+  return {
+    total: Object.values(byStatus).reduce((a, b) => a + b, 0),
+    pending: byStatus.pending,
+    pendingVerification: byStatus.pending + byStatus.manual_review,
+    manualReview: byStatus.manual_review,
+    approved: byStatus.approved,
+    rejected: byStatus.rejected,
+  };
+}
+
 export async function getPayments(req, res) {
   try {
-    let query = supabase.from('payments').select('*, user:users!payments_user_id_fkey(id, full_name, email)');
+    let query = supabase.from('payments').select('*, user:users!payments_user_id_fkey(id, full_name, email)', { count: 'exact' });
     if (req.query.status) query = query.eq('status', req.query.status);
     if (req.query.plan) query = query.eq('selected_plan', parseInt(req.query.plan));
-    query = query.order('created_at', { ascending: false });
-    const { data: payments, error } = await query;
+    // Payment-type filter: registration (MEMBERSHIP) vs top-up. Payment rows
+    // are membership rows by schema; the explicit filter keeps the admin UI
+    // honest when other types appear later.
+    if (req.query.type) {
+      query = query.eq('payment_type', String(req.query.type).toLowerCase() === 'topup' ? 'TOPUP' : 'MEMBERSHIP');
+    }
+    if (req.query.transactionId) query = query.eq('transaction_id', String(req.query.transactionId).trim());
+    if (req.query.paymentId && UUID_RE.test(req.query.paymentId)) query = query.eq('id', req.query.paymentId.trim());
+    if (req.query.userId && UUID_RE.test(req.query.userId)) query = query.eq('user_id', req.query.userId.trim());
+    const from = parseDateFilter(req.query.from);
+    const to = parseDateFilter(req.query.to);
+    if (from) query = query.gte('created_at', from);
+    if (to) query = query.lte('created_at', to);
+
+    const search = String(req.query.search || '').trim();
+    if (search) {
+      if (UUID_RE.test(search)) {
+        query = query.or(`id.eq.${search},user_id.eq.${search},transaction_id.eq.${search}`);
+      } else {
+        const { data: users } = await supabase.from('users')
+          .select('id')
+          .or(`email.ilike.%${search}%,full_name.ilike.%${search}%`)
+          .limit(200);
+        const userIds = (users || []).map(u => u.id);
+        if (userIds.length === 0) {
+          return res.json({ success: true, data: [], total: 0, summary: await paymentStatusSummary() });
+        }
+        query = query.in('user_id', userIds);
+      }
+    }
+
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 100, 200));
+    query = query.order('created_at', { ascending: false }).limit(limit);
+    const { data: payments, error, count } = await query;
     if (error) throw { message: 'Failed to fetch payments', code: 'FETCH_FAILED' };
-    res.json({ success: true, data: payments || [] });
+
+    const enriched = (payments || []).map(p => ({
+      ...p,
+      outcome: deriveOutcomeStatus(p.status, p.verification_result),
+    }));
+    res.json({ success: true, data: enriched, total: count ?? enriched.length, summary: await paymentStatusSummary() });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message || 'Failed to fetch payments', code: error.code || 'FETCH_FAILED' });
+  }
+}
+
+// Full payment detail for the admin review modal: payment row + user +
+// per-attempt verification history + current provider availability.
+export async function getPaymentDetail(req, res) {
+  try {
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('*, user:users!payments_user_id_fkey(id, full_name, email, mobile, status)')
+      .eq('id', req.params.paymentId)
+      .single();
+    if (!payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
+    const history = await listVerificationHistory('payment', payment.id);
+    res.json({
+      success: true,
+      data: {
+        ...payment,
+        outcome: deriveOutcomeStatus(payment.status, payment.verification_result),
+        verificationHistory: history,
+        provider: describeProvider(),
+      },
+    });
+  } catch (error) {
+    res.status(error.code === 'PAYMENT_NOT_FOUND' ? 404 : 500).json({
+      success: false,
+      message: error.message || 'Failed to fetch payment',
+      code: error.code || 'FETCH_FAILED',
+    });
+  }
+}
+
+// Audited manual-review resolution — requires action + recorded reason.
+export async function reviewPayment(req, res) {
+  try {
+    const { action, reason } = req.body || {};
+    const result = await paymentService.reviewPayment(req.params.paymentId, req.user.id, { action, reason });
+    res.json({ success: true, message: result.message, data: result });
+  } catch (error) {
+    const s = error.code === 'PAYMENT_NOT_FOUND' ? 404
+      : error.code === 'PAYMENT_NOT_PENDING' ? 400
+        : error.code === 'INVALID_REVIEW_ACTION' || error.code === 'REVIEW_REASON_REQUIRED' ? 400
+          : error.code === 'DUPLICATE_UTR' ? 409
+            : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed to review payment', code: error.code || 'REVIEW_FAILED' });
+  }
+}
+
+// Access-controlled screenshot streaming for the admin review modal.
+export async function getPaymentScreenshot(req, res) {
+  try {
+    const { buffer, contentType } = await paymentService.streamPaymentScreenshot(req.params.paymentId, req.user);
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  } catch (error) {
+    const s = error.code === 'PAYMENT_NOT_FOUND' ? 404
+      : error.code === 'UNAUTHORIZED' ? 403
+        : error.code === 'NO_SCREENSHOT' || error.code === 'SCREENSHOT_UNAVAILABLE' ? 404
+          : 500;
+    res.status(s).json({ success: false, message: error.message || 'Screenshot not available', code: error.code || 'SCREENSHOT_UNAVAILABLE' });
+  }
+}
+
+export async function getTopupScreenshot(req, res) {
+  try {
+    const { buffer, contentType } = await topupService.streamTopupScreenshot(req.params.topupId, req.user);
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  } catch (error) {
+    const s = error.code === 'TOPUP_NOT_FOUND' ? 404
+      : error.code === 'UNAUTHORIZED' ? 403
+        : error.code === 'NO_SCREENSHOT' || error.code === 'SCREENSHOT_UNAVAILABLE' ? 404
+          : 500;
+    res.status(s).json({ success: false, message: error.message || 'Proof not available', code: error.code || 'SCREENSHOT_UNAVAILABLE' });
   }
 }
 
@@ -108,7 +248,30 @@ export async function getTopups(req, res) {
   try {
     let query = supabase.from('topups').select('*, sender:users!topups_sender_id_fkey(id, full_name, email), receiver:users!topups_receiver_id_fkey(id, full_name, email)');
     if (req.query.status) query = query.eq('status', req.query.status);
-    query = query.order('created_at', { ascending: false });
+    if (req.query.referenceId) query = query.eq('reference_id', String(req.query.referenceId).trim());
+    if (req.query.topupId && UUID_RE.test(req.query.topupId)) query = query.eq('id', req.query.topupId.trim());
+    const from = parseDateFilter(req.query.from);
+    const to = parseDateFilter(req.query.to);
+    if (from) query = query.gte('created_at', from);
+    if (to) query = query.lte('created_at', to);
+
+    const search = String(req.query.search || '').trim();
+    if (search) {
+      if (UUID_RE.test(search)) {
+        query = query.or(`id.eq.${search},sender_id.eq.${search},receiver_id.eq.${search},reference_id.eq.${search}`);
+      } else {
+        const { data: users } = await supabase.from('users')
+          .select('id')
+          .or(`email.ilike.%${search}%,full_name.ilike.%${search}%`)
+          .limit(200);
+        const userIds = (users || []).map(u => u.id);
+        if (userIds.length === 0) return res.json({ success: true, data: [] });
+        query = query.or(`sender_id.in.(${userIds.join(',')}),receiver_id.in.(${userIds.join(',')})`);
+      }
+    }
+
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 100, 200));
+    query = query.order('created_at', { ascending: false }).limit(limit);
     const { data: topups, error } = await query;
     if (error) throw { message: 'Failed to fetch topups', code: 'FETCH_FAILED' };
     res.json({ success: true, data: topups || [] });

@@ -11,6 +11,7 @@ router.post('/', authenticateToken, validatePayment, paymentController.createPay
 router.post('/:paymentId/screenshot', authenticateToken, uploadScreenshot, handleUploadError, deduplicateProofUpload(), paymentController.uploadScreenshot);
 router.post('/:paymentId/verify', authenticateToken, paymentController.verifyPaymentManual);
 router.get('/:paymentId/status', authenticateToken, paymentController.getPaymentStatus);
+router.get('/:paymentId/screenshot', authenticateToken, paymentController.getPaymentScreenshot);
 router.get('/', authenticateToken, paymentController.getUserPayments);
 
 export default router;
