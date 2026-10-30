@@ -1,9 +1,13 @@
 import { Link } from 'react-router-dom';
 import { Shield, Compass } from 'lucide-react';
+import ThemeToggle from '../components/ThemeToggle';
 
 export default function NotFound() {
   return (
     <div className="min-h-screen landing-bg flex items-center justify-center p-4">
+      <div className="fixed top-4 right-4 z-20">
+        <ThemeToggle />
+      </div>
       <div className="text-center relative z-10">
         <Link to="/" className="inline-flex items-center justify-center gap-2.5 mb-8" aria-label="JSREE home">
           <span className="w-10 h-10 bg-primary-600 rounded-lg flex items-center justify-center">

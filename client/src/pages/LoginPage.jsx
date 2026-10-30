@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, LogIn, Shield } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
+import ThemeToggle from '../components/ThemeToggle';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
 
@@ -32,6 +33,9 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen landing-bg flex items-center justify-center p-4">
+      <div className="fixed top-4 right-4 z-20">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md relative z-10">
         <div className="text-center mb-8">
           <Link to="/" className="inline-flex items-center justify-center gap-2.5 mb-6" aria-label="JSREE home">

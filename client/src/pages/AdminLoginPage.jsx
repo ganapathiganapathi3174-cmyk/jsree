@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Shield, ArrowLeft } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
+import ThemeToggle from '../components/ThemeToggle';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
 
@@ -27,6 +28,9 @@ export default function AdminLoginPage() {
 
   return (
     <div className="min-h-screen landing-bg flex items-center justify-center p-4">
+      <div className="fixed top-4 right-4 z-20">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md relative z-10">
         <Link to="/" className="inline-flex items-center gap-2 text-ink-muted hover:text-ink mb-8 text-sm font-medium">
           <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back to Home

@@ -8,6 +8,7 @@ import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import PaymentScreenshot from '../components/PaymentScreenshot';
 import QRPaymentSection from '../components/QRPaymentSection';
+import ThemeToggle from '../components/ThemeToggle';
 
 export default function PaymentStatusPage() {
   const location = useLocation();
@@ -161,6 +162,9 @@ export default function PaymentStatusPage() {
 
   return (
     <div className="min-h-screen landing-bg flex items-center justify-center p-4 py-10">
+      <div className="fixed top-4 right-4 z-20">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-lg relative z-10">
         <div className="text-center mb-7">
           <Link to="/" className="inline-flex items-center justify-center gap-2.5 mb-5" aria-label="JSREE home">

@@ -34,4 +34,8 @@ export function ThemeProvider({ children }) {
   );
 }
 
-export const useTheme = () => useContext(ThemeContext);
+export const useTheme = () => {
+  const ctx = useContext(ThemeContext);
+  // Safe fallback if a component is ever rendered outside the provider.
+  return ctx ?? { dark: true, toggleDark: () => {} };
+};

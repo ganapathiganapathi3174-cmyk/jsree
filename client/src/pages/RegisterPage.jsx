@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { User, Mail, Phone, ArrowRight, ArrowLeft, CheckCircle, Shield } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
+import ThemeToggle from '../components/ThemeToggle';
 import toast from 'react-hot-toast';
 import api, { isTimeoutError } from '../utils/api';
 import { PLANS, ADMIN_UPI } from '../utils/constants';
@@ -213,6 +214,9 @@ export default function RegisterPage() {
 
   return (
     <div className="min-h-screen landing-bg flex items-center justify-center p-4 py-10">
+      <div className="fixed top-4 right-4 z-20">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-lg relative z-10">
         {/* Header + stepper */}
         <div className="text-center mb-7">
