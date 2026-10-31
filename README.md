@@ -205,22 +205,26 @@ Backend API: http://localhost:5000/api
 
 ### Live URLs
 - **Frontend**: https://jsree.vercel.app
-- **Backend API**: https://jsree-backend-production.up.railway.app/api
+- **Backend API**: https://jsree-backend.onrender.com/api (Render Web Service — see `render.yaml`)
 - **Database**: Supabase PostgreSQL (all 4 migrations 001-004 applied and verified)
+
+> Availability note: the backend runs on Render's free plan, which sleeps after
+> idle periods. The first request after idle can take 30-90s (cold start) or
+> return 503 while the instance wakes; subsequent requests respond normally.
 
 ### Vercel (Frontend)
 1. Push to GitHub
 2. Import project in Vercel (root directory `client`, framework Vite, build `npm run build`, output `dist`)
 3. `client/vercel.json` handles SPA rewrites for all routes
-4. Add env var: `VITE_API_URL=https://jsree-backend-production.up.railway.app/api`
+4. Add env var: `VITE_API_URL=https://jsree-backend.onrender.com/api`
 5. Deploy with `vercel --prod --yes`
 
-### Railway (Backend)
+### Render (Backend)
 The backend runs as a long-running Node/Express process (Tesseract.js OCR, sharp, multer, in-memory rate limiting require a persistent server).
-1. Push to GitHub; link project with `railway link --project jsree-backend`
-2. `server/railway.json` uses Nixpacks with Node (`engines.node >= 22` required for native WebSocket in supabase-js v2)
-3. Configure env vars (SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, JWT_SECRET, JWT_EXPIRES_IN, ADMIN_EMAIL, ADMIN_PASSWORD_HASH, ADMIN_UPI_ID, DATABASE_URL, CLIENT_URL, PORT, NODE_ENV=production)
-4. Deploy with `railway up --ci --service <service-id>`
+1. Push to GitHub; connect the repo in the Render dashboard (blueprint from `render.yaml`)
+2. `render.yaml` runs `npm ci || npm install` / `npm start` with Node 22 and health check `/api/health`
+3. Configure env vars in the Render Environment tab (SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, JWT_SECRET, JWT_EXPIRES_IN, ADMIN_EMAIL, ADMIN_PASSWORD_HASH, ADMIN_UPI_ID, DATABASE_URL, CLIENT_URL=https://jsree.vercel.app, PORT, NODE_ENV=production)
+4. Redeploy from the Render dashboard after pushing to `main`
 
 ### Database
 Use Supabase cloud (free tier available); run `server/src/scripts/apply-migrations-003-004.mjs` to apply migrations 003+004.
