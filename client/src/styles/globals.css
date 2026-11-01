@@ -12,29 +12,29 @@
   :root {
     color-scheme: light;
 
-    --canvas: 246 247 251;        /* #F6F7FB page background */
-    --surface: 255 255 255;       /* cards, panels */
-    --surface-2: 243 245 249;     /* inputs, nested surfaces, hover */
-    --line: 226 232 240;          /* borders (slate-200) */
-    --ink: 15 23 42;              /* primary text (slate-900) */
-    --ink-muted: 71 85 105;       /* secondary text (slate-600) */
-    --ink-faint: 148 163 184;     /* tertiary text / placeholders */
+    --canvas: 246 243 250;        /* #F6F3FA soft lavender */
+    --surface: 255 255 255;       /* white cards */
+    --surface-2: 238 231 245;     /* #EEE7F5 light purple surface */
+    --line: 221 213 232;          /* #DDD5E8 muted border */
+    --ink: 23 21 43;              /* #17152B primary text */
+    --ink-muted: 112 107 131;     /* #706B83 secondary text */
+    --ink-faint: 151 146 170;     /* tertiary text / placeholders */
 
-    --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 20px -8px rgba(15, 23, 42, 0.10);
-    --shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 12px 28px -8px rgba(15, 23, 42, 0.14);
-    --shadow-elevation: 0 20px 48px -16px rgba(15, 23, 42, 0.24);
+    --shadow-card: 0 1px 2px rgba(23, 21, 43, 0.04), 0 6px 20px -8px rgba(23, 21, 43, 0.10);
+    --shadow-card-hover: 0 2px 4px rgba(23, 21, 43, 0.06), 0 12px 28px -8px rgba(23, 21, 43, 0.14);
+    --shadow-elevation: 0 20px 48px -16px rgba(23, 21, 43, 0.24);
   }
 
   .dark {
     color-scheme: dark;
 
-    --canvas: 6 10 22;            /* #060A16 */
-    --surface: 14 20 38;          /* #0E1426 */
-    --surface-2: 19 26 47;        /* #131A2F */
-    --line: 148 163 184;          /* slate-400 — applied at low alpha */
-    --ink: 231 237 247;           /* #E7EDF7 */
-    --ink-muted: 148 163 184;     /* slate-400 */
-    --ink-faint: 100 116 139;     /* slate-500 */
+    --canvas: 12 10 62;           /* #0C0A3E deep navy */
+    --surface: 24 18 56;          /* #181238 dark purple layer */
+    --surface-2: 34 26 72;        /* #221A48 raised purple layer */
+    --line: 94 84 140;            /* muted purple border — used at low alpha */
+    --ink: 246 243 250;           /* #F6F3FA */
+    --ink-muted: 196 190 216;     /* #C4BED8 */
+    --ink-faint: 140 133 168;     /* #8C85A8 */
 
     --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.20), 0 8px 24px -8px rgba(0, 0, 0, 0.45);
     --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.24), 0 16px 32px -8px rgba(0, 0, 0, 0.55);
@@ -59,13 +59,13 @@
 
   /* Consistent, visible keyboard focus everywhere */
   :focus-visible {
-    outline: 2px solid rgba(37, 99, 235, 0.65);
+    outline: 2px solid rgba(159, 68, 164, 0.75);
     outline-offset: 2px;
     border-radius: 4px;
   }
 
   ::selection {
-    background-color: rgba(37, 99, 235, 0.22);
+    background-color: rgba(159, 68, 164, 0.22);
   }
 
   ::-webkit-scrollbar {
@@ -117,7 +117,14 @@
   }
 
   .btn-primary {
-    @apply bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800 shadow-sm;
+    background-image: linear-gradient(135deg, #0C0A3E, #7B1E7A);
+    @apply text-white shadow-sm transition-[filter,box-shadow] duration-150;
+  }
+  .btn-primary:hover {
+    filter: brightness(1.14);
+  }
+  .btn-primary:active {
+    filter: brightness(0.94);
   }
   .btn-secondary {
     @apply bg-surface text-ink border border-line hover:bg-surface-2 active:bg-line/40 shadow-sm;
@@ -261,6 +268,58 @@
     @apply text-primary-600 dark:text-primary-400;
   }
 
+  /* Deep navy sidebar (both themes) — royal purple accents */
+  .navy-sidebar {
+    background-color: #0C0A3E;
+    border-right-color: rgba(255, 255, 255, 0.08);
+  }
+  .navy-sidebar .nav-group-label {
+    color: rgba(246, 243, 250, 0.42);
+  }
+  .navy-sidebar .nav-item {
+    color: rgba(246, 243, 250, 0.72);
+  }
+  .navy-sidebar .nav-item:hover {
+    background-color: rgba(123, 30, 122, 0.30);
+    color: #FFFFFF;
+  }
+  .navy-sidebar .nav-item .nav-icon {
+    color: rgba(246, 243, 250, 0.50);
+  }
+  .navy-sidebar .nav-item:hover .nav-icon {
+    color: rgba(246, 243, 250, 0.85);
+  }
+  .navy-sidebar .nav-item-active {
+    background-color: rgba(123, 30, 122, 0.45);
+    color: #FFFFFF;
+    box-shadow: inset 2px 0 0 0 #C77DCC;
+  }
+  .navy-sidebar .nav-item-active .nav-icon {
+    color: #D6A7DB;
+  }
+  .navy-sidebar .border-line {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  .navy-sidebar .text-ink {
+    color: #F6F3FA;
+  }
+  .navy-sidebar .text-ink-muted {
+    color: rgba(246, 243, 250, 0.70);
+  }
+  .navy-sidebar .text-ink-faint {
+    color: rgba(246, 243, 250, 0.48);
+  }
+  .navy-sidebar .text-primary-600 {
+    color: #D6A7DB;
+  }
+  .navy-sidebar .btn-ghost {
+    color: rgba(246, 243, 250, 0.70);
+  }
+  .navy-sidebar .btn-ghost:hover {
+    background-color: rgba(123, 30, 122, 0.30);
+    color: #FFFFFF;
+  }
+
   /* ---------- Chips / filter pills ---------- */
   .chip {
     @apply inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-surface text-ink-muted
@@ -315,18 +374,60 @@
 }
 
 /* ================================================================
+   Brand gradient + hero band (navy → royal purple)
+   ================================================================ */
+.brand-gradient {
+  background-image: linear-gradient(135deg, #0C0A3E, #7B1E7A);
+}
+.hero-band {
+  background-image: linear-gradient(135deg, #0C0A3E, #7B1E7A);
+  color: #FFFFFF;
+}
+.hero-band .text-ink {
+  color: #FFFFFF;
+}
+.hero-band .text-ink-muted {
+  color: rgba(255, 255, 255, 0.76);
+}
+.hero-band .text-ink-faint {
+  color: rgba(255, 255, 255, 0.55);
+}
+.hero-band .btn-ghost {
+  color: rgba(255, 255, 255, 0.88);
+}
+.hero-band .btn-ghost:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+}
+.hero-band .btn-secondary {
+  background-color: transparent;
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #FFFFFF;
+}
+.hero-band .btn-secondary:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+.hero-band .btn-on-hero {
+  background-color: #FFFFFF;
+  color: #17152B;
+}
+.hero-band .btn-on-hero:hover {
+  background-color: #F6F3FA;
+}
+
+/* ================================================================
    Landing backdrop — subtle, decorative, public pages only
    ================================================================ */
 .landing-bg {
   position: relative;
   background-image:
-    radial-gradient(ellipse 60% 45% at 18% 0%, rgba(37, 99, 235, 0.10), transparent 65%),
-    radial-gradient(ellipse 50% 40% at 85% 8%, rgba(139, 92, 246, 0.07), transparent 65%);
+    radial-gradient(ellipse 60% 45% at 18% 0%, rgba(123, 30, 122, 0.10), transparent 65%),
+    radial-gradient(ellipse 50% 40% at 85% 8%, rgba(12, 10, 62, 0.07), transparent 65%);
 }
 .dark .landing-bg {
   background-image:
-    radial-gradient(ellipse 60% 45% at 18% 0%, rgba(59, 130, 246, 0.14), transparent 65%),
-    radial-gradient(ellipse 50% 40% at 85% 8%, rgba(139, 92, 246, 0.10), transparent 65%);
+    radial-gradient(ellipse 60% 45% at 18% 0%, rgba(123, 30, 122, 0.22), transparent 65%),
+    radial-gradient(ellipse 50% 40% at 85% 8%, rgba(94, 60, 180, 0.16), transparent 65%);
 }
 
 /* ================================================================

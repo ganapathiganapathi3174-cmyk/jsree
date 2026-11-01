@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 const QR_OPTIONS = {
   margin: 1,
   errorCorrectionLevel: 'M',
-  color: { dark: '#0f172a', light: '#ffffff' },
+  color: { dark: '#0C0A3E', light: '#ffffff' },
 };
 
 export default function QRCodeImage({ value, size = 260, className = '' }) {

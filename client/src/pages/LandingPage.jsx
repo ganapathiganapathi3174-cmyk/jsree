@@ -23,41 +23,44 @@ export default function LandingPage() {
       <FallingStarsBackground />
 
       <div className="relative z-10">
-        {/* Navigation */}
-        <nav className="flex items-center justify-between px-5 sm:px-6 py-4 max-w-6xl mx-auto">
-          <Link to="/" className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-primary-600 rounded-lg flex items-center justify-center">
-              <Shield className="h-5 w-5 text-white" aria-hidden="true" />
-            </div>
-            <span className="text-xl font-bold tracking-tight text-ink">JSREE</span>
-          </Link>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <Link to="/login" className="btn btn-ghost hidden sm:inline-flex">Login</Link>
-            <Link to="/register" className="btn btn-primary">Get Started</Link>
-          </div>
-        </nav>
-
-        {/* Hero */}
-        <section className="px-5 sm:px-6 pt-14 sm:pt-20 pb-16 sm:pb-24 max-w-6xl mx-auto text-center">
-          <div className="inline-flex items-center gap-1.5 bg-primary-500/10 text-primary-700 dark:text-primary-300 px-4 py-1.5 rounded-full text-sm font-medium mb-6 border border-primary-500/25">
-            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> Grow Together
-          </div>
-          <h1 className="text-3xl sm:text-5xl font-bold text-ink mb-6 leading-[1.15] tracking-tight">
-            Grow Together with
-            <br />
-            <span className="text-primary-600 dark:text-primary-400">JSREE</span>
-          </h1>
-          <p className="text-base sm:text-lg text-ink-muted mb-8 max-w-2xl mx-auto leading-relaxed">
-            Join our referral network, connect with others, and earn rewards. Simple, transparent, and rewarding.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <Link to="/register" className="btn btn-primary btn-lg">
-              Get Started <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        {/* Hero band — deep navy → royal purple */}
+        <div className="hero-band">
+          {/* Navigation */}
+          <nav className="flex items-center justify-between px-5 sm:px-6 py-4 max-w-6xl mx-auto">
+            <Link to="/" className="flex items-center gap-2.5">
+              <div className="w-9 h-9 bg-white/15 border border-white/20 rounded-lg flex items-center justify-center">
+                <Shield className="h-5 w-5 text-white" aria-hidden="true" />
+              </div>
+              <span className="text-xl font-bold tracking-tight text-white">JSREE</span>
             </Link>
-            <Link to="/login" className="btn btn-secondary btn-lg">Login</Link>
-          </div>
-        </section>
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <Link to="/login" className="btn btn-ghost hidden sm:inline-flex">Login</Link>
+              <Link to="/register" className="btn btn-on-hero">Get Started</Link>
+            </div>
+          </nav>
+
+          {/* Hero */}
+          <section className="px-5 sm:px-6 pt-14 sm:pt-20 pb-16 sm:pb-24 max-w-6xl mx-auto text-center">
+            <div className="inline-flex items-center gap-1.5 bg-white/10 text-white px-4 py-1.5 rounded-full text-sm font-medium mb-6 border border-white/25">
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> Grow Together
+            </div>
+            <h1 className="text-3xl sm:text-5xl font-bold text-white mb-6 leading-[1.15] tracking-tight">
+              Grow Together with
+              <br />
+              <span className="text-[#E7CDEA]">JSREE</span>
+            </h1>
+            <p className="text-base sm:text-lg text-white/75 mb-8 max-w-2xl mx-auto leading-relaxed">
+              Join our referral network, connect with others, and earn rewards. Simple, transparent, and rewarding.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Link to="/register" className="btn btn-on-hero btn-lg">
+                Get Started <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </Link>
+              <Link to="/login" className="btn btn-secondary btn-lg">Login</Link>
+            </div>
+          </section>
+        </div>
 
         {/* How it works */}
         <section className="px-5 sm:px-6 py-14 sm:py-16 max-w-6xl mx-auto">

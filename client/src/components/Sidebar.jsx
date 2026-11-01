@@ -107,7 +107,7 @@ export default function Sidebar({ isOpen, onClose, isAdmin, currentPath }) {
       )}
 
       <aside
-        className={`fixed top-0 left-0 z-50 h-full w-64 bg-surface border-r border-line flex flex-col
+        className={`navy-sidebar fixed top-0 left-0 z-50 h-full w-64 border-r border-line flex flex-col
           transform transition-transform duration-200 ease-out lg:translate-x-0 lg:static lg:z-auto ${
             isOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
