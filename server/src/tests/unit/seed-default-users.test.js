@@ -14,7 +14,16 @@ const { supabaseMock } = vi.hoisted(() => ({
 }));
 vi.mock('../../db/supabase.js', () => ({ supabase: supabaseMock }));
 
+// bcrypt cost-12 hashing (3–6 hashes + compares per test) can exceed the
+// default 5000ms under parallel suite load on slower machines. Raise only
+// this file's wall-clock budget; assertions are unchanged.
+vi.setConfig({ testTimeout: 30000 });
+
 const TEST_PASSWORD = 'QaTest@1234';
+// Deterministic admin env so adminLogin reaches the identity check regardless
+// of which other test files (or none) ran earlier in the same worker.
+// bcrypt hash of 'IsolationOnly@123' — test-only value, never a real credential.
+const ISOLATION_ADMIN_HASH = '$2a$12$jf/LNCODy9YE/cxw62MJxOhsdYO8iAgZWye7hjQ8RctJqzhWebXjG';
 
 function makeUsersChain(state) {
   const obj = {
@@ -59,6 +68,7 @@ beforeEach(() => {
     return makeUsersChain(state);
   });
   process.env.ADMIN_EMAIL = 'admin@jsree.local';
+  process.env.ADMIN_PASSWORD_HASH = ISOLATION_ADMIN_HASH;
 });
 
 describe('CASE 1: exactly 3 default accounts', () => {

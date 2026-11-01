@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import * as chatController from '../controllers/chatController.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { validateChatMessage } from '../middleware/validation.js';
 
 const router = Router();
 

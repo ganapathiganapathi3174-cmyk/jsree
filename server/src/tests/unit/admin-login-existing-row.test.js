@@ -37,6 +37,10 @@ vi.mock('../../services/suspiciousActivityService.js', () => ({
 
 const hash = (pw) => bcrypt.hashSync(pw, 12);
 
+// bcrypt cost-12 hashSync + compare per test; raise wall-clock budget under
+// parallel suite load. Assertions unchanged.
+vi.setConfig({ testTimeout: 30000 });
+
 function setupQueryReturning(row) {
   insertSpy = vi.fn(() => { throw new Error('adminLogin must not attempt an insert when a row exists'); });
   const single = vi.fn().mockResolvedValue({ data: row, error: row ? null : { message: 'not found' } });
