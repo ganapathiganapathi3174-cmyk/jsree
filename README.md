@@ -216,8 +216,9 @@ Backend API: http://localhost:5000/api
 1. Push to GitHub
 2. Import project in Vercel (root directory `client`, framework Vite, build `npm run build`, output `dist`)
 3. `client/vercel.json` handles SPA rewrites for all routes
-4. Add env var: `VITE_API_URL=https://jsree-backend.onrender.com/api`
-5. Deploy with `vercel --prod --yes`
+4. If the project's Root Directory is left blank, the repository-root `vercel.json` builds the same frontend from `client/` (install/build commands use `npm --prefix client`, output `client/dist`) — either configuration deploys successfully
+5. Add env var: `VITE_API_URL=https://jsree-backend.onrender.com/api`
+6. Deploy with `vercel --prod --yes`
 
 ### Render (Backend)
 The backend runs as a long-running Node/Express process (Tesseract.js OCR, sharp, multer, in-memory rate limiting require a persistent server).
