@@ -1,13 +1,16 @@
-﻿/**
- * Stage 3-5: OCR and Field Extraction/Normalization
- * Leverage existing OCR service but with stricter controls.
+/**
+ * Field extraction: runs the OCR passes and normalizes them into structured
+ * payment CLAIMS (amounts, receiver names, sender names, date-times, UTRs,
+ * UPIs, transaction status).
+ *
+ * OCR output is evidence, NOT proof: every value returned here is an
+ * UNTRUSTED CLAIM that the validator modules and the decision engine must
+ * check against server-side expectations.
  *
  * Recovery is CONDITIONAL — every extra pass costs the shared OCR worker:
  *   1. Primary full-page pass (always).
  *   2. Amount recovery only when the expected amount was not read:
- *      cheap top-region probe first, deep recovery second. The
- *      currency-symbol and full-height scans are not run (measured 0 hits
- *      on the reference receipts — pure latency).
+ *      cheap top-region probe first, deep recovery second.
  *   3. Extra passes (upscaled / thresholded) only when a mandatory field
  *      (UTR, date-time, receiver name, UPI, amount) is still missing.
  *
@@ -15,14 +18,20 @@
  * outcome, never a decision.
  */
 import {
-  runOCR,
   extractPaymentData,
   extractTransactionStatus,
-  runAdditionalOCRPasses,
-  runAmountRecoveryOCR,
-  runDeepAmountRecovery,
   matchUPIWithRecovery,
 } from '../ocrService.js';
+import {
+  runOcrPrimary,
+  runOcrAdditionalPasses,
+  runAmountRecoveryProbe,
+  runAmountRecoveryDeep,
+} from './ocr.js';
+import {
+  OCR_AMOUNT_RECOVERY_BUDGET_MS,
+  OCR_RECOVERY_STAGE_BUDGET_MS,
+} from '../../config/paymentConfig.js';
 
 function unionInto(target, incoming, keyFn) {
   const seen = new Set(target.map(keyFn));
@@ -38,12 +47,24 @@ function unionInto(target, incoming, keyFn) {
 
 export async function extractPaymentFields(buffer, options = {}) {
   const { deadline = null, expectedAmount = null, receiverUpi = null } = options;
+  const startedAt = Date.now();
+
+  const recoveryStages = [];
+  let recoveredFromBands = false;
+  let recoveryBudgetExhausted = false;
+  const ocrPassInfo = {
+    primaryConfidence: 0,
+    additionalPassesRun: 0,
+    additionalPassConfidences: [],
+    candidatesFromPasses: { amounts: [], upis: [], utrs: [] },
+  };
 
   try {
     // Primary OCR pass (preprocesses internally, memoized per buffer).
-    const ocr = await runOCR(buffer, { deadline });
+    const ocr = await runOcrPrimary(buffer, { deadline });
     let ocrText = ocr.text || '';
     let ocrConfidence = ocr.confidence || 0;
+    ocrPassInfo.primaryConfidence = ocrConfidence;
 
     let extracted = extractPaymentData(ocrText);
 
@@ -53,21 +74,32 @@ export async function extractPaymentFields(buffer, options = {}) {
 
     if (expectedAmount != null && !amountMatches) {
       let recovered = [];
+      const probeStart = Date.now();
       try {
-        recovered = await runAmountRecoveryOCR(buffer, expectedAmount, { deadline, scan: 'probe' });
+        recovered = await runAmountRecoveryProbe(buffer, expectedAmount, { deadline });
+        recoveryStages.push({ stage: 'probe', durationMs: Date.now() - probeStart, candidates: recovered.length });
       } catch (e) {
         if (e?.code === 'OCR_TIMEOUT') throw e;
+        recoveryStages.push({ stage: 'probe', error: e?.code || 'stage_error' });
       }
       if (!recovered.some(a => Math.abs(a - expectedAmount) < 0.01)) {
+        const deepStart = Date.now();
         try {
-          recovered = await runDeepAmountRecovery(buffer, expectedAmount, { deadline });
+          const deepRecovered = await runAmountRecoveryDeep(buffer, expectedAmount, { deadline });
+          recoveryStages.push({ stage: 'deep', durationMs: Date.now() - deepStart, candidates: deepRecovered.length });
+          if (deepRecovered && deepRecovered.length > 0) recovered = [...new Set([...recovered, ...deepRecovered])];
         } catch (e) {
           if (e?.code === 'OCR_TIMEOUT') throw e;
+          recoveryStages.push({ stage: 'deep', error: e?.code || 'stage_error' });
         }
       }
       if (recovered.length > 0) {
-        extracted = { ...extracted, amounts: [...extracted.amounts] };
+        const before = extracted.amounts.length;
         unionInto(extracted.amounts, recovered, a => String(a));
+        if (extracted.amounts.length > before &&
+            extracted.amounts.some(a => Math.abs(a - expectedAmount) < 0.01)) {
+          recoveredFromBands = true;
+        }
       }
     }
 
@@ -88,11 +120,14 @@ export async function extractPaymentFields(buffer, options = {}) {
 
     if (missingMandatoryField) {
       let passes = [];
+      const passesStart = Date.now();
       try {
-        passes = await runAdditionalOCRPasses(buffer, { deadline });
+        passes = await runOcrAdditionalPasses(buffer, { deadline });
       } catch (e) {
         if (e?.code === 'OCR_TIMEOUT') throw e;
       }
+      ocrPassInfo.additionalPassesRun = passes.length;
+      ocrPassInfo.additionalPassConfidences = passes.map(p => p?.confidence || 0);
       for (const pass of passes) {
         if (!pass?.text) continue;
         const p = extractPaymentData(pass.text);
@@ -106,6 +141,12 @@ export async function extractPaymentFields(buffer, options = {}) {
         ocrText += '\n' + pass.text;
         ocrConfidence = Math.max(ocrConfidence, pass.confidence || 0);
       }
+      ocrPassInfo.candidatesFromPasses = {
+        amounts: [...extracted.amounts],
+        upis: [...extracted.upis],
+        utrs: [...extracted.utrs],
+      };
+      recoveryStages.push({ stage: 'additional_passes', durationMs: Date.now() - passesStart, passes: passes.length });
       // Re-evaluate status over the joined text: a "failed/declined" marker
       // seen in ANY pass must not be lost.
       extracted.transactionStatus = extractTransactionStatus(ocrText) || extracted.transactionStatus;
@@ -126,6 +167,15 @@ export async function extractPaymentFields(buffer, options = {}) {
       extractedReceiverNames: extracted.receiverNames || [],
       extractedSenderNames: extracted.senderNames || [],
       transactionStatus: extracted.transactionStatus || null,
+      recoveredFromBands,
+      ocrPassInfo,
+      recovery: {
+        budgetExhausted: recoveryBudgetExhausted,
+        budgetMs: OCR_AMOUNT_RECOVERY_BUDGET_MS,
+        stageBudgetMs: OCR_RECOVERY_STAGE_BUDGET_MS,
+        elapsedMs: Date.now() - startedAt,
+        stages: recoveryStages,
+      },
     };
   } catch (error) {
     throw error;

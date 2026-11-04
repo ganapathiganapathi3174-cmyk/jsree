@@ -20,9 +20,10 @@ export const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
 export const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
 
 // Admin-configured receiver (payee) name. Used as a SECONDARY identity gate
-// behind the receiver-UPI match (see verificationService). Empty by default:
-// when no name is configured the caller must fail safe and route the payment
-// to manual review rather than auto-approve. Never hardcode a real name here.
+// behind the receiver-UPI match (see services/paymentVerification). Empty by
+// default: when no name is configured the caller must fail safe and route the
+// payment to manual review rather than auto-approve. Never hardcode a real
+// name here.
 export const RECEIVER_NAME = process.env.ADMIN_RECEIVER_NAME || '';
 
 export const PAYMENT_PLANS = Object.fromEntries(
@@ -39,6 +40,13 @@ export function getPlanConfig(months) {
 // Screenshot payment timestamp must fall within this many minutes of the
 // server clock, interpreted in the Asia/Kolkata (UTC+05:30) timezone.
 export const PAYMENT_TIME_WINDOW_MINUTES = Number(process.env.PAYMENT_TIME_WINDOW_MINUTES || 30);
+
+// Small explicitly-configured clock-skew tolerance for the transaction
+// timestamp. A receipt timestamp up to this many seconds AHEAD of the
+// server's upload instant is accepted (device clock skew); anything beyond
+// it is rejected as FUTURE_TRANSACTION_TIMESTAMP. Real payments always
+// happen before the upload, so this only forgives seconds — never minutes.
+export const PAYMENT_CLOCK_SKEW_TOLERANCE_SECONDS = Number(process.env.PAYMENT_CLOCK_SKEW_TOLERANCE_SECONDS || 120);
 
 // Screenshots are UPI receipts; OCR confidence is a quality signal, never a
 // security boundary on its own (amount/UPI/date are the security gates).

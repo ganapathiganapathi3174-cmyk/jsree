@@ -1,24 +1,31 @@
-﻿import { MIN_OCR_CONFIDENCE_APPROVE, RECEIVER_UPI } from '../../config/paymentConfig.js';
+/**
+ * Decision engine — classifies screenshot evidence into exactly one of the
+ * four documented outcomes:
+ *
+ *   APPROVED            — every mandatory screenshot gate passed (the FINAL
+ *                         approval decision additionally requires provider
+ *                         confirmation — see providerVerification.js)
+ *   MANUAL_REVIEW       — evidence is ambiguous/contradictory; a human must
+ *                         decide (e.g. payer-name mismatch under 'review')
+ *   PENDING_VERIFICATION— evidence was INSUFFICIENT to decide (OCR could not
+ *                         read a field, config missing, budget exhausted).
+ *                         Never an approval, never a rejection.
+ *   REJECTED            — evidence definitively contradicts the request
+ *                         (wrong amount/payee, stale/future transaction,
+ *                         duplicate reference, corrupt image, failed status)
+ *
+ * Gate order: integrity -> extraction -> demo -> UPI -> amount -> date/time
+ * -> transaction status -> transaction id -> OCR confidence -> receiver
+ * name -> sender name (advisory) -> duplicate pre-check.
+ *
+ * `decidePaymentVerification()` is the same rule set expressed over flat
+ * gate flags (kept as a pure function for unit testing individual gates);
+ * `ValidationDecisionEngine.decide()` is the full-pipeline entry used by
+ * the engine.
+ */
+import { MIN_OCR_CONFIDENCE_APPROVE, RECEIVER_UPI } from '../../config/paymentConfig.js';
 import { matchUPIWithRecovery, isDemoScreenshot } from '../ocrService.js';
 
-/**
- * Stage 10-11: Decision Engine
- *
- * Mirrors the legacy decidePaymentVerification gate ORDER and outcomes, and
- * classifies every failure into exactly one of three terminal states:
- *
- *   approved     — every mandatory gate passed
- *   inconclusive — the evidence was insufficient to DECIDE (OCR could not
- *                  read the field, config missing, budget exhausted).
- *                  The caller keeps the payment resubmittable — never a
- *                  rejection, never an approval.
- *   rejected     — the evidence definitively contradicts the request
- *                  (wrong amount, wrong payee, stale/failed transaction,
- *                  duplicate reference, corrupt image).
- *
- * Gate order (same as legacy): UPI -> amount -> date/time -> transaction
- * status -> transaction id -> OCR confidence -> receiver name -> duplicate.
- */
 const INCONCLUSIVE_REASONS = new Set([
   'AMOUNT_NOT_DETECTED',
   'MISSING_EXPECTED_AMOUNT',
@@ -71,12 +78,16 @@ export function userMessageFor(reason) {
     case 'INVALID_PAYMENT_DATE_FUTURE':
     case 'INVALID_PAYMENT_DATE_TOO_OLD':
     case 'INVALID_PAYMENT_DATE_NOT_TODAY':
+    case 'TRANSACTION_TOO_OLD':
+    case 'FUTURE_TRANSACTION_TIMESTAMP':
       return 'The transaction date/time on the screenshot is outside the allowed payment window. Please create a new payment and try again.';
     case 'TRANSACTION_FAILED':
       return 'The transaction shown on the screenshot is not marked as completed.';
     case 'MISSING_UTR':
       return 'We could not find a transaction reference number on your screenshot. Please upload the full payment receipt.';
     case 'DUPLICATE_TRANSACTION':
+      return 'This transaction reference has already been used for another payment.';
+    case 'DUPLICATE_UTR':
       return 'This transaction reference has already been used for another payment.';
     case 'RECEIVER_NAME_MISMATCH':
       return 'The receiver name on the screenshot does not match the expected payment recipient.';
@@ -86,6 +97,8 @@ export function userMessageFor(reason) {
       return 'We could not read the payer name from your screenshot. Please upload a clearer image.';
     case 'PENDING_PROVIDER_VERIFICATION':
       return 'Your screenshot passed automated checks, but the payment could not be confirmed with the payment provider yet. It is pending verification.';
+    case 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED':
+      return 'Your screenshot passed automated checks and is awaiting confirmation. It is pending verification.';
     case 'IMAGE_INTEGRITY_FAILED':
       return 'The uploaded file is not a valid image. Please upload a screenshot of your payment receipt.';
     case 'DEMO_SCREENSHOT':
@@ -120,6 +133,113 @@ export function statusForOutcome({ approved, inconclusive, review }) {
   return 'REJECTED';
 }
 
+// Date-window failure variants collapse to the single user-facing reason
+// INVALID_PAYMENT_DATE; the specific variant code (TRANSACTION_TOO_OLD /
+// FUTURE_TRANSACTION_TIMESTAMP / ...) is preserved in details.variant.
+const DATE_VARIANT_REASONS = new Set([
+  'INVALID_PAYMENT_DATE_TOO_OLD',
+  'INVALID_PAYMENT_DATE_FUTURE',
+  'INVALID_PAYMENT_DATE_NOT_TODAY',
+  'TRANSACTION_TOO_OLD',
+  'FUTURE_TRANSACTION_TIMESTAMP',
+]);
+
+function canonicalDateReason(reason) {
+  if (!reason) return 'INVALID_PAYMENT_DATE';
+  return DATE_VARIANT_REASONS.has(reason) ? 'INVALID_PAYMENT_DATE' : reason;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Flat-flag decision rule (pure). Used by unit tests and as the single
+// source of truth for gate semantics; the class below applies the SAME
+// rules to full-pipeline evidence.
+// ─────────────────────────────────────────────────────────────
+export function decidePaymentVerification({
+  upiMatch, amountMatch, dateValid, utrPresent,
+  transactionStatusOk, ocrConfidence,
+  receiverName, nameMatch, nameFound, nameConfigured,
+  // Optional refinements. `undefined` keeps hard-rejection behaviour;
+  // `false` means "the field could NOT be read" and fails closed into
+  // manual_review (never an approval).
+  amountDetected,
+  dateDetected,
+  timeDetected,
+  namePartial,
+}) {
+  // Gate 1: UPI must match
+  if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
+
+  // Gate 2 (Check A): amount must match the server-resolved expected amount.
+  if (amountMatch !== true) {
+    // No amount could be read at all — the screenshot is inconclusive,
+    // not wrong. Fail closed into manual review instead of accusing the
+    // user of paying the wrong amount.
+    if (amountDetected === false) return { decision: 'manual_review', reason: 'AMOUNT_NOT_DETECTED' };
+    return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
+  }
+
+  // Gate 3 (Check C): timestamp inside the freshness window, Asia/Kolkata.
+  if (dateValid !== true) {
+    if (dateDetected === false) return { decision: 'manual_review', reason: 'PAYMENT_DATE_NOT_DETECTED' };
+    if (timeDetected === false) return { decision: 'manual_review', reason: 'PAYMENT_TIME_NOT_DETECTED' };
+    return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
+  }
+
+  // Gate 4 (Check E): transaction status must explicitly indicate success.
+  if (transactionStatusOk !== true) return { decision: 'rejected', reason: 'TRANSACTION_FAILED' };
+
+  // Gate 5 (Check D): UTR must be present.
+  if (utrPresent !== true) return { decision: 'rejected', reason: 'MISSING_UTR' };
+
+  // Gate 6: OCR confidence must meet the approval floor.
+  // Undefined confidence fails closed — never silently bypass the gate.
+  const confident = ocrConfidence !== undefined && ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE;
+  if (!confident) return { decision: 'rejected', reason: 'LOW_OCR_CONFIDENCE' };
+
+  // Gate 7 (Check B): receiver name. Only evaluated when a receiver name
+  // is supplied. Undefined => disabled (direct callers / legacy tests).
+  if (receiverName !== undefined) {
+    if (nameConfigured !== true) {
+      // No trusted payee name configured — fail safe, do not auto-approve.
+      return { decision: 'manual_review', reason: 'RECEIVER_NAME_NOT_CONFIGURED' };
+    }
+    if (nameMatch !== true) {
+      if (namePartial === true) {
+        // The payee name was read only partially ("JAYARAJ" for
+        // "JAYARAJ ALAGAR") — incomplete evidence, needs a human.
+        return { decision: 'manual_review', reason: 'RECEIVER_NAME_INCOMPLETE' };
+      }
+      if (nameFound === true) {
+        // A payee name was read and it is a DIFFERENT person — hard reject.
+        return { decision: 'rejected', reason: 'RECEIVER_NAME_MISMATCH' };
+      }
+      // No name could be read from the screenshot — needs human review.
+      return { decision: 'manual_review', reason: 'RECEIVER_NAME_UNREADABLE' };
+    }
+  }
+
+  // All gates passed — approve.
+  return { decision: 'approved', reason: null };
+}
+
+// ─────────────────────────────────────────────────────────────
+// External-confirmation demotion: an engine-approved screenshot that still
+// needs provider/human confirmation is parked — never a straight approval.
+// Kept as a named helper because both flows (and their tests) record this
+// transition explicitly.
+// ─────────────────────────────────────────────────────────────
+export function requireExternalPaymentConfirmation(verificationResult) {
+  if (verificationResult?.decision !== 'approved') return verificationResult;
+
+  return {
+    ...verificationResult,
+    ocrDecision: 'approved',
+    decision: 'manual_review',
+    status: 'PENDING_VERIFICATION',
+    reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+  };
+}
+
 export class ValidationDecisionEngine {
   constructor() {
     this.timings = {};
@@ -140,6 +260,7 @@ export class ValidationDecisionEngine {
     // never a definitive rejection.
     if (base.review === true) {
       return {
+        ...base,
         approved: false,
         inconclusive: false,
         review: true,
@@ -147,9 +268,6 @@ export class ValidationDecisionEngine {
         reason,
         code: reason,
         message: userMessageFor(reason),
-        ...base,
-        review: true,
-        status: 'MANUAL_REVIEW',
       };
     }
     // Classification: a reason in the inconclusive set (missing evidence,
@@ -160,6 +278,7 @@ export class ValidationDecisionEngine {
       (!base.approved && isInconclusiveReason(reason));
     if (inconclusive) {
       return {
+        ...base,
         approved: false,
         inconclusive: true,
         review: false,
@@ -167,13 +286,10 @@ export class ValidationDecisionEngine {
         reason,
         code: codeForInconclusive(reason),
         message: userMessageFor(reason),
-        ...base,
-        inconclusive: true,
-        review: false,
-        status: 'PENDING_VERIFICATION',
       };
     }
     return {
+      ...base,
       approved: false,
       inconclusive: false,
       review: false,
@@ -181,7 +297,6 @@ export class ValidationDecisionEngine {
       reason,
       code: reason,
       message: userMessageFor(reason),
-      ...base,
     };
   }
 
@@ -266,18 +381,27 @@ export class ValidationDecisionEngine {
       expected: receiverUpi,
       detected: upiValidation.candidate,
     };
+    const upiDiagnostics = {
+      originalCandidates: upiValidation.originalCandidates || [],
+      normalizedCandidates: upiValidation.allCandidates || [],
+      matchMethod: upiValidation.method,
+      matchConfidence: upiValidation.confidence,
+      matchedCandidate: upiValidation.candidate,
+      expectedUpi: receiverUpi,
+    };
     if (!upiValidation.match) {
       return this._result({
         approved: false,
         reason: 'UPI_MISMATCH',
         checks,
+        upiDiagnostics,
         details: { expected: receiverUpi, candidates: upiValidation.allCandidates },
         auditLog: this.auditLog,
         timings: this.timings,
       });
     }
 
-    // Gate 2 (Rule A): amount must match the server-resolved expected amount.
+    // Gate 2 (Check A): amount must match the server-resolved expected amount.
     checks.amount = {
       passed: amountValidation?.valid === true,
       reason: amountValidation?.reason || null,
@@ -290,42 +414,47 @@ export class ValidationDecisionEngine {
         approved: false,
         reason: amountValidation?.reason || 'AMOUNT_MISMATCH',
         checks,
+        upiDiagnostics,
         details: { expected: paymentRequest?.expectedAmount, detected: amountValidation?.detected },
         auditLog: this.auditLog,
         timings: this.timings,
       });
     }
 
-    // Gate 3 (Rules C + D): transaction timestamp inside the freshness
-    // window and on the current India calendar date.
+    // Gate 3 (Check C): transaction timestamp inside the freshness window
+    // and on the current India calendar date (Asia/Kolkata).
     checks.transactionDate = {
       passed: dateTimeValidation?.valid === true,
       reason: dateTimeValidation?.reason || null,
+      code: dateTimeValidation?.code || null,
       detected: dateTimeValidation?.transactionDate
         ? dateTimeValidation.transactionDate.toISOString()
         : null,
       diffMinutes: dateTimeValidation?.diffMinutes ?? null,
+      timezone: dateTimeValidation?.timezone || null,
+      windowMinutes: dateTimeValidation?.windowMinutes ?? null,
     };
     if (!dateTimeValidation?.valid) {
-      // Specific variants (TOO_OLD / FUTURE / NOT_TODAY) all surface as the
-      // single legacy reason INVALID_PAYMENT_DATE; details keep the variant.
       const rawDateReason = dateTimeValidation?.reason || 'INVALID_PAYMENT_DATE';
-      const dateReason = rawDateReason.startsWith('INVALID_PAYMENT_DATE_')
-        ? 'INVALID_PAYMENT_DATE'
-        : rawDateReason;
+      const dateReason = canonicalDateReason(rawDateReason);
       return this._result({
         approved: false,
         reason: dateReason,
         checks,
-        details: { ...dateTimeValidation, variant: dateTimeValidation?.reason },
+        upiDiagnostics,
+        details: {
+          ...dateTimeValidation,
+          variant: rawDateReason,
+          variantCode: dateTimeValidation?.code || rawDateReason,
+        },
         auditLog: this.auditLog,
         timings: this.timings,
       });
     }
 
-    // Gate 4: transaction status must explicitly indicate success.
-    // A receipt with NO status wording fails this gate (legacy behaviour:
-    // "no status text -> TRANSACTION_FAILED").
+    // Gate 4 (Check E): transaction status must explicitly indicate success.
+    // A receipt with NO status wording fails this gate — OCR extraction
+    // success is never treated as proof of settlement.
     const transactionStatusOk = extraction.transactionStatus?.status === 'success';
     checks.transactionStatus = {
       passed: transactionStatusOk,
@@ -337,13 +466,14 @@ export class ValidationDecisionEngine {
         approved: false,
         reason: 'TRANSACTION_FAILED',
         checks,
+        upiDiagnostics,
         details: { detected: extraction.transactionStatus },
         auditLog: this.auditLog,
         timings: this.timings,
       });
     }
 
-    // Gate 5: transaction id (UTR / UPI reference) must be present.
+    // Gate 5 (Check D): transaction id (UTR / UPI reference) must be present.
     checks.utr = {
       passed: transactionIdValidation?.valid === true,
       reason: transactionIdValidation?.reason || null,
@@ -355,6 +485,7 @@ export class ValidationDecisionEngine {
         approved: false,
         reason: transactionIdValidation?.reason || 'MISSING_UTR',
         checks,
+        upiDiagnostics,
         details: { detected: extraction?.extractedUTRs },
         auditLog: this.auditLog,
         timings: this.timings,
@@ -371,21 +502,20 @@ export class ValidationDecisionEngine {
       floor: MIN_OCR_CONFIDENCE_APPROVE,
     };
     if (!confident) {
-      // Legacy decidePaymentVerification semantics: low confidence is a
-      // definitive rejection (the receipt was read but below the floor), not
-      // an inconclusive infrastructure failure.
       return this._result({
         approved: false,
         reason: 'LOW_OCR_CONFIDENCE',
         checks,
+        upiDiagnostics,
         details: { value: typeof ocrConfidence === 'number' ? ocrConfidence : null, floor: MIN_OCR_CONFIDENCE_APPROVE },
         auditLog: this.auditLog,
         timings: this.timings,
       });
     }
 
-    // Gate 7 (SECONDARY): receiver name — evaluated whenever a name is
-    // configured/expected. Missing config fails safe to inconclusive.
+    // Gate 7 (Check B, SECONDARY): receiver name — evaluated whenever a
+    // name is configured/expected. Missing config fails safe to inconclusive.
+    let nameDiagnostics = null;
     if (receiverName !== undefined) {
       checks.receiverName = {
         passed: receiverValidation?.valid === true,
@@ -394,11 +524,21 @@ export class ValidationDecisionEngine {
         detected: receiverValidation?.matched ||
           (receiverValidation?.detected ? receiverValidation.detected[0] : null),
       };
+      nameDiagnostics = {
+        enabled: true,
+        expected: receiverName || null,
+        candidates: receiverValidation?.detected || [],
+        matchMethod: receiverValidation?.method || null,
+        matched: receiverValidation?.matchedName || null,
+        partial: receiverValidation?.reason === 'RECEIVER_NAME_INCOMPLETE',
+      };
       if (!receiverValidation?.valid) {
         return this._result({
           approved: false,
           reason: receiverValidation?.reason || 'RECEIVER_NAME_MISMATCH',
           checks,
+          upiDiagnostics,
+          nameDiagnostics,
           details: { configured: receiverName, detected: receiverValidation?.detected },
           auditLog: this.auditLog,
           timings: this.timings,
@@ -406,11 +546,10 @@ export class ValidationDecisionEngine {
       }
     }
 
-    // Gate 7b (SECONDARY, Rule B): sender (payer) name — advisory identity
-    // signal evaluated whenever an expected payer identity is available.
-    //   - match            -> supporting evidence, never sufficient alone
-    //   - unreadable       -> advisory only, NEVER blocks the payment
-    //   - complete mismatch-> policy-driven: 'reject' = definitive rejection,
+    // Gate 7b (Rule B): sender (payer) name — advisory identity signal.
+    //   - match             -> supporting evidence, never sufficient alone
+    //   - unreadable        -> advisory only, NEVER blocks the payment
+    //   - complete mismatch -> policy-driven: 'reject' = definitive rejection,
     //                          default 'review' = MANUAL_REVIEW for a human
     if (senderValidation?.applicable) {
       checks.senderName = {
@@ -426,6 +565,8 @@ export class ValidationDecisionEngine {
             approved: false,
             reason: 'SENDER_NAME_MISMATCH',
             checks,
+            upiDiagnostics,
+            nameDiagnostics,
             details: { expected: senderValidation.expected, detected: senderValidation.detected },
             auditLog: this.auditLog,
             timings: this.timings,
@@ -436,6 +577,8 @@ export class ValidationDecisionEngine {
           review: true,
           reason: 'SENDER_NAME_MISMATCH',
           checks,
+          upiDiagnostics,
+          nameDiagnostics,
           details: { expected: senderValidation.expected, detected: senderValidation.detected, policy: 'review' },
           auditLog: this.auditLog,
           timings: this.timings,
@@ -448,12 +591,12 @@ export class ValidationDecisionEngine {
       }
     }
 
-    // Gate 8: duplicate transaction reference (cross-flow) — definitive.
-    // The pre-check is ADVISORY: a lookup failure is logged but does not
-    // block the decision, because the AUTHORITATIVE duplicate gate is the
-    // atomic approved_utrs reservation (UNIQUE constraint, INSERT ... ON
-    // CONFLICT) that both flows perform before any approval commits. A
-    // broken SELECT here can therefore never let a duplicate through.
+    // Gate 8 (Check D): duplicate transaction reference (cross-flow) —
+    // definitive. The pre-check is ADVISORY: a lookup failure is logged but
+    // does not block the decision, because the AUTHORITATIVE duplicate gate
+    // is the atomic approved_utrs reservation (UNIQUE constraint) that both
+    // flows perform before any approval commits. A broken SELECT here can
+    // therefore never let a duplicate through — nor be read as approval.
     if (duplicateCheck?.dbError) {
       this.log('duplicate', 'pre-check lookup failed; relying on atomic reservation', {
         error: duplicateCheck.dbError,
@@ -464,17 +607,21 @@ export class ValidationDecisionEngine {
         approved: false,
         reason: 'DUPLICATE_TRANSACTION',
         checks,
+        upiDiagnostics,
+        nameDiagnostics,
         details: duplicateCheck,
         auditLog: this.auditLog,
         timings: this.timings,
       });
     }
 
-    // All mandatory checks passed
-    this.log('decision', 'all gates passed', { transactionId: transactionIdValidation.transactionId });
+    // All mandatory screenshot checks passed.
+    this.log('decision', 'all screenshot gates passed', { transactionId: transactionIdValidation.transactionId });
     return this._result({
       approved: true,
       checks,
+      upiDiagnostics,
+      nameDiagnostics,
       transactionId: transactionIdValidation.transactionId,
       matchedAmount: amountValidation.matchedAmount,
       matchedReceiver: receiverValidation?.matchedName || null,
@@ -497,3 +644,5 @@ export class ValidationDecisionEngine {
     });
   }
 }
+
+export default ValidationDecisionEngine;

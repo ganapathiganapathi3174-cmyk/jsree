@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   runScreenshotVerification,
   decidePaymentVerification,
-} from '../../services/verificationService.js';
+} from '../helpers/legacyVerificationAdapter.js';
 import {
   extractDateTimes,
   extractTransactionStatus,

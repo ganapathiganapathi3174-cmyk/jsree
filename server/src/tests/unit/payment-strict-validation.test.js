@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   runScreenshotVerification,
   decidePaymentVerification,
-} from '../../services/verificationService.js';
+} from '../helpers/legacyVerificationAdapter.js';
 import { matchReceiverName, normalizeName, isWithinPaymentWindow } from '../../services/ocrService.js';
 import { resolvePlanAmount, istCalendarDayKey } from '../../utils/paymentNormalize.js';
 import { PLAN_AMOUNTS } from '../../config/paymentConfig.js';

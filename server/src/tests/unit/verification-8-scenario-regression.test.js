@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { runScreenshotVerification } from '../../services/verificationService.js';
+import { runScreenshotVerification } from '../helpers/legacyVerificationAdapter.js';
 import { applyPaymentUtrPolicy } from '../../services/paymentService.js';
 
 // ─────────────────────────────────────────────────────────────

@@ -8,17 +8,18 @@ import {
   normalizeUtr,
   reserveApprovedUtr,
   releaseApprovedUtr,
-  requireExternalPaymentConfirmation,
-} from './verificationService.js';
-import { paymentValidationEngine } from './paymentValidationService.js';
+  paymentVerificationEngine,
+  recordVerificationAttempt,
+  deriveOutcomeStatus,
+  ENGINE_ID,
+} from './paymentVerification/index.js';
 import { getPaymentConfig } from './configService.js';
-import { verifyTransaction, getProviderMode } from './paymentProviderService.js';
-import { recordVerificationAttempt, deriveOutcomeStatus } from './paymentVerificationHistoryService.js';
 // Shared server-authoritative payment configuration and expiry helper —
 // the SAME values and the SAME fail-closed check the membership flow uses.
-// There is exactly one validation engine (paymentValidationEngine) and one
-// expiry rule; top-ups only add their own post-verification business action.
-import { RECEIVER_UPI, RECEIVER_NAME, OCR_VERIFICATION_BUDGET_MS, PAYMENT_TIME_WINDOW_MINUTES, SENDER_NAME_POLICY, isPaymentAutoApproveEnabled } from '../config/paymentConfig.js';
+// There is exactly one unified verification engine (paymentVerification)
+// and one expiry rule; top-ups only add their own post-verification
+// business action.
+import { RECEIVER_UPI, RECEIVER_NAME, OCR_VERIFICATION_BUDGET_MS, PAYMENT_TIME_WINDOW_MINUTES, SENDER_NAME_POLICY } from '../config/paymentConfig.js';
 // Rule A — the top-up amount is resolved from the SAME server-side plan
 // table the register flow uses (config/paymentConfig). A client-supplied
 // amount is only ever a lookup key; it is never trusted as the price.
@@ -208,12 +209,14 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
   const { error: saveError } = await supabase.from('topups').update({ screenshot_url: screenshotUrl, screenshot_hash: screenshotHash }).eq('id', topupId);
   if (saveError) throw { message: 'Failed to update topup', code: 'UPDATE_FAILED' };
 
-    // The SAME centralized validation engine the registration flow uses —
+    // The SAME unified verification engine the registration flow uses —
     // amount / receiver-name / payer-name / transaction-date / transaction-time
-    // / transaction-id / image-integrity / duplicate rules are identical
-    // across flows. The UTR is not an input to the OCR decision, but an
-    // extracted UTR that was already APPROVED elsewhere (payment or top-up)
-    // rejects with DUPLICATE_UTR (handled inside applyTopupVerification).
+    // / transaction-id / image-integrity / duplicate rules, provider
+    // verification and the approval policy are identical across flows. The
+    // UTR is not an input to the OCR decision, but an extracted UTR that was
+    // already APPROVED elsewhere (payment or top-up) rejects with
+    // DUPLICATE_UTR (handled inside applyTopupVerification via the atomic
+    // approved_utrs reservation).
     let outcome;
   try {
     // Same shared receiver-name secondary gate as the membership flow.
@@ -227,8 +230,9 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
       expectedPayerName = senderUser?.full_name || null;
     }
 
-    const engineResult = await paymentValidationEngine.validatePayment({
+    const verification = await paymentVerificationEngine.verify({
       imageBuffer: file.buffer,
+      purpose: 'topup',
       paymentRequest: {
         type: 'topup',
         expectedAmount: topup.amount,
@@ -246,126 +250,68 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
     // Inconclusive outcome (OCR timeout / OCR failure / infrastructure
     // error): never a decision. The top-up keeps its submittable status so
     // the user can retry — it is never locked into a terminal state.
-    if (engineResult.inconclusive) {
-      await logAction(userId, 'user', 'submit_topup_proof', topupId, 'topup', { filename, error: engineResult.reason });
+    if (verification.inconclusive) {
+      await logAction(userId, 'user', 'submit_topup_proof', topupId, 'topup', { filename, error: verification.reason });
       await recordVerificationAttempt({
         referenceType: 'topup',
         referenceId: topupId,
-        engine: 'paymentValidationEngine/v1',
+        engine: ENGINE_ID,
         status: 'PENDING_VERIFICATION',
         decision: null,
-        reasonCode: engineResult.reason || null,
-        checks: engineResult.checks || null,
-        extractedData: engineResult.extractedData || null,
-        ocrConfidence: engineResult.ocrConfidence ?? null,
-        transactionId: engineResult.transactionId || null,
+        reasonCode: verification.reason || null,
+        checks: verification.checks || null,
+        extractedData: verification.extractedData || null,
+        ocrConfidence: verification.ocrConfidence ?? null,
+        transactionId: verification.transactionId || null,
         actorId: userId,
         actorRole: 'user',
       });
       throw {
-        message: engineResult.message || 'Screenshot verification did not complete',
-        code: engineResult.code || engineResult.reason || 'OCR_FAILED',
-        reason: engineResult.reason || null,
-        details: engineResult.details || null,
+        message: verification.message || 'Screenshot verification did not complete',
+        code: verification.code || verification.reason || 'OCR_FAILED',
+        reason: verification.reason || null,
+        details: verification.details || null,
       };
     }
 
-    // Provider verification (Rule F): when a provider integration is
-    // configured, an engine-approved screenshot is confirmed independently
-    // before any credit. Timeout / error / not-found fails safe to
-    // manual_review with status PENDING_VERIFICATION.
-    let providerResult = null;
-    if (engineResult.approved && !engineResult.review && getProviderMode() !== 'none') {
-      providerResult = await verifyTransaction({
-        transactionId: engineResult.transactionId,
-        amount: engineResult.matchedAmount,
-        receiverUpi: RECEIVER_UPI,
-      });
-    }
-
-    // Definitive/review outcome: hand the SAME decision to the shared top-up
-    // persistence path (guarded status transition, expiry re-check, atomic
-    // UTR reservation, wallet credit with rollback).
+    // Definitive/review/pending outcome from the unified engine — hand the
+    // SAME decision to the shared top-up persistence path (guarded status
+    // transition, expiry re-check, atomic UTR reservation, wallet credit
+    // with rollback).
     //
-    //   - engine review (e.g. payer-name mismatch)   -> manual_review park
-    //   - provider not confirmed                     -> PENDING_VERIFICATION park
-    //   - engine approved + PAYMENT_AUTO_APPROVE off -> EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED park
-    //   - engine approved + auto-approve on          -> completed (+credit)
-    //   - engine rejected                            -> rejected
-    const autoApprove = isPaymentAutoApproveEnabled();
-    let verificationResult;
-    let reason;
-    if (engineResult.review === true) {
-      reason = engineResult.reason || 'MANUAL_REVIEW';
-      verificationResult = {
-        ...engineResult,
-        decision: 'manual_review',
-        status: 'MANUAL_REVIEW',
-        reason,
-        utr: engineResult.transactionId || null,
-        engine: 'paymentValidationEngine/v1',
-      };
-    } else if (engineResult.approved && providerResult && providerResult.verified !== true) {
-      reason = 'PENDING_PROVIDER_VERIFICATION';
-      verificationResult = {
-        ...engineResult,
-        decision: 'manual_review',
-        status: 'PENDING_VERIFICATION',
-        reason,
-        provider: providerResult,
-        utr: engineResult.transactionId || null,
-        engine: 'paymentValidationEngine/v1',
-      };
-    } else if (engineResult.approved && !autoApprove) {
-      reason = 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED';
-      verificationResult = requireExternalPaymentConfirmation({
-        ...engineResult,
-        decision: 'approved',
-        reason,
-        provider: providerResult,
-        utr: engineResult.transactionId || null,
-        engine: 'paymentValidationEngine/v1',
-      });
-    } else {
-      reason = engineResult.approved
-        ? null
-        : (engineResult.reason === 'DUPLICATE_TRANSACTION' ? 'DUPLICATE_UTR' : (engineResult.reason || 'REJECTED'));
-      verificationResult = {
-        ...engineResult,
-        decision: engineResult.approved ? 'approved' : 'rejected',
-        status: engineResult.approved ? 'APPROVED' : 'REJECTED',
-        reason,
-        provider: providerResult,
-        utr: engineResult.approved ? engineResult.transactionId : (engineResult.transactionId || null),
-        engine: 'paymentValidationEngine/v1',
-      };
-    }
+    //   - outcome MANUAL_REVIEW (e.g. payer-name mismatch) -> manual_review park
+    //   - outcome PENDING_VERIFICATION (provider unconfirmed / auto-approve
+    //     off)                                             -> PENDING_VERIFICATION park
+    //   - outcome APPROVED                                 -> completed (+credit)
+    //   - outcome REJECTED                                 -> rejected
+    const verificationResult = verification.verificationResult;
+    const providerResult = verification.provider || null;
     outcome = await applyTopupVerification(topup, verificationResult, new Date());
 
     await logAction(userId, 'user', 'submit_topup_proof', topupId, 'topup', {
       filename,
       decision: verificationResult.decision,
       reason: verificationResult.reason,
-      utr: engineResult.transactionId || null,
-      engine: 'paymentValidationEngine/v1',
-      timings: engineResult.timings || null,
+      utr: verification.transactionId || null,
+      engine: ENGINE_ID,
+      timings: verification.timings || null,
       credited: outcome.credited || false,
     });
 
     await recordVerificationAttempt({
       referenceType: 'topup',
       referenceId: topupId,
-      engine: 'paymentValidationEngine/v1',
+      engine: ENGINE_ID,
       status: verificationResult.status || deriveOutcomeStatus(
         outcome.manualReview ? 'manual_review' : (outcome.credited ? 'approved' : 'rejected'),
         verificationResult,
       ),
       decision: verificationResult.decision,
       reasonCode: verificationResult.reason || null,
-      checks: engineResult.checks || null,
-      extractedData: engineResult.extractedData || null,
-      ocrConfidence: engineResult.ocrConfidence ?? null,
-      transactionId: engineResult.transactionId || null,
+      checks: verification.checks || null,
+      extractedData: verification.extractedData || null,
+      ocrConfidence: verification.ocrConfidence ?? null,
+      transactionId: verification.transactionId || null,
       provider: providerResult,
       actorId: userId,
       actorRole: 'user',
@@ -411,12 +357,21 @@ function topupRejectionMessage(reason) {
       return 'the screenshot amount does not match the top-up amount';
     case 'AMOUNT_NOT_DETECTED':
       return 'we could not read the amount from your screenshot';
+    case 'CONFLICTING_AMOUNTS':
+      return 'the screenshot shows conflicting amounts';
     case 'UPI_MISMATCH':
       return 'the screenshot shows a different recipient';
     case 'RECEIVER_NAME_MISMATCH':
       return 'the screenshot shows a different recipient name';
     case 'RECEIVER_NAME_INCOMPLETE':
       return 'the recipient name in the screenshot is only partially visible';
+    case 'RECEIVER_NAME_UNREADABLE':
+      return 'we could not read the recipient name from your screenshot';
+    case 'IMAGE_INTEGRITY_FAILED':
+      return 'the uploaded file is not a valid image';
+    case 'DUPLICATE_TRANSACTION':
+    case 'DUPLICATE_UTR':
+      return 'this transaction reference has already been used';
     case 'INVALID_PAYMENT_DATE':
       return 'the screenshot is too old or its date could not be read';
     case 'PAYMENT_DATE_NOT_DETECTED':
@@ -642,6 +597,14 @@ async function creditTopupWallets(topup) {
 }
 
 export async function verifyTopup(topupId, adminId, approved, reason) {
+  // Audited manual-review resolution — the SAME rule the registration flow
+  // enforces (reviewPayment): a human resolving a MANUAL_REVIEW case must
+  // record a reason; it is written into the audit log with the action.
+  if (typeof reason !== 'string' || reason.trim().length < 3) {
+    throw { message: 'A recorded reason is required to resolve a manual review', code: 'REVIEW_REASON_REQUIRED' };
+  }
+  const recordedReason = reason.trim();
+
   const { data: topup, error: fetchError } = await supabase.from('topups').select('*').eq('id', topupId).single();
   if (fetchError || !topup) throw { message: 'Topup not found', code: 'TOPUP_NOT_FOUND' };
   if (topup.status === 'completed' && topup.verification_result?.adminReview?.decision === 'approved') {
@@ -754,14 +717,15 @@ export async function verifyTopup(topupId, adminId, approved, reason) {
       receiverId: topup.receiver_id,
       amount: topup.amount,
       utr,
+      reason: recordedReason,
     });
-    return { message: 'Top-up approved and credited', topupId, credited: credits.some(result => result.credited) };
+    return { message: 'Top-up approved and credited', topupId, credited: credits.some(result => result.credited), reason: recordedReason };
   }
 
   const { data: rejectedRows, error } = await supabase.from('topups')
     .update({
       status: 'rejected',
-      rejection_reason: reason || 'Admin rejected after review',
+      rejection_reason: recordedReason,
       verified_at: new Date().toISOString(),
     })
     .eq('id', topupId)
@@ -775,9 +739,9 @@ export async function verifyTopup(topupId, adminId, approved, reason) {
   await logAction(adminId, 'admin', 'reject_topup', topupId, 'topup', {
     senderId: topup.sender_id,
     receiverId: topup.receiver_id,
-    reason: reason || null,
+    reason: recordedReason,
   });
-  return { message: 'Top-up rejected', topupId };
+  return { message: 'Top-up rejected', topupId, reason: recordedReason };
 }
 
 export async function completeTopup(topupId) {

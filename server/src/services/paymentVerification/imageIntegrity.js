@@ -1,8 +1,13 @@
-﻿import crypto from 'crypto';
+import crypto from 'crypto';
 import sharp from 'sharp';
 
 /**
- * Stage 1: Upload and Image Integrity Validation
+ * Check A-pre: upload / image integrity.
+ *
+ * The screenshot is UNTRUSTED input. Magic bytes + a sharp decode probe run
+ * BEFORE any OCR so a truncated/corrupted/oversized file fails here with a
+ * definitive IMAGE_INTEGRITY_FAILED instead of surfacing later as an
+ * indistinguishable OCR infrastructure failure.
  */
 export async function validateImageIntegrity(buffer, file) {
   const errors = [];
@@ -41,9 +46,7 @@ export async function validateImageIntegrity(buffer, file) {
     return { valid: false, errors, warnings };
   }
 
-  // Decode probe: magic bytes only prove the header, not the payload. A
-  // truncated/corrupted file must fail HERE, not deep inside OCR where it is
-  // indistinguishable from an infrastructure failure.
+  // Decode probe: magic bytes only prove the header, not the payload.
   try {
     const meta = await sharp(buffer).metadata();
     if (!meta.width || !meta.height) {

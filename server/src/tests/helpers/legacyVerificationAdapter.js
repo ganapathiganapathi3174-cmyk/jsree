@@ -1,3 +1,18 @@
+﻿/**
+ * LEGACY test adapter — the retired `verificationService.runScreenshotVerification`
+ * pipeline, preserved SOLELY for the legacy unit-test suites that exercise
+ * OCR helpers, recovery stages and the historical result shape.
+ *
+ * Production code no longer has this pipeline: BOTH registration payments and
+ * top-ups run through the unified engine in
+ * `src/services/paymentVerification/` (see paymentVerification/engine.js).
+ * The decision rule (`decidePaymentVerification`) and the approved-UTR
+ * helpers are re-exported from that module — ONE implementation, no fork.
+ *
+ * This file must never be imported by anything under services/ or
+ * controllers/; it exists only so historical test expectations keep running
+ * against the same OCR helpers they always mocked.
+ */
 import {
   runOCR,
   extractPaymentData,
@@ -13,191 +28,31 @@ import {
   normalizeUPI,
   matchReceiverName,
   normalizeName,
-} from './ocrService.js';
+} from '../../services/ocrService.js';
 import {
   PAYMENT_TIME_WINDOW_MINUTES,
-  MIN_OCR_CONFIDENCE_APPROVE,
   TIMEZONE,
   OCR_VERIFICATION_BUDGET_MS,
   OCR_AMOUNT_RECOVERY_BUDGET_MS,
   OCR_RECOVERY_STAGE_BUDGET_MS,
-} from '../config/paymentConfig.js';
-import { istCalendarDayDiff } from '../utils/paymentNormalize.js';
-import { supabase } from '../db/supabase.js';
+} from '../../config/paymentConfig.js';
+import { istCalendarDayDiff } from '../../utils/paymentNormalize.js';
+import {
+  decidePaymentVerification,
+  requireExternalPaymentConfirmation,
+  normalizeUtr,
+  reserveApprovedUtr,
+  releaseApprovedUtr,
+} from '../../services/paymentVerification/index.js';
 
-// ─────────────────────────────────────────────────────────────
-// Strict automatic verification engine (payments AND top-ups).
-//
-// ONE decision engine for BOTH flows: the register payment path
-// (paymentService.verifyPayment) and the top-up path
-// (topupService.uploadAndVerifyTopupProof) both call
-// runScreenshotVerification() below, which resolves every rule and hands
-// the outcome to decidePaymentVerification(). There is no second,
-// flow-specific rule set.
-//
-// THE FOUR PAYMENT RULES
-//
-//   Rule A — EXACT AMOUNT
-//     The OCR-extracted transaction amount must equal the amount the
-//     SERVER resolved for the authenticated user's plan / top-up. A
-//     confidently read amount that differs is an AMOUNT_MISMATCH. An
-//     amount that could not be read at all (or was ambiguous) is
-//     INCONCLUSIVE, not wrong, and routes to manual_review.
-//
-//   Rule B — RECEIVER NAME
-//     The payee name read from the screenshot must match the configured
-//     receiver name (admin-configurable, DB/env backed). Case, whitespace
-//     and punctuation differences are normalized away. A partial read
-//     ("JAYARAJ" for "JAYARAJ ALAGAR") is incomplete evidence and routes
-//     to manual_review; a complete but different name is rejected.
-//
-//   Rule C — TRANSACTION DATE
-//     The transaction date must fall on the current calendar day in the
-//     configured India timezone (Asia/Kolkata). The single documented
-//     exception is the midnight straddle (paid 23:5x IST, uploaded shortly
-//     after midnight IST), which stays valid because the payment is still
-//     inside the freshness window.
-//
-//   Rule D — TRANSACTION TIME / 30-MINUTE WINDOW
-//     0 <= uploadReferenceTime - transactionTime <= 30 minutes, where
-//     uploadReferenceTime is the SERVER-generated upload/verification
-//     start time, captured ONCE per attempt and reused by every stage.
-//
-// DECISION RULE — binary for the strong identity/amount gates, with
-//   manual_review branches for every INCONCLUSIVE (unreadable/ambiguous)
-//   input and for the SECONDARY recipient-name check:
-//   approved      = upiMatch && amountMatch && dateValid && utrPresent
-//                   && transactionStatusOk && ocrConfident
-//                   && allFieldConfidenceHigh
-//                   && (name gate disabled OR receiver name matches)
-//   manual_review = an input could not be read with confidence, or the
-//                   recipient-name evidence is missing/partial, or no
-//                   receiver name is configured (fail safe)
-//   rejected      = any strong gate fails on CONFIDENT evidence, or a
-//                   complete receiver name IS present but does not match
-//
-// The name gate is ACTIVE only when a receiver name is supplied
-// (receiverName !== undefined). Direct engine callers/tests that omit it keep
-// the original binary behaviour. Production callers always pass the resolved
-// receiver name (possibly ''), so an unconfigured name fails safe.
-//
-// APPROVE conditions (ALL must pass):
-//   1. Receiver UPI matches expected
-//   2. Transaction amount exactly matches expected amount
-//   3. Transaction timestamp within the 30-minute window of the SERVER-SIDE
-//      upload time AND on the current India calendar date
-//      (complete timestamp required — a date-only reading fails)
-//   4. Payment status explicitly indicates success/completed/paid
-//   5. A valid UTR/reference ID is detected
-//   6. OCR confidence >= MIN_OCR_CONFIDENCE_APPROVE
-//   7. All field-level confidences are "high"
-//   8. (when enabled) the detected recipient name matches the configured name
-//
-// REJECT conditions (ANY triggers rejection):
-//   - Wrong UPI
-//   - Wrong amount (confidently read, different value)
-//   - Transaction outside the 30-minute window (older than 30 min OR in the
-//     future) or on a different calendar date
-//   - Missing or non-success transaction status
-//   - Missing UTR
-//   - Low OCR confidence
-//   - Any field confidence below "high"
-//   - Recipient name present but different from the configured name
-//   - Duplicate UTR (handled by reserveApprovedUtr)
-//
-// MANUAL-REVIEW conditions (inconclusive — never auto-approved):
-//   - Amount could not be read at all
-//   - Transaction date could not be read at all
-//   - Transaction date read, but the time component is missing
-//   - Recipient name could not be read, or was read only partially
-//   - No receiver name is configured
-// ─────────────────────────────────────────────────────────────
-export function decidePaymentVerification({
-  upiMatch, amountMatch, dateValid, utrPresent,
-  transactionStatusOk, ocrConfidence,
-  receiverName, nameMatch, nameFound, nameConfigured,
-  // Optional refinements. `undefined` keeps the legacy behaviour (a hard
-  // rejection) so direct engine callers and older tests are unaffected;
-  // `false` means "the field could NOT be read" and fails closed into
-  // manual_review.
-  amountDetected,
-  dateDetected,
-  timeDetected,
-  namePartial,
-}) {
-  // Gate 1: UPI must match
-  if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
-
-  // Gate 2 (Rule A): Amount must match the server-resolved expected amount.
-  if (amountMatch !== true) {
-    // No amount could be read at all — the screenshot is inconclusive,
-    // not wrong. Fail closed into manual review instead of accusing the
-    // user of paying the wrong amount.
-    if (amountDetected === false) return { decision: 'manual_review', reason: 'AMOUNT_NOT_DETECTED' };
-    return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
-  }
-
-  // Gate 3 (Rules C + D): The transaction timestamp must be inside the
-  // 30-minute freshness window AND on the current India calendar date.
-  if (dateValid !== true) {
-    if (dateDetected === false) return { decision: 'manual_review', reason: 'PAYMENT_DATE_NOT_DETECTED' };
-    if (timeDetected === false) return { decision: 'manual_review', reason: 'PAYMENT_TIME_NOT_DETECTED' };
-    return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
-  }
-
-  // Gate 4: Transaction status must explicitly indicate success
-  if (transactionStatusOk !== true) return { decision: 'rejected', reason: 'TRANSACTION_FAILED' };
-
-  // Gate 5: UTR must be present
-  if (utrPresent !== true) return { decision: 'rejected', reason: 'MISSING_UTR' };
-
-  // Gate 6: OCR confidence must meet the approval floor.
-  // Undefined confidence fails closed — never silently bypass the gate.
-  const confident = ocrConfidence !== undefined && ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE;
-  if (!confident) return { decision: 'rejected', reason: 'LOW_OCR_CONFIDENCE' };
-
-  // Gate 7 (SECONDARY): recipient name. Only evaluated when a receiver name
-  // is supplied. Undefined => disabled (direct engine callers / legacy tests).
-  if (receiverName !== undefined) {
-    if (nameConfigured !== true) {
-      // No trusted payee name configured — fail safe, do not auto-approve.
-      return { decision: 'manual_review', reason: 'RECEIVER_NAME_NOT_CONFIGURED' };
-    }
-    if (nameMatch !== true) {
-      if (namePartial === true) {
-        // The payee name was read only partially ("JAYARAJ" for
-        // "JAYARAJ ALAGAR") — incomplete evidence, needs a human.
-        return { decision: 'manual_review', reason: 'RECEIVER_NAME_INCOMPLETE' };
-      }
-      if (nameFound === true) {
-        // A payee name was read and it is a DIFFERENT person — hard reject.
-        return { decision: 'rejected', reason: 'RECEIVER_NAME_MISMATCH' };
-      }
-      // No name could be read from the screenshot — needs human review.
-      return { decision: 'manual_review', reason: 'RECEIVER_NAME_UNREADABLE' };
-    }
-  }
-
-  // All gates passed — approve.
-  return { decision: 'approved', reason: null };
-}
-
-export function requireExternalPaymentConfirmation(verificationResult) {
-  if (verificationResult?.decision !== 'approved') return verificationResult;
-
-  return {
-    ...verificationResult,
-    ocrDecision: 'approved',
-    decision: 'manual_review',
-    // Public outcome contract: an engine-approved screenshot that still
-    // needs provider/human confirmation is PENDING_VERIFICATION — never an
-    // approval, never a rejection.
-    status: 'PENDING_VERIFICATION',
-    reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
+export {
+  decidePaymentVerification,
+  requireExternalPaymentConfirmation,
+  normalizeUtr,
+  reserveApprovedUtr,
+  releaseApprovedUtr,
+};
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Runs OCR on a screenshot and produces the verification result.
 //
 // Throws OCR_FAILED / OCR_UNREADABLE / OCR_TIMEOUT when the screenshot
@@ -212,15 +67,15 @@ export function requireExternalPaymentConfirmation(verificationResult) {
 // passes and the three amount-recovery stages. The deadline is computed
 // ONCE and passed down, so a slow screenshot is abandoned deterministically
 // with OCR_TIMEOUT instead of running until the HTTP request times out.
-// An OCR timeout is INCONCLUSIVE — it can never be read as an approval.
+// An OCR timeout is INCONCLUSIVE â€” it can never be read as an approval.
 //
 // The amount-recovery stages additionally run under `recoveryBudget`
 // (default OCR_AMOUNT_RECOVERY_BUDGET_MS, the targeted phase) and
 // `stageBudget` (default OCR_RECOVERY_STAGE_BUDGET_MS, per stage). A stage
 // that exhausts its budget stops and keeps the evidence it already read; the
-// decision then follows the normal rules (an unreadable amount → manual
+// decision then follows the normal rules (an unreadable amount â†’ manual
 // review).
-// ─────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function runScreenshotVerification({
   imageBuffer,
   screenshotUrl,
@@ -234,12 +89,12 @@ export async function runScreenshotVerification({
   recoveryBudget,
   stageBudget,
 }) {
-  // Server-side upload/receipt time — captured BEFORE the OCR run starts.
+  // Server-side upload/receipt time â€” captured BEFORE the OCR run starts.
   // The 30-minute freshness window (Rule D) is measured from this instant
   // (spec: "within 30 min of the SERVER-SIDE upload time"). Capturing it
   // after OCR would erode the window by the OCR duration (30-75 s in
   // production), so a payment made 29:45 before upload could be rejected as
-  // >30 min old. It is captured EXACTLY ONCE and reused by every stage —
+  // >30 min old. It is captured EXACTLY ONCE and reused by every stage â€”
   // OCR retries, image preprocessing and recovery passes never reset it.
   const receivedAt = now instanceof Date ? now : new Date();
   const ocrStart = Date.now();
@@ -272,7 +127,7 @@ export async function runScreenshotVerification({
       buffer = Buffer.from(await resp.arrayBuffer());
     }
 
-    // ── Primary OCR pass ──
+    // â”€â”€ Primary OCR pass â”€â”€
     const primaryStart = Date.now();
     const ocr = await runOCR(buffer, { deadline });
     primaryMs = Date.now() - primaryStart;
@@ -295,11 +150,11 @@ export async function runScreenshotVerification({
     extractedReceiverNames = primaryExtracted.receiverNames || [];
     transactionStatus = primaryExtracted.transactionStatus;
 
-    // ── Additional OCR passes (upscaled + thresholded) ──
+    // â”€â”€ Additional OCR passes (upscaled + thresholded) â”€â”€
     // Run when primary pass is missing key data to improve recall.
     // Skipped when the primary pass already extracted EVERY required field
-    // (amount, UPI, UTR, date+time, success status, payee name) — the two
-    // extra full-page OCR runs then add no recall, only ~2× latency.
+    // (amount, UPI, UTR, date+time, success status, payee name) â€” the two
+    // extra full-page OCR runs then add no recall, only ~2Ã— latency.
     const primaryHasTimeEntry = extractedDateTimes.some(e => e.hasTime);
     const primaryComplete =
       extractedAmounts.length > 0 &&
@@ -365,7 +220,7 @@ export async function runScreenshotVerification({
       }
       ocrPassInfo.candidatesFromPasses = { amounts: extractedAmounts, upis: extractedUPIs, utrs: extractedUTRs };
     } catch (e) {
-      // A budget expiry is NOT "best-effort" — it aborts the attempt.
+      // A budget expiry is NOT "best-effort" â€” it aborts the attempt.
       if (e?.code === 'OCR_TIMEOUT') throw e;
       /* additional passes are best-effort */
     }
@@ -465,30 +320,30 @@ export async function runScreenshotVerification({
     return { verificationResult: demoResult, verificationTime, utr: null };
   }
 
-  // ── UPI match is resolved BEFORE amount recovery ──
+  // â”€â”€ UPI match is resolved BEFORE amount recovery â”€â”€
   // decidePaymentVerification() evaluates Gate 1 (UPI) before Gate 2 (amount),
   // so a UPI mismatch is already terminal: no amount candidate discovered later
   // can change the decision or its reason. The three amount-recovery stages cost
   // up to 125 extra OCR calls (~40s), so they are skipped when the outcome is
   // already fixed. UPI matching never reads amount data, so this reorder is a
-  // no-op for the UPI-pass path — recovery still runs there exactly as before.
+  // no-op for the UPI-pass path â€” recovery still runs there exactly as before.
   const upiResult = matchUPIWithRecovery(extractedUPIs, receiverUpi);
   const upiMatch = upiResult.match;
   // When UPI already failed, recovery is skipped and these fields keep their
   // primary-pass values (checks.amount / extractedAmounts / fieldConfidence)
-  // — diagnostics only; decision and reason are unaffected.
+  // â€” diagnostics only; decision and reason are unaffected.
   const skipAmountRecovery = upiMatch !== true;
 
-  // ─────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // AMOUNT-RECOVERY BUDGETS
   //
   // `deadline` is the shared OVERALL deadline for the whole attempt (primary
   // pass + additional passes + every recovery stage). The recovery stages
   // additionally get:
   //
-  //   recoveryBudgetMs — wall-clock budget for the TARGETED recovery phase
-  //     (top-region probe → deep region → currency region).
-  //   stageBudgetMs    — cap for a SINGLE recovery stage, so one pathological
+  //   recoveryBudgetMs â€” wall-clock budget for the TARGETED recovery phase
+  //     (top-region probe â†’ deep region â†’ currency region).
+  //   stageBudgetMs    â€” cap for a SINGLE recovery stage, so one pathological
   //     stage cannot consume the whole recovery budget.
   //
   // Defaults are sized from the measured per-stage latency (see
@@ -497,11 +352,11 @@ export async function runScreenshotVerification({
   // recovery stage is truncated on a busy host.
   //
   // A stage that runs out of its SOFT budget stops and returns the evidence it
-  // already collected (partial results are kept — "an amount was read" is
+  // already collected (partial results are kept â€” "an amount was read" is
   // different from "no amount could be read"). Only the shared overall
-  // deadline aborts the attempt with OCR_TIMEOUT (→ HTTP 504, retryable,
+  // deadline aborts the attempt with OCR_TIMEOUT (â†’ HTTP 504, retryable,
   // never an approval).
-  // ─────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const recoveryBudgetMs = Number.isFinite(recoveryBudget) && recoveryBudget > 0
     ? recoveryBudget
     : OCR_AMOUNT_RECOVERY_BUDGET_MS;
@@ -514,8 +369,8 @@ export async function runScreenshotVerification({
   let recoveryBudgetExhausted = false;
 
   // Runs one recovery stage under the tightest applicable limit.
-  //   hard deadline → the shared overall deadline → OCR_TIMEOUT (504)
-  //   soft deadline → the stage / recovery budget → stop, keep partial results
+  //   hard deadline â†’ the shared overall deadline â†’ OCR_TIMEOUT (504)
+  //   soft deadline â†’ the stage / recovery budget â†’ stop, keep partial results
   // The soft deadline is only used when it is strictly EARLIER than the hard
   // one, so a stage can never soft-stop past the overall deadline.
   const runRecoveryStage = async (name, fn) => {
@@ -529,7 +384,7 @@ export async function runScreenshotVerification({
       recoveryStagesRun.push({ stage: name, exhausted });
       return value;
     } catch (e) {
-      // OCR_TIMEOUT here means the HARD deadline was reached → the whole
+      // OCR_TIMEOUT here means the HARD deadline was reached â†’ the whole
       // attempt is inconclusive and must surface as a retryable timeout.
       if (e?.code === 'OCR_TIMEOUT') throw e;
       recoveryStagesRun.push({ stage: name, error: e?.code || 'stage_error' });
@@ -551,8 +406,8 @@ export async function runScreenshotVerification({
   //
   // The full-height scan used to run FIRST, so a receipt whose large-font
   // amount sits in the top 45% (the common Google Pay layout) paid for all
-  // ~60 full-height jobs before the deep/currency stages — which are the
-  // ones that actually recover that amount — ever ran. Reordering keeps the
+  // ~60 full-height jobs before the deep/currency stages â€” which are the
+  // ones that actually recover that amount â€” ever ran. Reordering keeps the
   // SAME evidence and the SAME decision, but the expensive scan is now only
   // reached when the amount is genuinely unreadable in the top region.
   let amountMatch = matchAmount(extractedAmounts, expectedAmount);
@@ -600,13 +455,13 @@ export async function runScreenshotVerification({
     mergeAmountCandidates(deepRecovered || []);
   }
 
-  // ── Currency-symbol corruption recovery ──
+  // â”€â”€ Currency-symbol corruption recovery â”€â”€
   // When all OCR passes extract a candidate like "2120" but the expected
-  // amount is 120, Tesseract may have misread the ₹ symbol as "2".
+  // amount is 120, Tesseract may have misread the â‚¹ symbol as "2".
   // This step runs targeted region-specific OCR with multiple preprocessing
   // strategies to recover evidence of the correct amount from the image.
   // It ONLY accepts when a preprocessing strategy produces the exact expected
-  // amount — no numeric heuristics, no string inference.
+  // amount â€” no numeric heuristics, no string inference.
   if (!amountMatch && !skipAmountRecovery) {
     const stageStart = Date.now();
     const currencyResult = await runRecoveryStage('currency', (softDeadline) =>
@@ -629,7 +484,7 @@ export async function runScreenshotVerification({
     }
   }
 
-  // ── Full-height strip scan (LAST resort) ──
+  // â”€â”€ Full-height strip scan (LAST resort) â”€â”€
   // Reached only when the amount is still unreadable in the top region.
   // This is the most expensive stage (~60 OCR jobs over every band of the
   // image) and it is skipped entirely whenever a cheaper stage already
@@ -639,7 +494,7 @@ export async function runScreenshotVerification({
   // could be read at all: the targeted stages are the ones proven to recover
   // a corrupted amount (7 of 8 measured variants, vs 0 of 8 for the currency
   // stage), and an unreadable amount is already routed to manual_review /
-  // AMOUNT_NOT_DETECTED by the decision engine — so the sweep would only
+  // AMOUNT_NOT_DETECTED by the decision engine â€” so the sweep would only
   // spend time on an outcome that is decided. When a WRONG amount was read,
   // the sweep still runs (inside its own budget) so the decision stays
   // exactly what it is today.
@@ -679,7 +534,7 @@ export async function runScreenshotVerification({
 
   const windowMinutes = PAYMENT_TIME_WINDOW_MINUTES;
 
-  // ── Rule D: freshness window, measured from the SERVER-SIDE upload instant ──
+  // â”€â”€ Rule D: freshness window, measured from the SERVER-SIDE upload instant â”€â”€
   //   0 <= uploadReferenceTime - transactionTime <= windowMinutes
   // The window is FORWARD-ONLY: a real payment always happens BEFORE the
   // screenshot is uploaded, so a transaction timestamp in the future is
@@ -688,7 +543,7 @@ export async function runScreenshotVerification({
   // OCR retries, image preprocessing or the recovery stages.
   const timeWithinWindow = isWithinPaymentWindow(date, receivedAt, windowMinutes);
 
-  // ── Rule C: the transaction must fall on the current India calendar day ──
+  // â”€â”€ Rule C: the transaction must fall on the current India calendar day â”€â”€
   // Compared in the configured application timezone (Asia/Kolkata), never the
   // server machine's local timezone.
   //
@@ -712,17 +567,17 @@ export async function runScreenshotVerification({
   const timeDetected = hasTimeComponent;
 
   // Transaction status must explicitly indicate success.
-  // null (not detected), "failed", "pending", "processing" all → false.
+  // null (not detected), "failed", "pending", "processing" all â†’ false.
   const transactionStatusOk = transactionStatus?.status === 'success';
 
   // UTR must be present.
   const utrPresent = !!utr;
 
   // Strict field confidence gate: ALL required fields must have "high"
-  // confidence.  Medium/low/none on any field → reject.
+  // confidence.  Medium/low/none on any field â†’ reject.
   const detectedUpi = extractedUPIs.length > 0 ? extractedUPIs.join(', ') : null;
 
-  // ── Recipient-name gate (SECONDARY identity check) ──
+  // â”€â”€ Recipient-name gate (SECONDARY identity check) â”€â”€
   // Active only when the caller supplies a receiver name. Direct engine
   // callers (tests) omit it and keep the original binary behaviour.
   const nameActive = receiverName !== undefined;
@@ -731,7 +586,7 @@ export async function runScreenshotVerification({
   const nameMatch = nameActive ? nameResult.match === true : true;
   const nameFound = nameActive ? nameResult.candidates.length > 0 : false;
   // A candidate that is only a PART of the configured name ("JAYARAJ" for
-  // "JAYARAJ ALAGAR") is incomplete evidence → manual review, never approve.
+  // "JAYARAJ ALAGAR") is incomplete evidence â†’ manual review, never approve.
   const namePartial = nameActive ? nameResult.partial === true : false;
   const detectedReceiverNames = extractedReceiverNames.length > 0 ? extractedReceiverNames.join(', ') : null;
 
@@ -778,11 +633,11 @@ export async function runScreenshotVerification({
       ? {
         confidence: !nameConfigured ? 'none' : nameMatch ? 'high' : (namePartial ? 'medium' : (nameFound ? 'low' : 'none')),
         reason: !nameConfigured
-          ? 'No receiver name configured — manual review required'
+          ? 'No receiver name configured â€” manual review required'
           : nameMatch
             ? 'Detected receiver name matches configured payee'
             : (namePartial
-              ? `Detected ${detectedReceiverNames} is only part of the configured receiver name — manual review required`
+              ? `Detected ${detectedReceiverNames} is only part of the configured receiver name â€” manual review required`
               : (nameFound
                 ? `Detected ${detectedReceiverNames} does not match configured receiver name`
                 : 'No receiver name found in screenshot')),
@@ -841,12 +696,12 @@ export async function runScreenshotVerification({
       passed: dateValid,
       detected: detectedDate,
       timezone: TIMEZONE,
-      // Rule C — the transaction must be on the current India calendar day.
+      // Rule C â€” the transaction must be on the current India calendar day.
       onExpectedCalendarDay: dateOnExpectedDay,
       sameCalendarDay,
       midnightStraddle,
       calendarDayDiff,
-      // Rule D — 0 <= uploadReference - transactionTime <= window.
+      // Rule D â€” 0 <= uploadReference - transactionTime <= window.
       timeWithinWindow,
       hasTimeComponent,
       windowMinutes,
@@ -870,7 +725,7 @@ export async function runScreenshotVerification({
     status: transactionStatus ? transactionStatus.matched : null,
   };
 
-  // One structured line per verification request — every gate, its inputs and
+  // One structured line per verification request â€” every gate, its inputs and
   // the final decision. This is the audit trail used to explain WHY a
   // screenshot was approved or rejected (register payments AND top-ups).
   // Contains no secrets, tokens or credentials.
@@ -976,7 +831,7 @@ export async function runScreenshotVerification({
         matchedCandidate: upiResult.candidate,
         expectedUpi: receiverUpi,
       },
-      // Recovery-budget diagnostics — why an amount was (not) recovered.
+      // Recovery-budget diagnostics â€” why an amount was (not) recovered.
       // `budgetExhausted` is true when a recovery stage ran out of its budget
       // and the (expensive) full-height sweep was therefore skipped; the
       // decision in that case is the normal one for an unreadable amount
@@ -993,55 +848,4 @@ export async function runScreenshotVerification({
     verificationTime,
     utr,
   };
-}
-
-// ─────────────────────────────────────────────────────────────
-// Approved-UTR duplicate protection (shared by payments AND top-ups).
-//
-// Only PREVIOUSLY APPROVED records live in approved_utrs, so a UTR that
-// appears on a rejected/pending/failed/cancelled record can never block a
-// future approval. Missing/empty UTRs are skipped entirely.
-// ─────────────────────────────────────────────────────────────
-export function normalizeUtr(utr) {
-  if (!utr) return null;
-  const normalized = String(utr).replace(/\s+/g, '').trim().toUpperCase();
-  return normalized || null;
-}
-
-// Atomically records an approved UTR. Race-safe: the UNIQUE(utr) constraint
-// (migration 007) guarantees that only ONE caller can reserve a given UTR —
-// concurrent same-UTR submissions see a 23505 and are told "duplicate".
-// Never a SELECT-then-INSERT.
-//
-// Returns:
-//   { reserved: true,  duplicate: false, utr }  -> caller owns the UTR now
-//   { reserved: false, duplicate: true,  utr }  -> already APPROVED elsewhere
-//   { reserved: false, duplicate: false, utr: null } -> no UTR to reserve
-export async function reserveApprovedUtr(utr, referenceType, referenceId) {
-  const normalized = normalizeUtr(utr);
-  if (!normalized) return { reserved: false, duplicate: false, utr: null };
-
-  const { data, error } = await supabase
-    .from('approved_utrs')
-    .insert({ utr: normalized, reference_type: referenceType, reference_id: referenceId })
-    .select('utr')
-    .maybeSingle();
-
-  if (error) {
-    if (error.code === '23505') return { reserved: false, duplicate: true, utr: normalized };
-    throw { message: 'Failed to record approved UTR', code: 'UTR_RESERVE_FAILED' };
-  }
-  return { reserved: true, duplicate: false, utr: normalized, id: data?.id || null };
-}
-
-// Removes a reservation made for a specific record (used to compensate when
-// approval fails AFTER the UTR was reserved, so the UTR can be retried).
-export async function releaseApprovedUtr(utr, referenceType, referenceId) {
-  const normalized = normalizeUtr(utr);
-  if (!normalized) return;
-  await supabase
-    .from('approved_utrs')
-    .delete()
-    .eq('utr', normalized)
-    .eq('reference_id', referenceId);
 }

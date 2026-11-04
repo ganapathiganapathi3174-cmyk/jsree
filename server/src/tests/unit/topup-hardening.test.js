@@ -67,7 +67,7 @@ vi.mock('../../db/supabase.js', () => {
   return { supabase: c, supabaseAnon: {}, default: c };
 });
 vi.mock('../../services/auditService.js', () => ({ logAction: vi.fn(async () => ({})) }));
-vi.mock('../../services/verificationService.js', async (importOriginal) => {
+vi.mock('../../services/paymentVerification/index.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runScreenshotVerification, reserveApprovedUtr };
 });
@@ -81,6 +81,8 @@ const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecov
   // This suite asserts straight-through auto-approval: enable it explicitly.
   // Production default (unset) is the secure external-confirmation fallback.
   process.env.PAYMENT_AUTO_APPROVE = 'true';
+  // Straight-through approval requires provider confirmation (mock provider).
+  process.env.PAYMENT_PROVIDER_MODE = 'mock';
   return {
     runOCR: vi.fn(),
     runAmountRecoveryOCR: vi.fn(),
@@ -208,7 +210,7 @@ describe('top-up pre-upload gates', () => {
     expect(db.state.topupRow.status).toBe('completed');
     expect(db.state.topupRow.verification_result).toMatchObject({
       decision: 'approved',
-      engine: 'paymentValidationEngine/v1',
+      engine: 'paymentVerificationEngine/v2',
     });
     expect(creditMock).toHaveBeenCalledTimes(1);
   });
@@ -342,7 +344,7 @@ describe('admin top-up manual review', () => {
   it('admin approval credits both users in one batch and records the review', async () => {
     reset();
     db.state.topupRow = reviewTopup();
-    const result = await verifyTopup('top-1', 'admin-1', true);
+    const result = await verifyTopup('top-1', 'admin-1', true, 'Confirmed against bank statement');
 
     expect(result.credited).toBe(true);
     expect(db.state.topupRow.status).toBe('completed');
@@ -363,7 +365,7 @@ describe('admin top-up manual review', () => {
     db.state.topupRow = reviewTopup();
     db.state.topupRow.screenshot_url = null;
 
-    await expect(verifyTopup('top-1', 'admin-1', true))
+    await expect(verifyTopup('top-1', 'admin-1', true, 'Confirmed against bank statement'))
       .rejects.toMatchObject({ code: 'TOPUP_PROOF_REQUIRED' });
     expect(creditMock).not.toHaveBeenCalled();
   });
@@ -377,7 +379,7 @@ describe('admin top-up manual review', () => {
       error: null,
     };
 
-    await expect(verifyTopup('top-1', 'admin-1', true))
+    await expect(verifyTopup('top-1', 'admin-1', true, 'Confirmed against bank statement'))
       .rejects.toMatchObject({ code: 'DUPLICATE_UTR' });
     expect(db.state.topupRow.status).toBe('manual_review');
     expect(creditMock).not.toHaveBeenCalled();
@@ -388,7 +390,7 @@ describe('admin top-up manual review', () => {
     db.state.topupRow = reviewTopup();
     creditMock.mockRejectedValueOnce({ code: 'XX000', message: 'atomic transaction rolled back' });
 
-    await expect(verifyTopup('top-1', 'admin-1', true))
+    await expect(verifyTopup('top-1', 'admin-1', true, 'Confirmed against bank statement'))
       .rejects.toMatchObject({ code: 'XX000' });
     expect(db.state.topupRow.status).toBe('manual_review');
     expect(db.state.topupRow.verification_result).toMatchObject({

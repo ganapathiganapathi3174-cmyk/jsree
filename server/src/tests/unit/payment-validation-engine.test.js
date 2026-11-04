@@ -37,21 +37,19 @@ vi.mock('../../db/supabase.js', () => {
   return { supabase: client, supabaseAnon: {}, default: client };
 });
 
-import { validateImageIntegrity } from '../../services/paymentValidation/stage1Integrity.js';
-import {
-  validateAmount,
-  validateReceiver,
-  validateDateTime,
-  validateTransactionId,
-} from '../../services/paymentValidation/stageValidation.js';
-import { checkDuplicateTransaction } from '../../services/paymentValidation/stageDuplicate.js';
+import { validateImageIntegrity } from '../../services/paymentVerification/imageIntegrity.js';
+import { validateAmount } from '../../services/paymentVerification/validateAmount.js';
+import { validateReceiver } from '../../services/paymentVerification/validateReceiver.js';
+import { validateDateTime } from '../../services/paymentVerification/validateTimestamp.js';
+import { validateTransactionId } from '../../services/paymentVerification/validateTransactionId.js';
+import { checkDuplicateTransaction } from '../../services/paymentVerification/duplicateDetection.js';
 import {
   ValidationDecisionEngine,
   isInconclusiveReason,
   codeForInconclusive,
   userMessageFor,
-} from '../../services/paymentValidation/decisionEngine.js';
-import { paymentValidationEngine } from '../../services/paymentValidationService.js';
+} from '../../services/paymentVerification/decisionEngine.js';
+import { paymentVerificationEngine as paymentValidationEngine } from '../../services/paymentVerification/index.js';
 import { istWallClockParts } from '../../utils/paymentNormalize.js';
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';

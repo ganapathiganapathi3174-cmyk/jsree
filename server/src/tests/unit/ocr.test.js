@@ -1049,7 +1049,7 @@ Paytm`;
 });
 
 describe('OCR Service - REGRESSION: decidePaymentVerification with production OCR text', () => {
-  const { decidePaymentVerification } = require('../../services/verificationService.js');
+  const { decidePaymentVerification } = require('../helpers/legacyVerificationAdapter.js');
 
   const PRODUCTION_OCR_TEXT = `Money Sent Successfully
 Rupees One Hundred Twenty Only

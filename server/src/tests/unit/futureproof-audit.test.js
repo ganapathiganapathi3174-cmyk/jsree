@@ -4,7 +4,7 @@ import {
   extractTransactionStatus, isDemoScreenshot, matchAmount, matchUPI, matchUPIWithRecovery,
   normalizeUPI, isWithinTimeWindow,
 } from '../../services/ocrService.js';
-import { decidePaymentVerification, runScreenshotVerification } from '../../services/verificationService.js';
+import { decidePaymentVerification, runScreenshotVerification } from '../helpers/legacyVerificationAdapter.js';
 
 // ─────────────────────────────────────────────────────────────
 // FUTURE-PROOF ADVERSARIAL AUDIT (read-only w.r.t. production).

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   decidePaymentVerification,
   runScreenshotVerification,
-} from '../../services/verificationService.js';
+} from '../helpers/legacyVerificationAdapter.js';
 
 // ─────────────────────────────────────────────────────────────
 // EXACT PARITY: Register membership payment vs TopUp payment.

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { extractDateTimes } from '../../services/ocrService.js';
-import { runScreenshotVerification } from '../../services/verificationService.js';
+import { runScreenshotVerification } from '../helpers/legacyVerificationAdapter.js';
 
 // ─────────────────────────────────────────────────────────────
 // DEBUG-ONLY diagnostic: genuine Paytm ₹120 receipt (UTR 625024266060)

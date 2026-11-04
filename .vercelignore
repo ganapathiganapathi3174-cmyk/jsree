@@ -1,0 +1,13 @@
+# Uploaded by `vercel` CLI deploys only (Git deploys use the Git tree).
+# The frontend build (root vercel.json -> client/) never needs these.
+node_modules/
+referral-platform/
+referral-platform_snapshot_*.zip
+qa/
+qa-results/
+docs/
+uploads/
+server/
+eng.traineddata
+*.log
+.vercel/

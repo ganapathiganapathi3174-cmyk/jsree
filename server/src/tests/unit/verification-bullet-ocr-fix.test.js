@@ -27,7 +27,7 @@ vi.mock('../../db/supabase.js', () => {
 });
 
 import { matchUPIWithRecovery, extractUPIs } from '../../services/ocrService.js';
-import { runScreenshotVerification } from '../../services/verificationService.js';
+import { runScreenshotVerification } from '../helpers/legacyVerificationAdapter.js';
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 

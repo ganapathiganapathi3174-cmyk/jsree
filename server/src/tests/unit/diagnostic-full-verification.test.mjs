@@ -18,7 +18,7 @@ import {
 import {
   decidePaymentVerification,
   runScreenshotVerification,
-} from '../../services/verificationService.js';
+} from '../helpers/legacyVerificationAdapter.js';
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 

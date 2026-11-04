@@ -39,7 +39,7 @@ import {
 import {
   runScreenshotVerification,
   decidePaymentVerification,
-} from '../../services/verificationService.js';
+} from '../helpers/legacyVerificationAdapter.js';
 
 const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery, verifyAmountWithCurrencyRecovery } = vi.hoisted(() => ({
   runOCR: vi.fn(),

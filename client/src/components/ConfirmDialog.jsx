@@ -9,6 +9,7 @@ export default function ConfirmDialog({
   message,
   confirmText = 'Confirm',
   confirmVariant = 'danger',
+  children,
 }) {
   const [loading, setLoading] = useState(false);
 
@@ -33,8 +34,9 @@ export default function ConfirmDialog({
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="sm">
-      <p className="text-ink-muted text-sm leading-relaxed mb-6 whitespace-pre-line">{message}</p>
-      <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-3 sm:justify-end">
+      <p className="text-ink-muted text-sm leading-relaxed mb-4 whitespace-pre-line">{message}</p>
+      {children}
+      <div className="mt-2 flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-3 sm:justify-end">
         <button onClick={handleClose} disabled={loading} className="btn btn-secondary">
           Cancel
         </button>

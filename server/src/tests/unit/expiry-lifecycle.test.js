@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { decidePaymentVerification } from '../../services/verificationService.js';
+import { decidePaymentVerification } from '../helpers/legacyVerificationAdapter.js';
 import { isPaymentExpired } from '../../services/paymentService.js';
 
 // ─────────────────────────────────────────────────────────────

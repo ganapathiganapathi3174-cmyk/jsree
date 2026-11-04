@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { runScreenshotVerification } from '../../services/verificationService.js';
+import { runScreenshotVerification } from '../helpers/legacyVerificationAdapter.js';
 
 // Gate 1 (UPI) is evaluated before Gate 2 (amount) in decidePaymentVerification,
 // so once UPI fails the decision is fixed at UPI_MISMATCH. The three amount

@@ -15,6 +15,7 @@ export default function AdminTopUps() {
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [reviewAction, setReviewAction] = useState(null);
+  const [reviewReason, setReviewReason] = useState('');
   const [screenshotTopup, setScreenshotTopup] = useState(null);
 
   const load = () => { api.get('/admin/topups').then(r => setTopups(r.data.data || [])).catch(() => toast.error('Failed to load')).finally(() => setLoading(false)); };
@@ -25,11 +26,30 @@ export default function AdminTopUps() {
     catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
   };
 
+  const openReview = (topup, approved) => {
+    setReviewReason('');
+    setReviewAction({ id: topup.id, approved });
+  };
+
+  const closeReview = () => {
+    setReviewAction(null);
+    setReviewReason('');
+  };
+
   const handleReview = async () => {
+    // Audited manual review — the SAME recorded-reason rule the registration
+    // payment review enforces (min 3 characters, written to the audit log).
+    if (reviewReason.trim().length < 3) {
+      toast.error('A recorded reason is required (min 3 characters)');
+      return;
+    }
     try {
-      await api.put(`/admin/topups/${reviewAction.id}/review`, { approved: reviewAction.approved });
+      await api.put(`/admin/topups/${reviewAction.id}/review`, {
+        approved: reviewAction.approved,
+        reason: reviewReason.trim(),
+      });
       toast.success(reviewAction.approved ? 'Top-up approved and credited' : 'Top-up rejected');
-      setReviewAction(null);
+      closeReview();
       load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to review top-up');
@@ -82,7 +102,7 @@ export default function AdminTopUps() {
                         {t.status === 'manual_review' && (
                           <>
                             <button
-                              onClick={() => setReviewAction({ id: t.id, approved: true })}
+                              onClick={() => openReview(t, true)}
                               disabled={!t.verification_result?.utr}
                               className="btn btn-icon btn-sm btn-ghost text-success-600 hover:text-success-700"
                               title={t.verification_result?.utr ? 'Approve after independently verifying the transaction' : 'Cannot approve because no transaction reference was detected'}
@@ -91,7 +111,7 @@ export default function AdminTopUps() {
                               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                             </button>
                             <button
-                              onClick={() => setReviewAction({ id: t.id, approved: false })}
+                              onClick={() => openReview(t, false)}
                               className="btn btn-icon btn-sm btn-ghost text-error-600 hover:text-error-700"
                               title="Reject top-up after review"
                               aria-label="Reject top-up after review"
@@ -120,7 +140,7 @@ export default function AdminTopUps() {
       <ConfirmDialog isOpen={!!confirmDelete} onClose={() => setConfirmDelete(null)} onConfirm={() => handleDelete(confirmDelete?.id)} title="Delete this top-up permanently?" message="Only this top-up payment record and its own verification data will be removed. The user account, wallet, wallet balance, referrals and all other top-ups will remain." confirmText="Delete" confirmVariant="danger" />
       <ConfirmDialog
         isOpen={!!reviewAction}
-        onClose={() => setReviewAction(null)}
+        onClose={closeReview}
         onConfirm={handleReview}
         title={reviewAction?.approved ? 'Approve this top-up?' : 'Reject this top-up?'}
         message={reviewAction?.approved
@@ -128,7 +148,18 @@ export default function AdminTopUps() {
           : 'Reject this top-up after reviewing the uploaded proof and verification details.'}
         confirmText={reviewAction?.approved ? 'Approve and credit' : 'Reject top-up'}
         confirmVariant={reviewAction?.approved ? 'success' : 'danger'}
-      />
+      >
+        <div className="mb-4">
+          <label className="label" htmlFor="topup-review-reason">Review reason (required - recorded in the audit log)</label>
+          <input
+            id="topup-review-reason"
+            className="input-field"
+            placeholder="e.g. Confirmed ₹120 UTR 4321... with bank statement"
+            value={reviewReason}
+            onChange={e => setReviewReason(e.target.value)}
+          />
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

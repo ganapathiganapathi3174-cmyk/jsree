@@ -37,5 +37,16 @@ services:
         sync: false
       - key: ADMIN_UPI_ID
         sync: false
+      # Receiver (payee) name for the OCR name gate. REQUIRED for approvals:
+      # without it every proof fails safe to RECEIVER_NAME_NOT_CONFIGURED.
+      - key: ADMIN_RECEIVER_NAME
+        sync: false
+      # Approval safety pins — straight-through auto-approval stays OFF and no
+      # payment provider is configured until a real provider integration is
+      # tested and explicitly authorized (see .env.example / DEPLOYMENT_OPERATIONS.md).
+      - key: PAYMENT_AUTO_APPROVE
+        value: "false"
+      - key: PAYMENT_PROVIDER_MODE
+        value: "none"
       - key: DATABASE_URL
         sync: false

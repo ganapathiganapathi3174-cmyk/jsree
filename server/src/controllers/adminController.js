@@ -291,7 +291,7 @@ export async function reviewTopup(req, res) {
   } catch (error) {
     const status = error.code === 'TOPUP_NOT_FOUND' ? 404
       : error.code === 'DUPLICATE_UTR' ? 409
-        : ['TOPUP_NOT_VERIFIABLE', 'TOPUP_PROOF_REQUIRED', 'TOPUP_VERIFICATION_INCOMPLETE', 'TOPUP_UTR_REQUIRED'].includes(error.code) ? 400
+        : ['TOPUP_NOT_VERIFIABLE', 'TOPUP_PROOF_REQUIRED', 'TOPUP_VERIFICATION_INCOMPLETE', 'TOPUP_UTR_REQUIRED', 'REVIEW_REASON_REQUIRED'].includes(error.code) ? 400
           : 500;
     res.status(status).json({
       success: false,

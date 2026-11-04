@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { runScreenshotVerification } from '../../services/verificationService.js';
+import { runScreenshotVerification } from '../helpers/legacyVerificationAdapter.js';
 
 const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses } = vi.hoisted(() => ({
   runOCR: vi.fn(),

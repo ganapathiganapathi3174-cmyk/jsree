@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { normalizeUtr, reserveApprovedUtr, releaseApprovedUtr } from '../../services/verificationService.js';
+import { normalizeUtr, reserveApprovedUtr, releaseApprovedUtr } from '../helpers/legacyVerificationAdapter.js';
 import { applyPaymentUtrPolicy } from '../../services/paymentService.js';
 import { applyTopupVerification } from '../../services/topupService.js';
 

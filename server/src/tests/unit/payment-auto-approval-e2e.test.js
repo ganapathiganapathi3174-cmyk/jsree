@@ -9,6 +9,8 @@ const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecov
   // These suites assert straight-through auto-approval: enable it explicitly.
   // Production default (unset) is the secure external-confirmation fallback.
   process.env.PAYMENT_AUTO_APPROVE = 'true';
+  // Straight-through approval requires provider confirmation (mock provider).
+  process.env.PAYMENT_PROVIDER_MODE = 'mock';
   return {
     runOCR: vi.fn(),
     runAmountRecoveryOCR: vi.fn(),
@@ -151,7 +153,7 @@ describe('E2E: valid screenshot through paymentController.uploadScreenshot', () 
     expect(db.state.paymentRow.transaction_id).toBe('T7GHD240824');
     expect(db.state.paymentRow.verification_result).toMatchObject({
       decision: 'approved',
-      engine: 'paymentValidationEngine/v1',
+      engine: 'paymentVerificationEngine/v2',
     });
     expect(db.state.userRow.status).toBe('active');
     expect(db.state.userRow.current_plan).toBe(120);

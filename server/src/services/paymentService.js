@@ -10,27 +10,26 @@ import {
   decidePaymentVerification,
   reserveApprovedUtr,
   releaseApprovedUtr,
-  requireExternalPaymentConfirmation,
-} from './verificationService.js';
-// Centralized payment screenshot validation engine: the SINGLE decision path
-// for registration payments (this file) and top-ups (topupService). The legacy
-// runScreenshotVerification pipeline is no longer invoked by any production
-// service; it survives only for unit tests that exercise OCR helpers.
-import { paymentValidationEngine } from './paymentValidationService.js';
+} from './paymentVerification/index.js';
+// Unified payment verification engine: the SINGLE decision path for
+// registration payments (this file) and top-ups (topupService). It owns
+// extraction, every mandatory rule, the duplicate pre-check, provider
+// verification and the four-state approval policy. This file owns only the
+// persistence and the atomic side effects (UTR reservation, activation).
+import { paymentVerificationEngine } from './paymentVerification/index.js';
 import { getPaymentConfig } from './configService.js';
-import { verifyTransaction, getProviderMode } from './paymentProviderService.js';
 import {
   recordVerificationAttempt,
   listVerificationHistory,
   deriveOutcomeStatus,
-} from './paymentVerificationHistoryService.js';
+  ENGINE_ID,
+} from './paymentVerification/index.js';
 import {
   RECEIVER_UPI,
   RECEIVER_NAME,
   PAYMENT_TIME_WINDOW_MINUTES,
   OCR_VERIFICATION_BUDGET_MS,
   SENDER_NAME_POLICY,
-  isPaymentAutoApproveEnabled,
 } from '../config/paymentConfig.js';
 
 // Re-exported for callers/tests that import the decision engine here.
@@ -38,7 +37,7 @@ export { decidePaymentVerification };
 
 // Engine identifier recorded in verification_result / audit logs so every
 // decision can be traced to the engine version that produced it.
-const VALIDATION_ENGINE = 'paymentValidationEngine/v1';
+const VALIDATION_ENGINE = ENGINE_ID;
 
 const PLAN_AMOUNTS = { '120': 120, '500': 500, '1000': 1000 };
 // Statuses an admin can act on (approve / reject / re-verify).
@@ -318,12 +317,13 @@ export async function applyPaymentUtrPolicy(paymentId, { decision, utr }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// verifyPayment — runs the CENTRALIZED validation engine.
+// verifyPayment — runs the UNIFIED verification engine.
 //
-// paymentValidationEngine owns extraction, normalization, every mandatory
+// paymentVerificationEngine owns extraction, normalization, every mandatory
 // rule (amount / receiver / date-time / transaction id / image integrity /
-// transaction status) and the duplicate check. This function owns only the
-// persistence and the atomic side effects:
+// transaction status), the duplicate check, provider verification and the
+// approval policy. This function owns only the persistence and the atomic
+// side effects:
 //   1. resolve screenshot bytes + server-side receiver config
 //   2. run the engine (bounded by OCR_VERIFICATION_BUDGET_MS)
 //   3. inconclusive outcome (OCR/DB/infra failure) -> throw, stay pending,
@@ -379,9 +379,11 @@ export async function verifyPayment(paymentId, imageBuffer) {
   }
   if (!buffer) throw { message: 'No screenshot data available', code: 'NO_SCREENSHOT' };
 
-  // ── The centralized validation engine — the ONLY decision path ──
-  const engineResult = await paymentValidationEngine.validatePayment({
+  // ── The unified verification engine — the ONLY decision path ──
+  // Screenshot gates + provider verification + approval policy in one call.
+  const verification = await paymentVerificationEngine.verify({
     imageBuffer: buffer,
+    purpose: 'registration',
     paymentRequest: {
       type: 'registration',
       expectedAmount: payment.expected_amount,
@@ -400,112 +402,51 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // never a decision and NEVER an approval. The row keeps its current status
   // (pending), stays resubmittable, and the controller records the failure
   // marker so the client gets an honest retry message.
-  if (engineResult.inconclusive) {
+  if (verification.inconclusive) {
     await recordVerificationAttempt({
       referenceType: 'payment',
       referenceId: paymentId,
       engine: VALIDATION_ENGINE,
       status: 'PENDING_VERIFICATION',
       decision: null,
-      reasonCode: engineResult.reason || null,
-      checks: engineResult.checks || null,
-      extractedData: engineResult.extractedData || null,
-      ocrConfidence: engineResult.ocrConfidence ?? null,
-      transactionId: engineResult.transactionId || null,
+      reasonCode: verification.reason || null,
+      checks: verification.checks || null,
+      extractedData: verification.extractedData || null,
+      ocrConfidence: verification.ocrConfidence ?? null,
+      transactionId: verification.transactionId || null,
       actorId: payment.user_id,
       actorRole: 'user',
     });
     throw {
-      message: engineResult.message || 'Screenshot verification did not complete',
-      code: engineResult.code || engineResult.reason || 'VERIFICATION_FAILED',
-      reason: engineResult.reason || null,
-      details: engineResult.details || null,
+      message: verification.message || 'Screenshot verification did not complete',
+      code: verification.code || verification.reason || 'VERIFICATION_FAILED',
+      reason: verification.reason || null,
+      details: verification.details || null,
     };
   }
 
   const verificationTime = new Date();
+  const providerResult = verification.provider || null;
+  const verificationResult = verification.verificationResult;
   let newStatus;
   let reason;
-  let verificationResult;
-  let providerResult = null;
 
-  if (engineResult.review === true) {
-    // ── Ambiguous/contradictory evidence (e.g. payer-name mismatch under
-    // the default 'review' policy): park for a human. No UTR is reserved,
-    // no activation runs, and the row stays actionable by an admin.
+  // Four-state outcome -> database status. PENDING_VERIFICATION (provider
+  // unconfirmed / auto-approve disabled) parks as manual_review with the
+  // PENDING_VERIFICATION status kept in verification_result — never a
+  // straight approval, no UTR reserved, row stays actionable.
+  if (verification.outcome === 'APPROVED') {
+    newStatus = 'approved';
+    reason = null;
+  } else if (verification.outcome === 'MANUAL_REVIEW') {
     newStatus = 'manual_review';
-    reason = engineResult.reason || 'MANUAL_REVIEW';
-    verificationResult = {
-      ...engineResult,
-      decision: 'manual_review',
-      status: 'MANUAL_REVIEW',
-      reason,
-      engine: VALIDATION_ENGINE,
-    };
-  } else if (engineResult.approved) {
-    // ── Provider verification (Rule F) ──
-    // When a provider integration is configured (mode != 'none'), an
-    // engine-approved screenshot is NOT enough: the transaction reference
-    // must be independently confirmed. A timeout / error / not-found
-    // response fails safe to PENDING_VERIFICATION — never an approval.
-    if (getProviderMode() !== 'none') {
-      providerResult = await verifyTransaction({
-        transactionId: engineResult.transactionId,
-        amount: engineResult.matchedAmount,
-        receiverUpi: RECEIVER_UPI,
-      });
-    }
-
-    if (providerResult && providerResult.verified !== true) {
-      newStatus = 'manual_review';
-      reason = 'PENDING_PROVIDER_VERIFICATION';
-      verificationResult = {
-        ...engineResult,
-        decision: 'manual_review',
-        status: 'PENDING_VERIFICATION',
-        reason,
-        provider: providerResult,
-        engine: VALIDATION_ENGINE,
-      };
-    } else if (!isPaymentAutoApproveEnabled()) {
-      // ── External-confirmation gate (PAYMENT_AUTO_APPROVE off, the default) ──
-      // The engine approved the screenshot (and the provider, if configured,
-      // confirmed it), but straight-through auto-approval is not enabled:
-      // park the row for human confirmation. decision='manual_review' keeps
-      // ocrDecision='approved' in the record, no UTR is reserved, no
-      // activation runs, and the row stays SUBMITTABLE.
-      const demoted = requireExternalPaymentConfirmation({
-        ...engineResult,
-        decision: 'approved',
-        reason: null,
-        provider: providerResult,
-      });
-      newStatus = 'manual_review';
-      reason = demoted.reason || 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED';
-      verificationResult = { ...demoted, reason, engine: VALIDATION_ENGINE };
-    } else {
-      newStatus = 'approved';
-      reason = null;
-      verificationResult = {
-        ...engineResult,
-        decision: 'approved',
-        status: 'APPROVED',
-        reason: null,
-        provider: providerResult,
-        engine: VALIDATION_ENGINE,
-      };
-    }
+    reason = verificationResult?.reason || 'MANUAL_REVIEW';
+  } else if (verification.outcome === 'PENDING_VERIFICATION') {
+    newStatus = 'manual_review';
+    reason = verificationResult?.reason || 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED';
   } else {
     newStatus = 'rejected';
-    reason = engineResult.reason || 'REJECTED';
-    verificationResult = {
-      ...engineResult,
-      decision: 'rejected',
-      status: 'REJECTED',
-      reason,
-      utr: engineResult.transactionId || null,
-      engine: VALIDATION_ENGINE,
-    };
+    reason = verificationResult?.reason || 'REJECTED';
   }
 
   // ── Approved-UTR duplicate gate (cross-flow) ──
@@ -515,7 +456,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // DUPLICATE_UTR — never SELECT-then-INSERT.
   let reservedUtr = null;
   if (newStatus === 'approved') {
-    const reserve = await reserveApprovedUtr(engineResult.transactionId, 'payment', paymentId);
+    const reserve = await reserveApprovedUtr(verification.transactionId, 'payment', paymentId);
     if (reserve.duplicate) {
       newStatus = 'rejected';
       reason = 'DUPLICATE_UTR';
@@ -546,7 +487,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
   const updateData = {
     verification_result: verificationResult,
     verified_at: verificationTime.toISOString(),
-    transaction_id: newStatus === 'approved' ? engineResult.transactionId : null,
+    transaction_id: newStatus === 'approved' ? verification.transactionId : null,
     status: newStatus,
   };
   if (newStatus === 'approved') updateData.approved_at = verificationTime.toISOString();
@@ -597,9 +538,9 @@ export async function verifyPayment(paymentId, imageBuffer) {
     decision: newStatus,
     reason,
     engine: VALIDATION_ENGINE,
-    utr: newStatus === 'approved' ? engineResult.transactionId : null,
-    ocrConfidence: engineResult.extractedData?.ocrConfidence ?? null,
-    timings: engineResult.timings || null,
+    utr: newStatus === 'approved' ? verification.transactionId : null,
+    ocrConfidence: verification.extractedData?.ocrConfidence ?? null,
+    timings: verification.timings || null,
     elapsedMs: elapsed,
   });
 
@@ -611,10 +552,10 @@ export async function verifyPayment(paymentId, imageBuffer) {
     status: verificationResult.status || deriveOutcomeStatus(newStatus, verificationResult),
     decision: verificationResult.decision || newStatus,
     reasonCode: reason || null,
-    checks: engineResult.checks || null,
-    extractedData: engineResult.extractedData || null,
-    ocrConfidence: engineResult.ocrConfidence ?? null,
-    transactionId: engineResult.transactionId || null,
+    checks: verification.checks || null,
+    extractedData: verification.extractedData || null,
+    ocrConfidence: verification.ocrConfidence ?? null,
+    transactionId: verification.transactionId || null,
     provider: providerResult,
     actorId: payment.user_id,
     actorRole: 'user',

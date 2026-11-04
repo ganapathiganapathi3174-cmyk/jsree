@@ -4,7 +4,7 @@ import { getUserPayments } from '../../services/paymentService.js';
 import {
   runScreenshotVerification,
   requireExternalPaymentConfirmation,
-} from '../../services/verificationService.js';
+} from '../helpers/legacyVerificationAdapter.js';
 import { applyTopupVerification, getTopupsForUser } from '../../services/topupService.js';
 
 const { runOCR, runAmountRecoveryOCR, runDeepAmountRecovery, runAdditionalOCRPasses } = vi.hoisted(() => {
@@ -14,6 +14,8 @@ const { runOCR, runAmountRecoveryOCR, runDeepAmountRecovery, runAdditionalOCRPas
   // These suites assert straight-through auto-approval: enable it explicitly.
   // Production default (unset) is the secure external-confirmation fallback.
   process.env.PAYMENT_AUTO_APPROVE = 'true';
+  // Straight-through approval requires provider confirmation (mock provider).
+  process.env.PAYMENT_PROVIDER_MODE = 'mock';
   return {
     runOCR: vi.fn(),
     runAmountRecoveryOCR: vi.fn(),
@@ -177,7 +179,7 @@ describe('RUNTIME PATH: paymentService.verifyPayment persisted status', () => {
 
       expect(result.decision).toBe('approved');
       expect(result.reason).toBeNull();
-      expect(result.verificationResult.engine).toBe('paymentValidationEngine/v1');
+      expect(result.verificationResult.engine).toBe('paymentVerificationEngine/v2');
       expect(result.verificationResult.checks.amount.passed).toBe(true);
       expect(persistedStatuses).toContain('approved');
       expect(persistedStatuses.every(s => s !== 'manual_review')).toBe(true);

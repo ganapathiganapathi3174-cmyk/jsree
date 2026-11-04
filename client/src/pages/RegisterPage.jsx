@@ -49,7 +49,15 @@ export default function RegisterPage() {
         return 'The recipient name in your screenshot is only partially visible. Please upload a screenshot showing the full recipient name.';
       case 'RECEIVER_NAME_NOT_CONFIGURED':
         return 'Your payment is being reviewed by our team because we could not confirm the recipient name.';
+      case 'RECEIVER_NAME_UNREADABLE':
+        return 'We could not read the recipient name from your screenshot. Please upload a clearer screenshot showing the full recipient name.';
+      case 'PENDING_PROVIDER_VERIFICATION':
+        return 'Your screenshot passed automated checks, but the payment could not be confirmed with the payment provider yet. It is pending verification.';
+      case 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED':
+        return 'Your screenshot passed automated checks and is awaiting confirmation. It is pending verification.';
       case 'INVALID_PAYMENT_DATE':
+      case 'TRANSACTION_TOO_OLD':
+      case 'FUTURE_TRANSACTION_TIMESTAMP':
         return 'This screenshot is too old or its date could not be read. Please upload the screenshot from your current payment.';
       case 'PAYMENT_DATE_NOT_DETECTED':
         return 'We could not read the payment date from your screenshot. Please upload a screenshot that shows the transaction date.';
@@ -64,7 +72,12 @@ export default function RegisterPage() {
       case 'LOW_FIELD_CONFIDENCE':
         return 'We could not read every detail of your payment with enough confidence. Please upload a sharper, uncropped screenshot.';
       case 'DUPLICATE_UTR':
+      case 'DUPLICATE_TRANSACTION':
         return 'This payment has already been used. Please complete a fresh payment and upload its screenshot.';
+      case 'CONFLICTING_AMOUNTS':
+        return 'We found conflicting amounts on your screenshot. Please upload a clearer screenshot of the payment confirmation.';
+      case 'IMAGE_INTEGRITY_FAILED':
+        return 'The uploaded file is not a valid image. Please upload a screenshot of your payment receipt.';
       case 'DEMO_SCREENSHOT':
         return 'Sample or demo screenshots are not accepted. Please upload your real payment confirmation.';
       case 'PAYMENT_EXPIRED':

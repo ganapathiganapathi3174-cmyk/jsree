@@ -4,7 +4,7 @@ import {
   extractReceiverNames,
   matchSenderName,
 } from '../../services/ocrService.js';
-import { validateSender } from '../../services/paymentValidation/stageValidation.js';
+import { validateSender } from '../../services/paymentVerification/validateSender.js';
 
 // ─────────────────────────────────────────────────────────────
 // Rule B — sender (payer) name extraction + validation.

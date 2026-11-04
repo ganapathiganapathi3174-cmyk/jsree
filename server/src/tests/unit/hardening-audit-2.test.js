@@ -110,7 +110,7 @@ describe('AUDIT-2 membership/topup parity (one engine, one config)', () => {
     const read = (f) => fs.readFileSync(new URL(f, svcDir), 'utf8');
     for (const f of ['paymentService.js', 'topupService.js']) {
       const src = read(f);
-      expect(src).toContain("from './verificationService.js'");
+      expect(src).toContain("from './paymentVerification/index.js'");
       expect(src).toContain("from '../config/paymentConfig.js'");
     }
     // No second OCR/decision implementation anywhere outside ocrService.

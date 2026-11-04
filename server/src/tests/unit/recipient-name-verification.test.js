@@ -7,7 +7,7 @@ import {
 import {
   runScreenshotVerification,
   decidePaymentVerification,
-} from '../../services/verificationService.js';
+} from '../helpers/legacyVerificationAdapter.js';
 
 // ─────────────────────────────────────────────────────────────
 // Admin UPI recipient-name verification.

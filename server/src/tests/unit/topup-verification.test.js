@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { decidePaymentVerification as sharedDecide } from '../../services/verificationService.js';
+import { decidePaymentVerification as sharedDecide } from '../helpers/legacyVerificationAdapter.js';
 import { decidePaymentVerification as paymentDecide } from '../../services/paymentService.js';
 import { applyTopupVerification } from '../../services/topupService.js';
 

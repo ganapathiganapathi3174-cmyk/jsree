@@ -4,7 +4,7 @@ import {
   decidePaymentVerification,
   normalizeUtr,
   reserveApprovedUtr,
-} from '../../services/verificationService.js';
+} from '../helpers/legacyVerificationAdapter.js';
 import {
   extractPaymentData,
   matchUPI,

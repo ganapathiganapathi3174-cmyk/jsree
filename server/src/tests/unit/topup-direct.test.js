@@ -8,6 +8,8 @@ const { supabaseMock, walletCreditBatch, runOCR, runAmountRecoveryOCR, runAdditi
   // These suites assert straight-through auto-approval: enable it explicitly.
   // Production default (unset) is the secure external-confirmation fallback.
   process.env.PAYMENT_AUTO_APPROVE = 'true';
+  // Straight-through approval requires provider confirmation (mock provider).
+  process.env.PAYMENT_PROVIDER_MODE = 'mock';
   return {
     supabaseMock: { from: vi.fn(), storage: { from: vi.fn() } },
     walletCreditBatch: vi.fn(),
@@ -20,7 +22,7 @@ const { supabaseMock, walletCreditBatch, runOCR, runAmountRecoveryOCR, runAdditi
 
 vi.mock('../../db/supabase.js', () => ({ supabase: supabaseMock }));
 vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: walletCreditBatch } }));
-vi.mock('../../services/verificationService.js', async (importOriginal) => {
+vi.mock('../../services/paymentVerification/index.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runScreenshotVerification: vi.fn() };
 });

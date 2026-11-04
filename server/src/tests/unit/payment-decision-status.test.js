@@ -23,14 +23,12 @@ vi.mock('../../db/supabase.js', () => {
 import {
   ValidationDecisionEngine,
   statusForOutcome,
-} from '../../services/paymentValidation/decisionEngine.js';
-import {
-  validateAmount,
-  validateReceiver,
-  validateDateTime,
-  validateTransactionId,
-  validateSender,
-} from '../../services/paymentValidation/stageValidation.js';
+} from '../../services/paymentVerification/decisionEngine.js';
+import { validateAmount } from '../../services/paymentVerification/validateAmount.js';
+import { validateReceiver } from '../../services/paymentVerification/validateReceiver.js';
+import { validateDateTime } from '../../services/paymentVerification/validateTimestamp.js';
+import { validateTransactionId } from '../../services/paymentVerification/validateTransactionId.js';
+import { validateSender } from '../../services/paymentVerification/validateSender.js';
 
 const RECEIVER_UPI = 'jayarajj126-3@okicici';
 const RECEIVER_NAME = 'Jayaraj';
