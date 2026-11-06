@@ -133,7 +133,7 @@ export async function directTopup(req, res) {
           ? 403
           : error.code === 'PAYMENT_EXPIRED'
             ? 410
-            : error.code === 'DUPLICATE_SCREENSHOT'
+            : error.code === 'DUPLICATE_SCREENSHOT' || error.code === 'TOPUP_EXISTS'
               ? 409
               : error.code === 'OCR_TIMEOUT'
                 ? 504

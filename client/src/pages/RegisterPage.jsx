@@ -154,6 +154,15 @@ export default function RegisterPage() {
       if (code === 'EMAIL_EXISTS' || code === 'MOBILE_EXISTS') {
         toast.error('An account with this email/mobile already exists. Please login.');
         navigate('/login');
+      } else if (code === 'PENDING_EXISTS') {
+        // A live payment request already exists for this account — send the
+        // user to the payment-status page where they can act on THAT request
+        // instead of dead-ending on a generic error.
+        toast.error(err.response?.data?.message || 'You already have a pending payment. Please upload its screenshot below.');
+        navigate('/payment-status');
+      } else if (code === 'PAYMENT_EXISTS') {
+        toast.error('This account already has an approved payment. Please log in.');
+        navigate('/login');
       } else {
         toast.error(err.response?.data?.message || 'Registration failed');
       }
@@ -320,7 +329,7 @@ export default function RegisterPage() {
                     <button
                       key={p.id}
                       aria-pressed={active}
-                      onClick={() => set('plan', p.id)}
+                      onClick={() => { set('plan', p.id); if (paymentData) setPaymentData(null); }}
                       className={`w-full px-4 py-3.5 rounded-lg border text-left flex items-center justify-between transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${
                         active
                           ? 'border-primary-600 bg-primary-500/10'

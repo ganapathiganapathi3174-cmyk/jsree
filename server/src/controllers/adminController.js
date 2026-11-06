@@ -216,7 +216,10 @@ export async function approvePayment(req, res) {
     const result = await paymentService.approvePayment(req.params.paymentId, req.user.id);
     res.json({ success: true, message: result.message });
   } catch (error) {
-    const s = error.code === 'PAYMENT_NOT_FOUND' ? 404 : error.code === 'PAYMENT_NOT_PENDING' ? 400 : 500;
+    const s = error.code === 'PAYMENT_NOT_FOUND' ? 404
+      : error.code === 'PAYMENT_NOT_PENDING' ? 400
+        : error.code === 'DUPLICATE_UTR' ? 409
+          : 500;
     res.status(s).json({ success: false, message: error.message || 'Failed to approve payment', code: error.code || 'APPROVE_FAILED' });
   }
 }

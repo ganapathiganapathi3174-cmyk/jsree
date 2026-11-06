@@ -199,13 +199,41 @@ export async function createPayment(userId, planData) {
   const amount = PLAN_AMOUNTS[plan];
   if (!amount) throw { message: 'Invalid plan selected', code: 'INVALID_PLAN' };
 
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  // 1. Stale-row sweep (user-scoped): a pending / manual_review record whose
+  //    30-minute window has passed must NEVER block a fresh payment attempt.
+  //    The background sweep runs every 5 minutes, so between expiry and the
+  //    next sweep the old guard returned 409 PENDING_EXISTS for every plan
+  //    (120 / 500 / 1000) while uploadScreenshot rejected the same row with
+  //    PAYMENT_EXPIRED — an unrecoverable deadlock for the user. Close those
+  //    rows here first, with the same semantics as autoExpireStalePayments.
+  try {
+    const { error: sweepError } = await supabase.from('payments')
+      .update({
+        status: 'rejected',
+        rejected_at: nowIso,
+        rejection_reason: 'PAYMENT_EXPIRED',
+        verification_result: { decision: 'rejected', reason: 'PAYMENT_EXPIRED', checks: { autoExpired: true } },
+      })
+      .eq('user_id', userId)
+      .in('status', ACTABLE_STATUSES)
+      .lt('expires_at', nowIso);
+    if (sweepError) {
+      console.error('[createPayment] stale payment sweep failed', { userId, error: sweepError.message });
+    }
+  } catch (e) {
+    console.error('[createPayment] stale payment sweep failed', { userId, error: e?.message });
+  }
+
+  // 2. Guards now only ever see LIVE rows (expired ones were just closed).
   const { data: existingPending } = await supabase.from('payments').select('id').eq('user_id', userId).in('status', ['pending', 'manual_review']).single();
   if (existingPending) throw { message: 'You already have a pending payment', code: 'PENDING_EXISTS' };
 
   const { data: existingApproved } = await supabase.from('payments').select('id').eq('user_id', userId).eq('status', 'approved').single();
   if (existingApproved) throw { message: 'You already have an approved payment', code: 'PAYMENT_EXISTS' };
 
-  const now = new Date();
   const expiresAt = new Date(now.getTime() + PAYMENT_TIME_WINDOW_MINUTES * 60 * 1000);
 
   const { data: payment, error } = await supabase.from('payments').insert({
@@ -215,11 +243,38 @@ export async function createPayment(userId, planData) {
     upi_id: RECEIVER_UPI,
     receiver_upi: RECEIVER_UPI,
     status: 'pending',
-    payment_request_created_at: now.toISOString(),
+    payment_request_created_at: nowIso,
     expires_at: expiresAt.toISOString(),
   }).select('*').single();
 
   if (error) throw { message: 'Failed to create payment', code: 'PAYMENT_CREATE_FAILED' };
+
+  // 3. Concurrent double-submit tie-break: two racing creates can both pass
+  //    the guards (SELECT-then-INSERT has no unique constraint). Exactly one
+  //    row may stay live — the OLDEST wins, every newer racer rejects its own
+  //    row and reports PENDING_EXISTS (409). No duplicate pending records,
+  //    no lost winner, retry-safe.
+  try {
+    const { data: others } = await supabase.from('payments')
+      .select('id, created_at')
+      .eq('user_id', userId)
+      .in('status', ACTABLE_STATUSES)
+      .neq('id', payment.id);
+    const olderExists = (others || []).some(o =>
+      o.created_at < payment.created_at || (o.created_at === payment.created_at && o.id < payment.id)
+    );
+    if (olderExists) {
+      await supabase.from('payments')
+        .update({ status: 'rejected', rejected_at: nowIso, rejection_reason: 'DUPLICATE_REQUEST' })
+        .eq('id', payment.id)
+        .in('status', ACTABLE_STATUSES);
+      throw { message: 'You already have a pending payment', code: 'PENDING_EXISTS' };
+    }
+  } catch (e) {
+    if (e?.code === 'PENDING_EXISTS') throw e;
+    console.error('[createPayment] concurrent-submit reconciliation failed', { userId, paymentId: payment.id, error: e?.message });
+  }
+
   await logAction(userId, 'user', 'create_payment', payment.id, 'payment', { plan: parseInt(plan), amount });
   return payment;
 }
