@@ -71,7 +71,12 @@ export function buildCorsOptions({ env = process.env, logger = console } = {}) {
       credentials: true,
       methods: PREFLIGHT_METHODS,
       allowedHeaders: PREFLIGHT_HEADERS,
-      optionsSuccessStatus: 204
+      optionsSuccessStatus: 204,
+      // Browsers cache a successful preflight for 10 minutes, so ordinary API
+      // calls skip OPTIONS entirely. Fewer preflights means fewer chances to
+      // hit a transient edge 503 (Render cold start / redeploy), which reaches
+      // the browser with no CORS headers and surfaces as a CORS error.
+      maxAge: 600
     }
   };
 }

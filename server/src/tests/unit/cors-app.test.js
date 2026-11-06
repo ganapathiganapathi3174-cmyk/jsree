@@ -352,3 +352,80 @@ describe('production CORS through the Express app', () => {
     expect(response.headers.get('access-control-allow-origin')).toBeNull();
   });
 });
+
+// The two endpoints reported failing in production (browser preflight for
+// GET /api/payments and GET /api/config/public from https://jsree.vercel.app).
+describe('production CORS: reported failing endpoints', () => {
+  function getPreflight(path, origin = PROD_ORIGIN) {
+    return fetch(`${baseUrl}${path}`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: origin,
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization,content-type'
+      }
+    });
+  }
+
+  it('answers GET /api/payments preflight with origin, GET, allowed headers, credentials, and cacheable max-age', async () => {
+    const response = await getPreflight('/api/payments');
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+    expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+    expect(response.headers.get('access-control-allow-methods')).toMatch(/\bGET\b/);
+    expect(response.headers.get('access-control-allow-headers')).toMatch(/Authorization/i);
+    expect(response.headers.get('access-control-allow-headers')).toMatch(/Content-Type/i);
+    // Successful preflights are cacheable so routine calls skip OPTIONS.
+    expect(response.headers.get('access-control-max-age')).toBe('600');
+  });
+
+  it('answers GET /api/config/public preflight with the same production policy', async () => {
+    const response = await getPreflight('/api/config/public');
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+    expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+    expect(response.headers.get('access-control-allow-methods')).toMatch(/\bGET\b/);
+    expect(response.headers.get('access-control-max-age')).toBe('600');
+  });
+
+  it('keeps GET /api/config/public publicly readable cross-origin', async () => {
+    const response = await fetch(`${baseUrl}/api/config/public`, {
+      headers: { Origin: PROD_ORIGIN }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+  });
+
+  it('keeps GET /api/payments authentication-protected while still sending CORS headers', async () => {
+    const anonymous = await fetch(`${baseUrl}/api/payments`, {
+      headers: { Origin: PROD_ORIGIN }
+    });
+    expect(anonymous.status).toBe(401);
+    expect((await anonymous.json()).code).toBe('TOKEN_REQUIRED');
+    expect(anonymous.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+
+    const withToken = await fetch(`${baseUrl}/api/payments`, {
+      headers: { Origin: PROD_ORIGIN, Authorization: `Bearer ${makeToken()}` }
+    });
+    expect(withToken.status).toBe(200);
+    expect(withToken.headers.get('access-control-allow-origin')).toBe(PROD_ORIGIN);
+    expect(withToken.headers.get('access-control-allow-credentials')).toBe('true');
+  });
+
+  it('allows the local dev origin on the reported endpoints', async () => {
+    const response = await getPreflight('/api/payments', 'http://localhost:5173');
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+  });
+
+  it('rejects unknown origins on the reported endpoints with no CORS headers', async () => {
+    for (const path of ['/api/payments', '/api/config/public']) {
+      const response = await getPreflight(path, 'https://evil.example.com');
+      expect(response.headers.get('access-control-allow-origin'), path).toBeNull();
+      expect(response.headers.get('access-control-allow-credentials'), path).toBeNull();
+    }
+  });
+});
