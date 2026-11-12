@@ -58,12 +58,18 @@ export async function updateUserStatus(req, res) {
 
 export async function deleteUser(req, res) {
   try {
-    const softDelete = req.query.soft === 'true';
-    const result = await adminService.deleteUser(req.params.userId, softDelete, req.user.id);
-    res.json({ success: true, message: result.message });
+    // COMPLETE permanent deletion. The legacy ?soft=true query flag is
+    // intentionally ignored: the admin dashboard delete action now removes
+    // the account and all eligible associated data (financial records are
+    // archived first — see migration 018).
+    const result = await adminService.deleteUser(req.params.userId, req.user.id);
+    res.json({ success: true, message: result.message, data: result });
   } catch (error) {
-    const s = error.code === 'USER_NOT_FOUND' ? 404 : error.code === 'CANNOT_DELETE_ADMIN' ? 403 : error.code === 'ADMIN_REQUIRED' ? 403 : 500;
-    res.status(s).json({ success: false, message: error.message || 'Failed to delete user', code: error.code || 'DELETE_FAILED' });
+    const code = error.code || 'DELETE_FAILED';
+    const s = code === 'USER_NOT_FOUND' ? 404
+      : ['CANNOT_DELETE_ADMIN', 'CANNOT_DELETE_SELF', 'ADMIN_REQUIRED'].includes(code) ? 403
+      : 500;
+    res.status(s).json({ success: false, message: error.message || 'Failed to delete user', code });
   }
 }
 
@@ -174,7 +180,7 @@ export async function reviewPayment(req, res) {
     const s = error.code === 'PAYMENT_NOT_FOUND' ? 404
       : error.code === 'PAYMENT_NOT_PENDING' ? 400
         : error.code === 'INVALID_REVIEW_ACTION' || error.code === 'REVIEW_REASON_REQUIRED' ? 400
-          : error.code === 'DUPLICATE_UTR' ? 409
+          : error.code === 'DUPLICATE_UTR' || error.code === 'RACE_CONDITION' ? 409
             : 500;
     res.status(s).json({ success: false, message: error.message || 'Failed to review payment', code: error.code || 'REVIEW_FAILED' });
   }
@@ -230,7 +236,8 @@ export async function rejectPayment(req, res) {
     const result = await paymentService.rejectPayment(req.params.paymentId, req.user.id, reason);
     res.json({ success: true, message: result.message });
   } catch (error) {
-    const s = error.code === 'PAYMENT_NOT_FOUND' ? 404 : error.code === 'PAYMENT_NOT_PENDING' ? 400 : 500;
+    const s = error.code === 'PAYMENT_NOT_FOUND' ? 404 : error.code === 'PAYMENT_NOT_PENDING' ? 400
+      : error.code === 'RACE_CONDITION' ? 409 : 500;
     res.status(s).json({ success: false, message: error.message || 'Failed to reject payment', code: error.code || 'REJECT_FAILED' });
   }
 }

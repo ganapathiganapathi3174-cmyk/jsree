@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { supabase } from '../db/supabase.js';
-import { generateUniqueFilename } from '../utils/helpers.js';
+import { generateUniqueFilename, privateObjectUrl } from '../utils/helpers.js';
 import { logAction } from './auditService.js';
 import { checkAndDeactivateReferrer } from './referralService.js';
 import walletService from './walletService.js';
@@ -13,7 +13,7 @@ import {
   deriveOutcomeStatus,
   ENGINE_ID,
 } from './paymentVerification/index.js';
-import { getPaymentConfig } from './configService.js';
+import { getPaymentConfig, resolveReceiverIdentity } from './configService.js';
 // Shared server-authoritative payment configuration and expiry helper —
 // the SAME values and the SAME fail-closed check the membership flow uses.
 // There is exactly one unified verification engine (paymentVerification)
@@ -203,8 +203,7 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
   const { error: uploadError } = await supabase.storage.from('payments').upload(filePath, file.buffer, { contentType: file.mimetype, upsert: false });
   if (uploadError) throw { message: 'Failed to upload proof', code: 'UPLOAD_FAILED' };
 
-  const { data: urlData } = supabase.storage.from('payments').getPublicUrl(filePath);
-  const screenshotUrl = urlData.publicUrl;
+  const screenshotUrl = privateObjectUrl('payments', filePath);
 
   const { error: saveError } = await supabase.from('topups').update({ screenshot_url: screenshotUrl, screenshot_hash: screenshotHash }).eq('id', topupId);
   if (saveError) throw { message: 'Failed to update topup', code: 'UPDATE_FAILED' };
@@ -219,9 +218,10 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
     // approved_utrs reservation).
     let outcome;
   try {
-    // Same shared receiver-name secondary gate as the membership flow.
-    const paymentConfig = await getPaymentConfig();
-    const receiverName = paymentConfig.receiver_name || RECEIVER_NAME || '';
+    // Same shared receiver-name secondary gate as the membership flow —
+    // resolved through the SINGLE validated config source.
+    const receiverIdentity = await resolveReceiverIdentity();
+    const receiverName = receiverIdentity.receiverName;
 
     // Expected payer identity (Rule B): the top-up SENDER's own full name.
     let expectedPayerName = null;
@@ -239,7 +239,7 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
         paymentId: topup.id,
         userId: topup.sender_id,
         receiverName,
-        receiverUpi: RECEIVER_UPI,
+        receiverUpi: receiverIdentity.receiverUpi || RECEIVER_UPI,
         expectedPayerName,
         senderPolicy: SENDER_NAME_POLICY,
       },
@@ -274,16 +274,15 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
       };
     }
 
-    // Definitive/review/pending outcome from the unified engine — hand the
+    // Deterministic/review outcome from the unified engine — hand the
     // SAME decision to the shared top-up persistence path (guarded status
     // transition, expiry re-check, atomic UTR reservation, wallet credit
     // with rollback).
     //
-    //   - outcome MANUAL_REVIEW (e.g. payer-name mismatch) -> manual_review park
-    //   - outcome PENDING_VERIFICATION (provider unconfirmed / auto-approve
-    //     off)                                             -> PENDING_VERIFICATION park
-    //   - outcome APPROVED                                 -> completed (+credit)
-    //   - outcome REJECTED                                 -> rejected
+    //   - decision 'approved'   -> completed (+ single idempotent credit)
+    //   - decision 'rejected'   -> rejected with reason (definite failure)
+    //   - decision 'manual_review' -> parked ONLY under the explicit
+    //     SENDER_NAME_POLICY=review opt-in (never the default policy)
     const verificationResult = verification.verificationResult;
     const providerResult = verification.provider || null;
     outcome = await applyTopupVerification(topup, verificationResult, new Date());
@@ -396,6 +395,46 @@ function topupRejectionMessage(reason) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Bounded wait used by the approved-decision reconcile path: a losing
+// concurrent submit may observe status='completed' while the WINNING
+// request is still between its status flip and its UTR reservation (or
+// mid-rejection). Poll until the winner's reservation proves the approval
+// is final, the row leaves 'completed' (the winner rejected it), or we
+// time out and must fail safe. ~500ms max — the winner's flip→reserve
+// gap is a single round trip in practice.
+// ─────────────────────────────────────────────────────────────
+const UTR_SAFETY_POLL_MS = 50;
+const UTR_SAFETY_MAX_ATTEMPTS = 10;
+
+async function awaitTopupUtrSafety(utr, topupId) {
+  for (let attempt = 0; attempt < UTR_SAFETY_MAX_ATTEMPTS; attempt++) {
+    const { data: existing, error: lookupError } = await supabase
+      .from('approved_utrs')
+      .select('reference_type, reference_id')
+      .eq('utr', utr)
+      .maybeSingle();
+    // 23505/PGRST116 on a SELECT are "no row / unique noise" signals from
+    // mock emulators, not real lookup failures — treat them as "not yet".
+    if (lookupError && lookupError.code !== '23505' && lookupError.code !== 'PGRST116') {
+      throw { message: 'Failed to check the transaction reference', code: 'UTR_LOOKUP_FAILED' };
+    }
+    if (existing?.reference_type === 'topup' && existing?.reference_id === topupId) {
+      return 'safe';
+    }
+    const { data: row } = await supabase
+      .from('topups')
+      .select('status')
+      .eq('id', topupId)
+      .single();
+    if (row && row.status !== 'completed') return 'rejected';
+    if (attempt < UTR_SAFETY_MAX_ATTEMPTS - 1) {
+      await new Promise(resolve => setTimeout(resolve, UTR_SAFETY_POLL_MS));
+    }
+  }
+  return 'missing';
+}
+
+// ─────────────────────────────────────────────────────────────
 // Applies the OCR verification decision to a top-up record.
 //
 // Idempotency for the balance credit is enforced by the top-up RECORD
@@ -430,11 +469,60 @@ export async function applyTopupVerification(topup, verificationResult, verifica
 
     if (!updated || updated.length === 0) {
       const { data: current } = await supabase.from('topups')
-        .select('status')
+        .select('status, expires_at, verification_result')
         .eq('id', topup.id)
         .single();
       if (current?.status !== 'completed') {
         return { credited: false, alreadyProcessed: true };
+      }
+
+      // ── Concurrency reconcile: NEVER credit blindly ──
+      // This request LOST the guarded flip; another request owns the
+      // transition. That winner may still be running its expiry /
+      // duplicate-UTR gates and could yet roll the row back to rejected —
+      // crediting here first would put money behind a rejected record.
+      // Credit only when the completed state is provably safe:
+      //   • completed row WITH a stored UTR is safe only once that UTR's
+      //     atomic reservation exists (the winner reserves AFTER passing
+      //     expiry; a winner heading for DUPLICATE_UTR never reserves —
+      //     we wait that verdict out);
+      //   • completed row WITHOUT a stored UTR (legacy/admin-shaped)
+      //     keeps the original ledger-idempotent reconcile.
+      const completedUtr = normalizeUtr(current.verification_result?.utr);
+      if (completedUtr) {
+        const safety = await awaitTopupUtrSafety(completedUtr, topup.id);
+        if (safety === 'rejected') {
+          return { credited: false, alreadyProcessed: true };
+        }
+        if (safety === 'missing') {
+          // Winner crashed between the status flip and its reservation.
+          // Fail safe: never credit — drive the terminal state instead.
+          const expired = isPaymentExpired({ expires_at: current.expires_at || topup.expires_at });
+          await supabase.from('topups')
+            .update(expired
+              ? {
+                  status: 'rejected',
+                  rejection_reason: 'PAYMENT_EXPIRED',
+                  verified_at: verificationTime.toISOString(),
+                  verification_result: { ...verificationResult, decision: 'rejected', reason: 'PAYMENT_EXPIRED' },
+                }
+              : {
+                  status: 'manual_review',
+                  rejection_reason: 'UTR_RESERVATION_MISSING',
+                  verification_result: {
+                    ...(current.verification_result || verificationResult),
+                    decision: 'manual_review',
+                    reason: 'UTR_RESERVATION_MISSING',
+                  },
+                })
+            .eq('id', topup.id)
+            .eq('status', 'completed');
+          return {
+            credited: false,
+            alreadyProcessed: true,
+            reason: expired ? 'PAYMENT_EXPIRED' : 'UTR_RESERVATION_MISSING',
+          };
+        }
       }
       const credits = await creditTopupWallets(topup);
       return { credited: credits.some(result => result.credited), alreadyProcessed: true };

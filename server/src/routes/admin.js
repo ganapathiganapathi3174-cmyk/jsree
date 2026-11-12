@@ -3,6 +3,7 @@ import * as adminController from '../controllers/adminController.js';
 import * as chatController from '../controllers/chatController.js';
 import * as paymentService from '../services/paymentService.js';
 import { authenticateToken, requireAdmin } from '../middleware/auth.js';
+import { validateChatMessage } from '../middleware/validation.js';
 import { supabase } from '../db/supabase.js';
 import { logAction } from '../services/auditService.js';
 
@@ -60,7 +61,17 @@ router.put('/payments/bulk-reject', async (req, res) => {
           results.push({ id: pid, status: 'skipped', reason: 'not pending' });
           continue;
         }
-        await supabase.from('payments').update({ status: 'rejected', rejected_at: new Date().toISOString(), rejection_reason: reason || 'Bulk reject' }).eq('id', pid);
+        // Guarded transition: only a row still 'pending' can move, so a
+        // concurrent approval can never be overwritten by a bulk reject.
+        const { data: rejectedRows } = await supabase.from('payments')
+          .update({ status: 'rejected', rejected_at: new Date().toISOString(), rejection_reason: reason || 'Bulk reject' })
+          .eq('id', pid)
+          .eq('status', 'pending')
+          .select('id');
+        if (!rejectedRows || rejectedRows.length === 0) {
+          results.push({ id: pid, status: 'skipped', reason: 'concurrent modification' });
+          continue;
+        }
         await logAction(req.user.id, 'admin', 'bulk_reject_payment', pid, 'payment', { userId: payment.user_id, reason });
         results.push({ id: pid, status: 'rejected' });
       } catch (e) {
@@ -89,7 +100,7 @@ router.put('/users/:userId/activate', adminController.activateUser);
 router.get('/chats', adminController.getChats);
 router.get('/chats/:conversationId/messages', adminController.getChatMessages);
 router.put('/chats/:conversationId/read', adminController.markChatRead);
-router.post('/chats/messages', adminController.sendAdminMessage);
+router.post('/chats/messages', validateChatMessage, adminController.sendAdminMessage);
 
 router.get('/audit-logs', adminController.getAuditLogs);
 

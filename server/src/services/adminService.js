@@ -161,8 +161,18 @@ export async function updateUserStatus(userId, status, reason) {
 function rpcErrorCode(message = '') {
   if (message.includes('USER_NOT_FOUND')) return 'USER_NOT_FOUND';
   if (message.includes('CANNOT_DELETE_ADMIN')) return 'CANNOT_DELETE_ADMIN';
+  if (message.includes('CANNOT_DELETE_SELF')) return 'CANNOT_DELETE_SELF';
   if (message.includes('ADMIN_REQUIRED')) return 'ADMIN_REQUIRED';
   return 'DELETE_FAILED';
+}
+
+function deletionErrorMessage(message = '') {
+  const code = rpcErrorCode(message);
+  if (code === 'USER_NOT_FOUND') return 'User not found';
+  if (code === 'CANNOT_DELETE_ADMIN') return 'Cannot delete admin user';
+  if (code === 'CANNOT_DELETE_SELF') return 'You cannot delete your own admin account';
+  if (code === 'ADMIN_REQUIRED') return 'Admin access required';
+  return 'Failed to delete user';
 }
 
 async function removeStorageObjects(paths = []) {
@@ -174,23 +184,130 @@ async function removeStorageObjects(paths = []) {
   }
 }
 
-export async function deleteUser(userId, softDelete = false, adminId = null) {
-  const { data: user, error: fetchError } = await supabase.from('users').select('id, role, status').eq('id', userId).single();
-  if (fetchError || !user) throw { message: 'User not found', code: 'USER_NOT_FOUND' };
-  if (user.role === 'admin') throw { message: 'Cannot delete admin user', code: 'CANNOT_DELETE_ADMIN' };
+// Best-effort removal of every object inside one storage folder. Returns a
+// warning instead of throwing: DB deletion has already committed at this
+// point, so storage cleanup must never mask the deletion result.
+async function emptyStorageFolder(bucket, folder) {
+  try {
+    const { data: files, error } = await supabase.storage.from(bucket).list(folder, { limit: 1000 });
+    if (error) return { folder, removed: [], warning: `${bucket}/${folder}: ${error.message}` };
+    const paths = (files || [])
+      .filter(f => f?.name && !f.name.endsWith('/'))
+      .map(f => `${folder}/${f.name}`);
+    if (paths.length === 0) return { folder, removed: [], warning: null };
+    const { error: removeError } = await supabase.storage.from(bucket).remove(paths);
+    if (removeError) return { folder, removed: [], warning: `${bucket}/${folder}: ${removeError.message}` };
+    return { folder, removed: paths, warning: null };
+  } catch (err) {
+    return { folder, removed: [], warning: `${bucket}/${folder}: ${err.message}` };
+  }
+}
 
-  // Admin UI delete action must always be soft-delete only. All existing records
-  // (payments, wallet, UTR references, approvals, notifications, referrals, IP logs,
-  // audit logs) are preserved. Do not call the destructive admin_delete_user RPC.
-  if (user.status === 'deleted') {
-    await logAction(adminId, 'admin', 'soft_delete_user', userId, 'user', { alreadyDeleted: true });
-    return { message: 'User soft deleted', userId };
+// Removes every user-specific storage object: current screenshots (paths
+// returned by the RPC), orphaned earlier uploads under payments/{paymentId}
+// and topups/{topupId}, and anything under avatars/{userId}. Deduplicates
+// against the RPC paths so nothing is counted or removed twice.
+async function removeUserStorageObjects({ userId, paymentIds = [], topupIds = [], rpcPaths = [] }) {
+  const warnings = [];
+  const removed = new Set();
+
+  for (const paymentId of paymentIds) {
+    const r = await emptyStorageFolder('payments', `payments/${paymentId}`);
+    r.removed.forEach(p => removed.add(p));
+    if (r.warning) warnings.push(r.warning);
+  }
+  for (const topupId of topupIds) {
+    const r = await emptyStorageFolder('payments', `topups/${topupId}`);
+    r.removed.forEach(p => removed.add(p));
+    if (r.warning) warnings.push(r.warning);
+  }
+  const avatar = await emptyStorageFolder('avatars', `avatars/${userId}`);
+  avatar.removed.forEach(p => removed.add(p));
+  if (avatar.warning) warnings.push(avatar.warning);
+
+  const leftover = (rpcPaths || []).filter(p => !removed.has(p));
+  if (leftover.length > 0) {
+    try {
+      const { error } = await supabase.storage.from('payments').remove(leftover);
+      if (error) warnings.push(`payments: ${error.message}`);
+      else leftover.forEach(p => removed.add(p));
+    } catch (err) {
+      warnings.push(`payments: ${err.message}`);
+    }
   }
 
-  const { error } = await supabase.from('users').update({ status: 'deleted' }).eq('id', userId);
-  if (error) throw { message: 'Failed to delete user', code: 'DELETE_FAILED' };
-  await logAction(adminId, 'admin', 'soft_delete_user', userId, 'user', {});
-  return { message: 'User soft deleted', userId };
+  return { status: warnings.length > 0 ? 'partial' : 'complete', removed: [...removed], warnings };
+}
+
+// Snapshot of the storage folders this user owns. Taken BEFORE the deletion
+// RPC runs (the users row disappears inside that transaction). Failure here
+// is non-fatal: the RPC still returns the current screenshot paths.
+async function collectUserOwnedRefs(userId) {
+  const [paymentsRes, topupsRes] = await Promise.all([
+    supabase.from('payments').select('id').eq('user_id', userId),
+    supabase.from('topups').select('id').or(`sender_id.eq.${userId},receiver_id.eq.${userId}`),
+  ]).catch(() => [{ data: null }, { data: null }]);
+  return {
+    paymentIds: (paymentsRes?.data || []).map(r => r.id),
+    topupIds: (topupsRes?.data || []).map(r => r.id),
+  };
+}
+
+/**
+ * COMPLETE user deletion (admin dashboard action).
+ *
+ * 1. Verifies the target exists, is not an admin (protected account) and is
+ *    not the acting admin (self-delete guard).
+ * 2. Snapshots the user's storage folders.
+ * 3. Calls the admin_delete_user RPC — one SECURITY DEFINER transaction
+ *    that archives financial records, deletes every associated row and
+ *    writes the audit entry atomically (no partial deletion possible).
+ * 4. Removes the user's storage objects best-effort AFTER the DB commit.
+ *
+ * Sessions/JWTs are invalidated implicitly: authentication re-reads the
+ * users row on every request, and a missing row is rejected with 401.
+ */
+export async function deleteUser(userId, adminId = null) {
+  const { data: user, error: fetchError } = await supabase
+    .from('users').select('id, role, status, avatar_url').eq('id', userId).single();
+  if (fetchError || !user) throw { message: 'User not found', code: 'USER_NOT_FOUND' };
+  if (user.role === 'admin') throw { message: 'Cannot delete admin user', code: 'CANNOT_DELETE_ADMIN' };
+  if (adminId && userId === adminId) throw { message: 'You cannot delete your own admin account', code: 'CANNOT_DELETE_SELF' };
+
+  const ownedRefs = await collectUserOwnedRefs(userId);
+
+  const { data, error: rpcError } = await supabase.rpc('admin_delete_user', {
+    p_user_id: userId,
+    p_admin_id: adminId,
+  });
+  if (rpcError) {
+    throw { message: deletionErrorMessage(rpcError.message), code: rpcErrorCode(rpcError.message) };
+  }
+
+  const cleanup = await removeUserStorageObjects({
+    userId,
+    paymentIds: ownedRefs.paymentIds,
+    topupIds: ownedRefs.topupIds,
+    rpcPaths: data?.storagePaths || [],
+  });
+
+  await logAction(adminId, 'admin', 'hard_delete_user', userId, 'user', {
+    deleted: true,
+    archived: data?.archived || null,
+    storageCleanup: cleanup.status,
+    ...(cleanup.warnings.length ? { storageWarnings: cleanup.warnings } : {}),
+  });
+
+  return {
+    message: cleanup.status === 'complete'
+      ? 'User deleted permanently'
+      : 'User deleted permanently (some storage files could not be removed)',
+    userId,
+    deleted: true,
+    storageCleanup: cleanup.status,
+    archived: data?.archived || null,
+    warnings: cleanup.warnings,
+  };
 }
 
 export async function deleteTopup(topupId, adminId) {

@@ -24,17 +24,21 @@
  *                        APPROVED            -> commit approval (caller
  *                                               reserves the UTR first)
  *                        REJECTED            -> definitive, persist
- *                        PENDING_VERIFICATION-> insufficient evidence OR
- *                                               awaiting provider/human
- *                                               confirmation (never approve)
- *                        MANUAL_REVIEW       -> ambiguous/contradictory,
- *                                               a human must decide
+ *                        PENDING_VERIFICATION-> TECHNICAL no-decision
+ *                                               (provider timeout/error):
+ *                                               inconclusive:true, caller
+ *                                               keeps the row resubmittable
+ *                                               (never approve, never park,
+ *                                               never label as fraud)
+ *                        MANUAL_REVIEW       -> only reachable when the
+ *                                               operator explicitly opts into
+ *                                               SENDER_NAME_POLICY=review
  *                      plus a ready-to-persist `verificationResult`.
  *
  * OCR_TIMEOUT / OCR_FAILED / PREPROCESSING_FAILED / ENGINE_ERROR always
  * surface as inconclusive (success:false) — infrastructure can never become
- * a decision. Provider verification NEVER throws; unavailable providers
- * fail safe to PENDING_VERIFICATION.
+ * a decision. Provider verification NEVER throws; a configured provider that
+ * cannot answer fails safe to a retryable no-decision.
  */
 import { validateImageIntegrity } from './imageIntegrity.js';
 import { preprocessForOCR } from './ocr.js';
@@ -309,8 +313,9 @@ export class PaymentVerificationEngine {
       return { ...screenshot, reason, outcome, verificationResult };
     }
 
-    // Screenshot passed every gate — provider confirmation + policy decide
-    // between APPROVED and PENDING_VERIFICATION. NEVER throws.
+    // Screenshot passed every gate — provider confirmation (when a provider
+    // is configured) + the deterministic approval policy decide between
+    // APPROVED, REJECTED and a retryable no-decision. NEVER throws.
     const resolution = await resolveApprovalOutcome({
       transactionId: screenshot.transactionId,
       matchedAmount: screenshot.matchedAmount,
@@ -336,30 +341,58 @@ export class PaymentVerificationEngine {
       };
     }
 
-    // PENDING_VERIFICATION: provider did not confirm, or straight-through
-    // auto-approval is disabled (production default). The caller parks the
-    // record for human confirmation — no UTR, no side effects. The screenshot
-    // layer PASSED, so ocrDecision stays 'approved' (HEAD-era audit posture).
-    const reason = resolution.reason || 'PENDING_PROVIDER_VERIFICATION';
-    const verificationResult = {
-      ...screenshot,
-      decision: 'manual_review',
-      ocrDecision: 'approved',
-      status: 'PENDING_VERIFICATION',
-      reason,
-      utr: screenshot.transactionId || null,
-      provider: resolution.provider,
-      engine: ENGINE_ID,
-    };
+    if (resolution.outcome === 'REJECTED') {
+      const reason = resolution.reason || 'PROVIDER_TRANSACTION_NOT_FOUND';
+      const verificationResult = {
+        ...screenshot,
+        decision: 'rejected',
+        status: 'REJECTED',
+        reason,
+        utr: screenshot.transactionId || null,
+        provider: resolution.provider,
+        engine: ENGINE_ID,
+      };
+      return {
+        ...screenshot,
+        approved: false,
+        outcome: 'REJECTED',
+        reason,
+        code: reason,
+        message: userMessageFor(reason),
+        provider: resolution.provider,
+        verificationResult,
+      };
+    }
+
+    // PENDING_VERIFICATION from the resolution stage is always a TECHNICAL
+    // failure (configured provider timed out / errored / misconfigured).
+    // Surface it as INCONCLUSIVE: the caller records a no-decision attempt,
+    // the row stays resubmittable, and the user gets an honest retry message.
+    // It is never fraud, never an approval, and never a manual-review park.
+    const reason = resolution.reason || 'PROVIDER_UNAVAILABLE';
     return {
       ...screenshot,
+      success: false,
       approved: false,
+      inconclusive: true,
+      review: false,
       outcome: 'PENDING_VERIFICATION',
+      status: 'PENDING_VERIFICATION',
       reason,
       code: reason,
       message: userMessageFor(reason),
       provider: resolution.provider,
-      verificationResult,
+      details: { provider: resolution.provider },
+      verificationResult: {
+        ...screenshot,
+        decision: null,
+        ocrDecision: 'approved',
+        status: 'PENDING_VERIFICATION',
+        reason,
+        utr: screenshot.transactionId || null,
+        provider: resolution.provider,
+        engine: ENGINE_ID,
+      },
     };
   }
 }

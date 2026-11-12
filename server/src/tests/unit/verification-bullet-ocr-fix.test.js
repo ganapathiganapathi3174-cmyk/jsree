@@ -156,7 +156,7 @@ describe('Production sample end-to-end (mocked OCR, real decision engine)', () =
     expect(verificationResult.decision).toBe('approved');
   });
 
-  it('empty receiver_name (current production config) -> manual_review, NEVER silent approve', async () => {
+  it('empty receiver_name (production config) -> gate skipped, other gates decide', async () => {
     const { verificationResult } = await runScreenshotVerification({
       imageBuffer: Buffer.from('img'),
       expectedAmount: 120,
@@ -167,8 +167,8 @@ describe('Production sample end-to-end (mocked OCR, real decision engine)', () =
       referenceType: 'payment',
     });
     expect(verificationResult.upiMatch).toBe(true);
-    expect(verificationResult.decision).toBe('manual_review');
-    expect(verificationResult.reason).toBe('RECEIVER_NAME_NOT_CONFIGURED');
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.reason).toBe(null);
   });
 
   it('different payee name on receipt -> rejected RECEIVER_NAME_MISMATCH', async () => {

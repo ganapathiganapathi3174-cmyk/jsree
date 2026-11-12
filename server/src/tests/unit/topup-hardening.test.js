@@ -25,7 +25,15 @@ const { runScreenshotVerification, reserveApprovedUtr, creditMock, uploadMock, d
   const builder = (table) => {
     const p = {
       _single: false, _didUpdate: false, _inserted: null,
-      update: (payload) => { rec('updates', table, payload); p._didUpdate = true; if (table === 'topups' && state.topupRow) Object.assign(state.topupRow, payload); return p; },
+      update: (payload) => {
+        rec('updates', table, payload);
+        p._didUpdate = true;
+        // Faithful to PostgREST: a guarded UPDATE that matches 0 rows must
+        // NOT mutate the stored row (flipResult = [] models the loser of a
+        // concurrent guarded flip — its payload is never persisted).
+        if (table === 'topups' && state.topupRow && (state.flipResult?.length ?? 0) > 0) Object.assign(state.topupRow, payload);
+        return p;
+      },
       insert: (payload) => { rec('inserts', table, payload); p._inserted = payload; return p; },
       delete: () => p,
       select: () => p,

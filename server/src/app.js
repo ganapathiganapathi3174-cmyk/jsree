@@ -36,21 +36,39 @@ export function createApp({ env = process.env, logger = console } = {}) {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  // ── Rate limiting ─────────────────────────────────────────────
+  // LIMITATION (documented): express-rate-limit's default store is
+  // IN-MEMORY — counters live per-process and reset on deploy/restart.
+  // Correct for the current SINGLE-INSTANCE Render deployment; if the
+  // backend is ever scaled horizontally, swap in a shared store
+  // (e.g. rate-limit-redis) so limits stay global. IP-keyed limits can
+  // also throttle users behind one shared NAT — the numbers below are
+  // deliberately conservative and must not be raised without review.
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    max: Number(env.RATE_LIMIT_GLOBAL_MAX || 100),
     message: { success: false, message: 'Too many requests, please try again later.' }
   });
   app.use('/api/', limiter);
 
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 20,
+    max: Number(env.RATE_LIMIT_AUTH_MAX || 20),
     message: { success: false, message: 'Too many auth attempts, please try again later.' }
   });
   app.use('/api/auth/login', authLimiter);
-  app.use('/api/auth/admin-login', authLimiter);
   app.use('/api/auth/register', authLimiter);
+
+  // Admin login gets its OWN tighter bucket (10 / 15 min / IP): admins are
+  // few, so a small limit meaningfully slows credential stuffing without
+  // affecting regular users. Separate from authLimiter so user login
+  // volume can never exhaust the admin budget.
+  const adminLoginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: Number(env.RATE_LIMIT_ADMIN_LOGIN_MAX || 10),
+    message: { success: false, message: 'Too many admin login attempts, please try again later.' }
+  });
+  app.use('/api/auth/admin-login', adminLoginLimiter);
 
   // Request timeout (applies to all /api routes) — must be before routes
   // so OCR verification endpoints have a hard ceiling.

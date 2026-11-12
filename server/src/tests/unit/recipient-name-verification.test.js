@@ -179,9 +179,9 @@ describe('decidePaymentVerification — recipient-name gate', () => {
     expect(decidePaymentVerification({ ...base })).toEqual({ decision: 'approved', reason: null });
   });
 
-  it('fails safe to manual_review when no name is configured', () => {
+  it('skips the gate when no name is configured (never blocks, never parks)', () => {
     expect(decidePaymentVerification({ ...base, receiverName: '', nameConfigured: false }))
-      .toEqual({ decision: 'manual_review', reason: 'RECEIVER_NAME_NOT_CONFIGURED' });
+      .toEqual({ decision: 'approved', reason: null });
   });
 
   it('hard-rejects a readable but different payee name', () => {
@@ -256,10 +256,11 @@ describe('runScreenshotVerification — recipient-name gate (end to end)', () =>
     expect(verificationResult.reason).toBe('RECEIVER_NAME_UNREADABLE');
   });
 
-  it('fails safe to manual_review when no receiver name is configured', async () => {
+  it('skips the secondary gate when no receiver name is configured (other gates still apply)', async () => {
     const { verificationResult } = await verify('');
-    expect(verificationResult.decision).toBe('manual_review');
-    expect(verificationResult.reason).toBe('RECEIVER_NAME_NOT_CONFIGURED');
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.reason).toBe(null);
+    expect(verificationResult.checks.receiverName.enabled).toBe(false);
   });
 
   it('disables the gate when receiverName is undefined (legacy behavior)', async () => {

@@ -145,17 +145,20 @@ describe('scenario 4: receiver-name mismatch', () => {
   });
 });
 
-// ── 5. Receiver name not configured ──
+// ── 5. Receiver name not configured → gate skipped ──
 describe('scenario 5: receiver name missing from config', () => {
-  it('fails safe to manual_review RECEIVER_NAME_NOT_CONFIGURED — never approves', async () => {
+  it('skips the secondary gate — every other mandatory gate still decides', async () => {
     const { verificationResult } = await verify({ text: receipt(), receiverName: '' });
 
-    expect(verificationResult.decision).toBe('manual_review');
-    expect(verificationResult.reason).toBe('RECEIVER_NAME_NOT_CONFIGURED');
-    // Every other gate passed — the safety fallback is the ONLY outcome here.
+    // Not configured: the secondary gate is unavailable and is skipped
+    // (requirement: the name check applies only when reliable name evidence
+    // is available) — never a rejection, never a manual-review park.
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.reason).toBe(null);
     expect(verificationResult.checks.amount.passed).toBe(true);
     expect(verificationResult.checks.receiverUpi.passed).toBe(true);
-    expect(verificationResult.checks.receiverName.passed).toBe(false);
+    expect(verificationResult.checks.receiverName.enabled).toBe(false);
+    expect(verificationResult.checks.receiverName.passed).toBe(true);
   });
 });
 

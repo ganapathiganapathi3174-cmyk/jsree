@@ -254,10 +254,11 @@ describe('Rule B — receiver name', () => {
     expect(r.partial).toBe(true);
   });
 
-  it('fails safe to manual_review when no receiver name is configured', async () => {
+  it('skips the secondary gate when no receiver name is configured (other gates still apply)', async () => {
     const { verificationResult } = await verify({ receiverName: '' });
-    expect(verificationResult.decision).toBe('manual_review');
-    expect(verificationResult.reason).toBe('RECEIVER_NAME_NOT_CONFIGURED');
+    expect(verificationResult.decision).toBe('approved');
+    expect(verificationResult.reason).toBe(null);
+    expect(verificationResult.checks.receiverName.enabled).toBe(false);
   });
 
   it('normalizes the configured name the same way as the OCR read', () => {
@@ -461,7 +462,7 @@ describe('decidePaymentVerification — inconclusive vs confident', () => {
       decidePaymentVerification({ ...base, transactionStatusOk: false }),
       decidePaymentVerification({ ...base, ocrConfidence: 10 }),
       decidePaymentVerification({ ...base, upiMatch: false }),
-      decidePaymentVerification({ ...base, receiverName: '', nameConfigured: false }),
+      decidePaymentVerification({ ...base, amountMatch: false }),
     ];
     for (const d of decisions) expect(d.decision).not.toBe('approved');
   });

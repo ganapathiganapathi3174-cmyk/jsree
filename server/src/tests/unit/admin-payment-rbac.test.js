@@ -113,4 +113,41 @@ describe('admin financial actions require an admin role', () => {
     expect(body.code).toBe('ADMIN_REQUIRED');
     expect(adminControllerMocks.reviewTopup).not.toHaveBeenCalled();
   });
+
+  it('rejects a regular user attempting the delete-user endpoint', async () => {
+    const app = express();
+    app.use('/admin', adminRouter);
+    server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    const { port } = server.address();
+    const token = generateToken({ userId: 'user-1' });
+
+    const response = await fetch(`http://127.0.0.1:${port}/admin/users/victim-id`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.code).toBe('ADMIN_REQUIRED');
+    expect(adminControllerMocks.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('allows an admin through to the delete-user endpoint (authorization verified)', async () => {
+    userState.role = 'admin';
+    const app = express();
+    app.use('/admin', adminRouter);
+    server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    const { port } = server.address();
+    const token = generateToken({ userId: 'user-1' });
+
+    const response = await fetch(`http://127.0.0.1:${port}/admin/users/victim-id`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(adminControllerMocks.deleteUser).toHaveBeenCalledTimes(1);
+  });
 });

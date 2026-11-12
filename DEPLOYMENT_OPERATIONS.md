@@ -19,8 +19,8 @@ into this file, the repo, or shell history that is committed anywhere.
       `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
       `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`,
       `ADMIN_UPI_ID`, `ADMIN_RECEIVER_NAME`.
-- [ ] `PAYMENT_PROVIDER_MODE` is unset or `none`, and `PAYMENT_AUTO_APPROVE`
-      is NOT `true` (see section 6).
+- [ ] `PAYMENT_PROVIDER_MODE` is unset or `none` (deterministic
+      screenshot-based decisions; see section 6).
 - [ ] No stale/legacy `.env` from old snapshots is being used.
 
 Current repo state note: **no authorized credentials exist in this
@@ -159,8 +159,10 @@ Record the two status codes in the deployment log.
 
 ### 4a. Review history (done in this audit; re-confirm before applying)
 
-- Files: `supabase/migrations/001 … 017` (017 = `payment_verifications`,
-  append-only history; RLS enabled, **no policies** → service-role only).
+- Files: `supabase/migrations/001 … 019` (017 = `payment_verifications`,
+  append-only history; 018 = complete user deletion archive; 019 = RLS on
+  core tables — see §9/§10. 017/018/019 all enable RLS, **no policies**
+  → service-role only).
 - 017 is additive (`CREATE TABLE IF NOT EXISTS` + indexes + RLS); it does
   not alter existing tables and is safe to re-run.
 - 017 is **not yet applied to any database** from this workspace.
@@ -260,40 +262,46 @@ npx vitest run src/tests/unit/seed-default-users.test.js
 
 ---
 
-## 6. Keep payment auto-approval disabled until a real sandbox E2E exists
+## 6. Payment decision policy is deterministic — no auto-approve switch
 
 ### 6a. Current state (verified in code)
 
 - `PAYMENT_PROVIDER_MODE` unset → `none`. No provider credentials exist.
-- Engine-approved proofs **retain** `PENDING_VERIFICATION` / manual review;
-  no automatic settlement path is active.
-- `PAYMENT_AUTO_APPROVE` enables only on the literal string `'true'`
-  (`paymentConfig.js:isPaymentAutoApproveEnabled`). Provider mode `mock` is
-  refused in production (degrades to `none`).
+- Policy (`providerVerification.js`): a screenshot that passes every
+  mandatory gate is **APPROVED automatically**; a definite verification
+  failure is **REJECTED automatically**; technical failures (OCR /
+  provider timeout) are a retryable no-decision — never fraud, never an
+  approval. The legacy `PAYMENT_AUTO_APPROVE` park-everything switch has
+  been removed. Provider mode `mock` is refused in production (degrades
+  to `none`).
+- LIMITATION (documented in code): with mode `none` a screenshot alone
+  cannot conclusively prove bank settlement — approval rests on screenshot
+  evidence + the atomic approved-UTR ledger.
 
 ### 6b. Confirm on the target env before every deploy
 
 ```bash
-# in the server env file for the target — expect both lines ABSENT or:
+# in the server env file for the target — expect:
 # PAYMENT_PROVIDER_MODE=none
-# (no line) PAYMENT_AUTO_APPROVE=            <- must NOT be 'true'
+# (no line) PAYMENT_AUTO_APPROVE=            <- legacy switch, must be absent
 
 node -e "
-  const { isPaymentAutoApproveEnabled } = await import('./src/config/paymentConfig.js');
-  console.log('autoApprove:', isPaymentAutoApproveEnabled());
+  const cfg = await import('./src/config/paymentConfig.js');
+  console.log('providerMode default:', cfg.PAYMENT_PROVIDER_MODE ?? 'none');
+  console.log('isPaymentAutoApproveEnabled present:', 'isPaymentAutoApproveEnabled' in cfg);
 " --input-type=module
-# expect: autoApprove: false
+# expect: isPaymentAutoApproveEnabled present: false
 ```
 
-### 6c. Gate to ever enable (all must be true — currently none are)
+### 6c. Gate to ever configure a live provider (all must be true)
 
 - [ ] A real provider sandbox account exists (verify URL + API key).
 - [ ] One genuine sandbox transaction has been verified end-to-end:
       upload → engine decision → provider confirmation → DB status →
       activation/wallet credit → exactly-once (no double credit on retry).
 - [ ] Failure paths tested: provider timeout, wrong amount, replayed UTR.
-- [ ] Change approved by the payment owner; `PAYMENT_AUTO_APPROVE=true`
-      added last, with monitoring on `payment_verifications` +
+- [ ] Change approved by the payment owner; `PAYMENT_PROVIDER_MODE=live`
+      set last, with monitoring on `payment_verifications` +
       `audit_logs` for the first live traffic.
 
 Do **not** simulate this with the mock provider or by pre-setting statuses.
@@ -357,6 +365,9 @@ real database.
 | 5 | Integration suites on isolated creds | **Ops action** — blocked: no authorized env here |
 | 6 | Auto-approve off | **Code-verified** (`none` / flag default off); re-check per env |
 | 7 | Activation + credit idempotent | **Code+test verified offline**; live double-run pending gate 5 |
+| 8 | 018 user-deletion archive | **Static-verified offline** (see §9); live apply pending creds |
+| 9 | 019 RLS on core tables | **Static-written offline** (see §10); live apply + 3 verification queries pending creds |
+| 10 | 020 top-up UTR retention | **Static-written offline** (see §11); live apply pending creds |
 
 ---
 
@@ -405,22 +416,24 @@ The 7 vitest "failed files" are all environmental, not regressions:
 `unit/cache`, `unit/helpers`, `unit/pagination` are `node:test` files that
 vitest cannot collect (they pass under `node --test`, shown above).
 
-### 8.3 Payment-approval safety (verified at runtime, no env set)
+### 8.3 Payment-approval policy (verified at runtime, no env set)
 
 ```bash
 node --input-type=module -e "const c=await import('./src/config/paymentConfig.js'); \
   const p=await import('./src/services/paymentProviderService.js'); \
-  console.log(c.isPaymentAutoApproveEnabled(), p.getProviderMode());"
-# -> false none
+  console.log('legacySwitch:', 'isPaymentAutoApproveEnabled' in c, p.getProviderMode());"
+# -> legacySwitch: false none
 
 NODE_ENV=production PAYMENT_PROVIDER_MODE=mock node --input-type=module -e "..." 
 # -> logs 'PAYMENT_PROVIDER_MODE=mock is refused in production; falling back to none'
 # -> providerMode: none
 ```
 
-- Missing provider verification → engine outcome parks as
-  `PENDING_VERIFICATION`/`manual_review` (no settlement path) — covered by
-  `payment-provider-service` + decision suites in the 1543 above.
+- Provider mode `none` → deterministic policy: every mandatory screenshot
+  gate passing means automatic APPROVAL; definite verification failures
+  reject automatically; technical failures stay a retryable no-decision
+  (never fraud, never an approval) — covered by `payment-provider-service`
+  + decision suites in the 1543 above.
 - No payment statuses were manually altered; no provider success simulated.
 
 ### 8.4 Migration 017 status
@@ -441,3 +454,166 @@ NODE_ENV=production PAYMENT_PROVIDER_MODE=mock node --input-type=module -e "..."
 If any required credential or the provider sandbox is missing, stop at that
 gate, record the exact missing item (env var name, project ref, provider
 account), and hand off to the operator who holds that access.
+
+---
+
+## 9. Apply migration 018 — complete user deletion (financial retention)
+
+### 9a. What it does (statically verified in the hardening audit)
+
+- File: `supabase/migrations/018_complete_user_deletion.sql`.
+- Replaces `admin_delete_user(UUID, UUID)` (SECURITY DEFINER, single
+  transaction, returns JSONB): RBAC inside the function, refuses admin
+  targets and self-deletion, **archives** payments / top-ups / wallet
+  ledger into `deleted_user_financial_records` (anonymized — no names,
+  emails, mobiles, screenshots), **retains** `approved_utrs` (duplicate-UTR
+  ledger) and `payment_verifications`, clears `payment_config.updated_by`,
+  deletes child rows then the user, writes the `hard_delete_user` audit
+  entry — all in one transaction (no partial deletion possible).
+- Adds the `deleted_user_financial_records` table (RLS enabled, no
+  policies → service-role only) with indexes on `deleted_user_id`,
+  `utr`, `archived_at`.
+- Signature is compatible with existing callers
+  (`(p_user_id UUID, p_admin_id UUID)` / `RETURNS JSONB`); all columns
+  and the 17 outbound FKs it touches exist in migrations 001–017.
+- `009 admin_delete_topup` is unchanged and still present (covered by
+  `admin-delete-migration.test.js`).
+- **Not applied to any database from this workspace** — do not claim it
+  is live until 9b/9c report success.
+
+### 9b. Apply — guarded script (preferred)
+
+Same guard contract as §4b (advisory lock, explicit confirm, test-ref
+match):
+
+```bash
+export DATABASE_URL='postgres://...<from Dashboard, test project>...'
+export SUPABASE_URL='https://<TEST_REF>.supabase.co'
+export MIGRATION_TARGET_PROJECT_REF='<TEST_REF>'
+export MIGRATION_CONFIRM='018_complete_user_deletion.sql'
+
+node server/src/scripts/apply-migration-guarded.mjs 018_complete_user_deletion.sql
+# expect: "DONE: migration applied and committed."
+```
+
+### 9c. Apply — alternative + post-migration verification
+
+Paste the reviewed file into the Dashboard SQL Editor and run once, then:
+
+```sql
+-- function present with the expected signature:
+SELECT p.proname, pg_get_function_identity_arguments(p.oid)
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname = 'public' AND p.proname = 'admin_delete_user';
+-- expect: admin_delete_user | (p_user_id uuid, p_admin_id uuid)
+
+SELECT to_regclass('public.deleted_user_financial_records');  -- expect non-null
+SELECT relrowsecurity FROM pg_class
+ WHERE oid = 'public.deleted_user_financial_records'::regclass; -- expect true
+
+SELECT count(*) FROM pg_policies
+ WHERE schemaname = 'public' AND tablename = 'deleted_user_financial_records';
+-- expect: 0
+```
+
+Then a **destructive-path smoke on the TEST project only** (never
+production from this checklist): delete a seeded non-admin user and
+confirm (a) the users row is gone, (b) anonymized archive rows exist in
+`deleted_user_financial_records`, (c) `approved_utrs` rows are retained,
+(d) the `hard_delete_user` audit entry exists.
+
+### 9d. Boundary
+
+- Deployment order: **after 017, before 019** (019 depends on 018's table
+  already existing when re-asserting RLS).
+- User data and financial records are preserved by design (archive-first);
+  there is no step in this checklist that truncates or drops financial
+  tables.
+- Live bank verification: not applicable here — no payment provider is
+  configured; settlement claims remain screenshot-verification only.
+
+---
+
+## 10. Apply migration 019 — enable RLS on core tables
+
+### 10a. What it does (statically written in the hardening audit)
+
+- File: `supabase/migrations/019_enable_rls_core_tables.sql`.
+- Enables Row Level Security on the 15 core tables that had it **off**
+  (`users`, `payments`, `topups`, `wallet_transactions`, `approved_utrs`,
+  `referrals`, `referral_tiers`, `audit_logs`, `notifications`,
+  `conversations`, `messages`, `ip_logs`, `suspicious_activity`,
+  `payment_config`, `plan_change_requests`) and re-asserts it on
+  `payment_verifications` (017) and `deleted_user_financial_records` (018).
+- Creates **no policies** → anon/authenticated are denied by default;
+  the server's service-role client bypasses RLS, and the web client has
+  zero Supabase usage — no application path is affected.
+- **Not applied to any database from this workspace.**
+
+### 10b. Apply (after 018) — guarded script or Dashboard SQL Editor
+
+```bash
+export MIGRATION_CONFIRM='019_enable_rls_core_tables.sql'
+node server/src/scripts/apply-migration-guarded.mjs 019_enable_rls_core_tables.sql
+# expect: "DONE: migration applied and committed."
+```
+
+### 10c. Post-deployment verification (all three must pass — copy from
+the migration header, which contains the full queries)
+
+1. `pg_class.relrowsecurity = true` for all 17 tables (expect 17 rows).
+2. `pg_policies` returns **0 rows** for the core tables (deny-all).
+3. Live smoke: `GET /rest/v1/users?select=id&limit=1` with the **anon**
+   key → HTTP 401/403, never data; the same query with **service_role**
+   → succeeds.
+
+### 10d. Boundary
+
+- Rollback is `ALTER TABLE … DISABLE ROW LEVEL SECURITY` (no policies to
+  drop). Do not add policies in a hotfix — any future policy needs its
+  own reviewed migration with an owner-column design.
+- Do not claim RLS is live until 10c queries 1–3 pass against the real
+  database.
+
+---
+
+## 11. Apply migration 020 - admin_delete_topup retains the UTR ledger
+
+### 11a. What it does (statically verified in the E2E audit)
+
+- File: `supabase/migrations/020_admin_delete_topup_retains_utrs.sql`.
+- Replaces `admin_delete_topup(p_topup_id, p_admin_id)` so deleting a
+  top-up no longer deletes its `approved_utrs` row. The 009 version freed
+  the consumed bank UTR back into the pool, allowing the same bank
+  transaction reference to be reserved and credited a second time
+  (duplicate wallet credit — the admin delete button is exposed on every
+  top-up row, including completed ones). 020 applies the retention
+  invariant that 018 established for user deletion.
+- Everything else is unchanged: wallet ledger/balances untouched,
+  storage paths returned for cleanup, idempotent `alreadyDeleted`,
+  in-function admin RBAC, `audit_logs` entry, `FOR UPDATE` row lock.
+- Static regression: `server/src/tests/unit/admin-delete-topup-retention.test.js`.
+
+### 11b. Apply (after 019)
+
+```bash
+export MIGRATION_CONFIRM='020_admin_delete_topup_retains_utrs.sql'
+node server/src/scripts/apply-migration-guarded.mjs 020_admin_delete_topup_retains_utrs.sql
+# expect: "DONE: migration applied and committed."
+```
+
+### 11c. Post-apply verification
+
+Run Section H of `supabase/verify-rollout-017-018-019.sql`:
+
+1. `admin_delete_topup` source must NOT contain `DELETE FROM approved_utrs`.
+2. `admin_delete_topup` source must still contain `DELETE FROM topups`.
+
+### 11d. Boundary
+
+- Rollout order: **017 → 018 → 019 → 020** (each file in its own
+  transaction; the guarded script applies one file per run).
+- Until 020 is applied, deleting an approved top-up still frees its UTR —
+  treat admin top-up deletion as restricted until this gate passes.
+- Do not claim the fix is live until 11c queries pass against the real
+  database.

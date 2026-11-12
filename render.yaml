@@ -37,15 +37,19 @@ services:
         sync: false
       - key: ADMIN_UPI_ID
         sync: false
-      # Receiver (payee) name for the OCR name gate. REQUIRED for approvals:
-      # without it every proof fails safe to RECEIVER_NAME_NOT_CONFIGURED.
+      # Receiver (payee) name for the OCR secondary name gate. Recommended:
+      # when set, a payee-name mismatch rejects automatically; when empty the
+      # secondary gate is skipped and the receiver UPI + amount + date +
+      # integrity + duplicate gates remain mandatory.
       - key: ADMIN_RECEIVER_NAME
         sync: false
-      # Approval safety pins — straight-through auto-approval stays OFF and no
-      # payment provider is configured until a real provider integration is
-      # tested and explicitly authorized (see .env.example / DEPLOYMENT_OPERATIONS.md).
-      - key: PAYMENT_AUTO_APPROVE
-        value: "false"
+      # Payment verification policy — deterministic auto-decision:
+      #   * all mandatory screenshot gates pass  -> APPROVED automatically
+      #   * definite verification failure        -> REJECTED automatically
+      #   * technical failure (OCR/provider)     -> retryable no-decision
+      # No provider is configured (mode none): approval rests on screenshot
+      # evidence + the atomic approved-UTR ledger (live bank/UPI verification
+      # is NOT configured — see services/paymentVerification).
       - key: PAYMENT_PROVIDER_MODE
         value: "none"
       - key: DATABASE_URL

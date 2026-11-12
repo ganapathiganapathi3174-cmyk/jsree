@@ -128,8 +128,8 @@ export default function AdminPayments() {
   };
 
   const handleDeleteUser = async (userId) => {
-    try { await api.delete(`/admin/users/${userId}?soft=true`); toast.success('User disabled (soft deleted)'); setConfirmAction(null); load(); }
-    catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
+    try { await api.delete(`/admin/users/${userId}`); toast.success('User deleted permanently'); setConfirmAction(null); load(); }
+    catch (err) { toast.error(err.response?.data?.message || 'Failed to delete user'); }
   };
   const handleDeletePayment = async (paymentId) => {
     try {
@@ -402,7 +402,7 @@ export default function AdminPayments() {
 
             {detail.user_id && (
               <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                <button onClick={() => setConfirmAction({ userId: detail.user_id })} className="btn btn-danger flex-1">
+                <button onClick={() => setConfirmAction({ userId: detail.user_id, userName: detail.user?.full_name || detail.user_name || detail.user_email || detail.user_id?.slice(0, 8), userEmail: detail.user?.email || detail.user_email, userIdDisplay: detail.user_id })} className="btn btn-danger flex-1">
                   <UserX className="h-4 w-4" aria-hidden="true" /> Delete User
                 </button>
                 {detail.status === 'pending' && detail.id && (
@@ -426,13 +426,13 @@ export default function AdminPayments() {
             await handleDeleteUser(confirmAction.userId);
           }
         }}
-        title={confirmAction?.paymentId ? 'Delete Registration' : 'Disable User (Soft Delete)'}
+        title={confirmAction?.paymentId ? 'Delete Registration' : 'Permanently Delete User?'}
         message={
           confirmAction?.paymentId
             ? `This will permanently delete the pending registration and payment for "${confirmAction.userName || 'this user'}". This action cannot be undone. If the account has financial records, deletion will be blocked.`
-            : 'This will disable access (soft delete). The user will be marked as deleted and cannot log in. All existing records will be preserved for administrative review.'
+            : `Name: ${confirmAction?.userName || 'Unknown'}\nEmail: ${confirmAction?.userEmail || '-'}\nUser ID: ${confirmAction?.userIdDisplay || '-'}\n\nWARNING: this permanently deletes the account and ALL associated data — payments, top-ups, wallet transactions, referrals, notifications, chat messages, uploaded screenshots and login history. The user will no longer be able to log in and this action CANNOT be undone.\n\nFinancial transaction records are retained in an anonymized archive for audit purposes only.`
         }
-        confirmText={confirmAction?.paymentId ? 'Delete Registration' : 'Disable'}
+        confirmText={confirmAction?.paymentId ? 'Delete Registration' : 'Delete Permanently'}
         confirmVariant="danger"
       />
     </div>

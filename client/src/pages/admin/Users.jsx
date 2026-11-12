@@ -60,8 +60,8 @@ export default function AdminUsers() {
         await api.put(`/admin/users/${userId}/status`, { status: 'inactive', reason: 'Admin deactivation' });
         toast.success('User deactivated');
       } else       if (action === 'delete') {
-        await api.delete(`/admin/users/${userId}?soft=true`);
-        toast.success('User disabled (soft deleted) successfully');
+        await api.delete(`/admin/users/${userId}`);
+        toast.success('User deleted permanently');
       }
       setConfirmAction(null); setDetailUser(null); load(page);
     } catch (err) { toast.error(err.response?.data?.message || 'Action failed'); }
@@ -80,13 +80,13 @@ export default function AdminUsers() {
   };
 
   const confirmTitle = confirmAction?.action === 'delete'
-    ? 'Disable user (soft delete)?'
+    ? 'Permanently delete this user?'
     : confirmAction?.action === 'activate'
       ? 'Activate user?'
       : 'Deactivate user?';
 
   const confirmMessage = confirmAction?.action === 'delete'
-    ? `User: ${confirmAction.user?.full_name || 'Unknown'}\nEmail: ${confirmAction.user?.email || '-'}\nCurrent Plan: ${PLAN_MAP[confirmAction.user?.current_plan]?.label || '-'}${confirmAction.user?.id && pendingPlanChanges[confirmAction.user.id] ? `\nPending Request: ${PLAN_MAP[pendingPlanChanges[confirmAction.user.id]]?.label || '-'}` : ''}\n\nThis will disable access (soft delete). The user will be marked as deleted and cannot log in. All existing records (payments, wallet, referrals, audit logs) will be preserved for administrative review.`
+    ? `Name: ${confirmAction.user?.full_name || 'Unknown'}\nEmail: ${confirmAction.user?.email || '-'}\nUser ID: ${confirmAction.user?.id || '-'}\nCurrent Plan: ${PLAN_MAP[confirmAction.user?.current_plan]?.label || '-'}${confirmAction.user?.id && pendingPlanChanges[confirmAction.user.id] ? `\nPending Request: ${PLAN_MAP[pendingPlanChanges[confirmAction.user.id]]?.label || '-'}` : ''}\n\nWARNING: this permanently deletes the account and ALL associated data — payments, top-ups, wallet transactions, referrals, notifications, chat messages, uploaded screenshots and login history. The user will no longer be able to log in and this action CANNOT be undone.\n\nFinancial transaction records are retained in an anonymized archive for audit purposes only.`
     : confirmAction?.action === 'activate'
       ? 'This user will regain access to their account and the platform.'
       : 'This user will lose access to their account until reactivated.';
@@ -143,7 +143,7 @@ export default function AdminUsers() {
                           <button onClick={() => openUserDetail(u)} className="btn btn-icon btn-sm btn-ghost" title="View details" aria-label="View details"><Eye className="h-4 w-4" aria-hidden="true" /></button>
                           {u.status !== 'active' && <button onClick={() => setConfirmAction({ action: 'activate', id: u.id, label: 'activate this user' })} className="btn btn-icon btn-sm btn-ghost text-success-600 hover:text-success-700" title="Activate user" aria-label="Activate user"><UserCheck className="h-4 w-4" aria-hidden="true" /></button>}
                           {u.status === 'active' && <button onClick={() => setConfirmAction({ action: 'deactivate', id: u.id, label: 'deactivate this user' })} className="btn btn-icon btn-sm btn-ghost text-warning-600 hover:text-warning-700" title="Deactivate user" aria-label="Deactivate user"><UserX className="h-4 w-4" aria-hidden="true" /></button>}
-                           <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="btn btn-icon btn-sm btn-ghost text-error-600 hover:text-error-700" title="Disable user (soft delete); preserves all data" aria-label="Disable user (soft delete); preserves all data"><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+                           <button onClick={() => setConfirmAction({ action: 'delete', id: u.id, user: u })} className="btn btn-icon btn-sm btn-ghost text-error-600 hover:text-error-700" title="Permanently delete user and all associated data" aria-label="Permanently delete user and all associated data"><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
                         </div>
                       </td>
                     </tr>
@@ -259,7 +259,7 @@ export default function AdminUsers() {
         onConfirm={() => handleAction(confirmAction?.action, confirmAction?.id)}
         title={confirmTitle}
         message={confirmMessage}
-        confirmText={confirmAction?.action === 'delete' ? 'Disable' : confirmAction?.action === 'activate' ? 'Activate' : 'Deactivate'}
+        confirmText={confirmAction?.action === 'delete' ? 'Delete Permanently' : confirmAction?.action === 'activate' ? 'Activate' : 'Deactivate'}
         confirmVariant={confirmAction?.action === 'delete' ? 'danger' : 'success'}
       />
     </div>

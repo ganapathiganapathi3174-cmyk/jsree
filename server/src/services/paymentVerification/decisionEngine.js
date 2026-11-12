@@ -3,20 +3,23 @@
  * four documented outcomes:
  *
  *   APPROVED            — every mandatory screenshot gate passed (the FINAL
- *                         approval decision additionally requires provider
- *                         confirmation — see providerVerification.js)
- *   MANUAL_REVIEW       — evidence is ambiguous/contradictory; a human must
- *                         decide (e.g. payer-name mismatch under 'review')
+ *                         approval decision additionally runs the provider
+ *                         policy — see providerVerification.js)
+ *   MANUAL_REVIEW       — ONLY when the operator explicitly opts into
+ *                         SENDER_NAME_POLICY=review; never produced by the
+ *                         default policy
  *   PENDING_VERIFICATION— evidence was INSUFFICIENT to decide (OCR could not
  *                         read a field, config missing, budget exhausted).
- *                         Never an approval, never a rejection.
+ *                         Never an approval, never a rejection, never
+ *                         fraud — the row stays resubmittable.
  *   REJECTED            — evidence definitively contradicts the request
  *                         (wrong amount/payee, stale/future transaction,
  *                         duplicate reference, corrupt image, failed status)
  *
  * Gate order: integrity -> extraction -> demo -> UPI -> amount -> date/time
  * -> transaction status -> transaction id -> OCR confidence -> receiver
- * name -> sender name (advisory) -> duplicate pre-check.
+ * name (skipped when not configured) -> sender name (advisory) ->
+ * duplicate pre-check.
  *
  * `decidePaymentVerification()` is the same rule set expressed over flat
  * gate flags (kept as a pure function for unit testing individual gates);
@@ -38,6 +41,7 @@ const INCONCLUSIVE_REASONS = new Set([
   'OCR_UNREADABLE',
   'OCR_EXTRACTION_FAILED',
   'OCR_FAILED',
+  'PROVIDER_UNAVAILABLE',
 ]);
 
 export function isInconclusiveReason(reason) {
@@ -92,9 +96,13 @@ export function userMessageFor(reason) {
     case 'RECEIVER_NAME_MISMATCH':
       return 'The receiver name on the screenshot does not match the expected payment recipient.';
     case 'SENDER_NAME_MISMATCH':
-      return 'The payer name on the screenshot does not match the expected payer. This payment needs a manual review.';
+      return 'The payer name on the screenshot does not match the account holder. Please make the payment from your own registered UPI account and try again.';
     case 'SENDER_NAME_UNREADABLE':
       return 'We could not read the payer name from your screenshot. Please upload a clearer image.';
+    case 'PROVIDER_TRANSACTION_NOT_FOUND':
+      return 'This transaction reference could not be confirmed by the payment provider. The payment is invalid — please check the transaction and try again.';
+    case 'PROVIDER_UNAVAILABLE':
+      return 'We could not confirm this transaction with the payment provider right now. Nothing was charged — please try again in a few minutes.';
     case 'PENDING_PROVIDER_VERIFICATION':
       return 'Your screenshot passed automated checks, but the payment could not be confirmed with the payment provider yet. It is pending verification.';
     case 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED':
@@ -197,12 +205,10 @@ export function decidePaymentVerification({
   if (!confident) return { decision: 'rejected', reason: 'LOW_OCR_CONFIDENCE' };
 
   // Gate 7 (Check B): receiver name. Only evaluated when a receiver name
-  // is supplied. Undefined => disabled (direct callers / legacy tests).
-  if (receiverName !== undefined) {
-    if (nameConfigured !== true) {
-      // No trusted payee name configured — fail safe, do not auto-approve.
-      return { decision: 'manual_review', reason: 'RECEIVER_NAME_NOT_CONFIGURED' };
-    }
+  // is supplied AND configured. Undefined => disabled (direct callers /
+  // legacy tests). Not configured => the secondary gate is unavailable and
+  // is skipped (every other mandatory gate still applies).
+  if (receiverName !== undefined && nameConfigured === true) {
     if (nameMatch !== true) {
       if (namePartial === true) {
         // The payee name was read only partially ("JAYARAJ" for
@@ -533,24 +539,47 @@ export class ValidationDecisionEngine {
         partial: receiverValidation?.reason === 'RECEIVER_NAME_INCOMPLETE',
       };
       if (!receiverValidation?.valid) {
-        return this._result({
-          approved: false,
-          reason: receiverValidation?.reason || 'RECEIVER_NAME_MISMATCH',
-          checks,
-          upiDiagnostics,
-          nameDiagnostics,
-          details: { configured: receiverName, detected: receiverValidation?.detected },
-          auditLog: this.auditLog,
-          timings: this.timings,
-        });
+        // No receiver name configured (server-side): the secondary name gate
+        // is simply unavailable — requirement: "receiver name matches WHEN
+        // reliable receiver-name evidence is available". Skip the gate and
+        // keep enforcing every other mandatory check (receiver UPI, amount,
+        // date, status, UTR, integrity, duplicates). Never reject a payment
+        // because of missing server configuration, and never park it.
+        if (receiverValidation?.reason === 'RECEIVER_NAME_NOT_CONFIGURED') {
+          this.log('receiverName', 'not configured — secondary name gate skipped', {});
+          // EXPLICIT disclosure (never silent): the row records that the
+          // gate was disabled server-side. passed=null renders as N/A —
+          // it can NEVER be read as a pass or a fail.
+          checks.receiverName = {
+            passed: null,
+            skipped: true,
+            reason: 'RECEIVER_NAME_NOT_CONFIGURED',
+            expected: null,
+            detected: receiverValidation?.detected || [],
+          };
+          nameDiagnostics = { enabled: false, skipped: 'RECEIVER_NAME_NOT_CONFIGURED' };
+        } else {
+          return this._result({
+            approved: false,
+            reason: receiverValidation?.reason || 'RECEIVER_NAME_MISMATCH',
+            checks,
+            upiDiagnostics,
+            nameDiagnostics,
+            details: { configured: receiverName, detected: receiverValidation?.detected },
+            auditLog: this.auditLog,
+            timings: this.timings,
+          });
+        }
       }
     }
 
     // Gate 7b (Rule B): sender (payer) name — advisory identity signal.
     //   - match             -> supporting evidence, never sufficient alone
     //   - unreadable        -> advisory only, NEVER blocks the payment
-    //   - complete mismatch -> policy-driven: 'reject' = definitive rejection,
-    //                          default 'review' = MANUAL_REVIEW for a human
+    //   - complete mismatch -> policy-driven: default 'reject' = definitive
+    //                          rejection (no manual-review parking);
+    //                          explicit 'review' = operator opt-in to
+    //                          MANUAL_REVIEW for a human
     if (senderValidation?.applicable) {
       checks.senderName = {
         passed: senderValidation.passed,

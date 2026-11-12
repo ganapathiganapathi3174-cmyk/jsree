@@ -21,9 +21,10 @@ export const RECEIVER_UPI = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
 
 // Admin-configured receiver (payee) name. Used as a SECONDARY identity gate
 // behind the receiver-UPI match (see services/paymentVerification). Empty by
-// default: when no name is configured the caller must fail safe and route the
-// payment to manual review rather than auto-approve. Never hardcode a real
-// name here.
+// default: when no name is configured the secondary gate is SKIPPED (the
+// receiver UPI, amount, date, integrity and duplicate gates remain
+// mandatory) — never a rejection and never a manual-review park for a
+// server-side configuration gap. Never hardcode a real name here.
 export const RECEIVER_NAME = process.env.ADMIN_RECEIVER_NAME || '';
 
 export const PAYMENT_PLANS = Object.fromEntries(
@@ -58,18 +59,14 @@ export const MIN_OCR_CONFIDENCE_APPROVE = Number(process.env.MIN_OCR_CONFIDENCE_
 // variants remain separate. Existing behavior is the default.
 export const NORMALIZE_UTRS_FOR_DUPLICATE = process.env.NORMALIZE_UTRS_FOR_DUPLICATE === 'true';
 
-// ── Auto-approval switch (B1) ──
-// PAYMENT_AUTO_APPROVE=true lets an engine-approved screenshot finalize
-// straight through (approve + activate + credit). Any other value — the
-// DEFAULT — falls back to external confirmation: an OCR-approved proof is
-// parked status='manual_review' with decision='manual_review' and
-// ocrDecision='approved' until a human confirms it (the HEAD-era posture).
-// No UTR is reserved and no activation/credit runs while parked.
-// Read at call time (not module load) so tests and deployments can flip it
-// per-invocation without a rebuild.
-export function isPaymentAutoApproveEnabled() {
-  return process.env.PAYMENT_AUTO_APPROVE === 'true';
-}
+// ── Auto-approval policy ──
+// Straight-through approval is the DETERMINISTIC production policy: a
+// screenshot that passes every mandatory gate is APPROVED automatically
+// (no admin approval). See services/paymentVerification/providerVerification
+// for the full decision table, including the documented limitation that a
+// screenshot alone cannot prove bank settlement when no live provider is
+// configured. The legacy PAYMENT_AUTO_APPROVE park-everything switch has
+// been removed: fully verified payments are never parked for a human.
 
 export const TIMEZONE = 'Asia/Kolkata';
 export const IST_UTC_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -82,32 +79,38 @@ export const IST_UTC_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 // read from the screenshot ("From ...", "Paid from ...").
 //
 //   off     – sender check disabled entirely (no expected name needed).
-//   review  – DEFAULT. A complete but DIFFERENT payer name routes the
-//             payment to MANUAL_REVIEW (human decides). An unreadable or
-//             partial sender line is advisory only and never blocks.
-//   reject  – a complete payer-name mismatch is a definitive rejection.
+//   reject  – DEFAULT. A complete but DIFFERENT payer name is a definitive
+//             rejection (inconsistent payment evidence). No manual-review
+//             parking: the user gets a clear reason and a retry option.
+//   review  – operator opt-in: a complete payer-name mismatch routes the
+//             payment to MANUAL_REVIEW (human decides). Use only when the
+//             business explicitly wants a human in the loop.
 //
+// An unreadable or partial sender line is advisory only and never blocks.
 // A fuzzy/partial sender match NEVER authorizes approval on its own — the
-// receiver UPI + receiver name + amount + provider verification remain the
-// mandatory identity gates.
+// receiver UPI + receiver name (when configured) + amount + integrity +
+// duplicate gates remain the mandatory identity checks.
 // ─────────────────────────────────────────────────────────────
 const SENDER_POLICIES = new Set(['off', 'review', 'reject']);
 export const SENDER_NAME_POLICY = SENDER_POLICIES.has(process.env.SENDER_NAME_POLICY)
   ? process.env.SENDER_NAME_POLICY
-  : 'review';
+  : 'reject';
 
 // ─────────────────────────────────────────────────────────────
 // Payment-provider verification (Rule F) — abstraction switch.
 //
-//   none  – DEFAULT. No live provider integration is configured. An
-//           engine-approved screenshot is never treated as settlement
-//           proof: with PAYMENT_AUTO_APPROVE off (production default) it
-//           parks as manual_review / PENDING_VERIFICATION.
+//   none  – DEFAULT (production). No live provider integration. The
+//           mandatory screenshot checks are the verification policy: a
+//           fully verified screenshot is APPROVED automatically. LIMITATION:
+//           screenshot evidence alone cannot conclusively prove bank
+//           settlement — see providerVerification.js.
 //   mock  – development/test-only simulated provider. REFUSED in
 //           production (degrades to 'none') — never simulate successful
 //           verification where real money is involved.
 //   live  – calls PAYMENT_PROVIDER_VERIFY_URL with the transaction
-//           reference; any timeout/error fails safe to PENDING_VERIFICATION.
+//           reference. Definitive negatives reject automatically; any
+//           timeout/error fails safe to a retryable no-decision (never an
+//           approval, never a fraud label).
 // ─────────────────────────────────────────────────────────────
 export const PAYMENT_PROVIDER_VERIFY_URL = process.env.PAYMENT_PROVIDER_VERIFY_URL || '';
 export const PAYMENT_PROVIDER_API_KEY = process.env.PAYMENT_PROVIDER_API_KEY || '';

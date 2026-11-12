@@ -65,6 +65,16 @@ export function generateUniqueFilename(originalname) {
   return `${uuidv4()}.${ext}`;
 }
 
+// Builds the PRIVATE object URL for a storage object (no /public/ segment).
+// The payments bucket is private: this URL string is stored only as an
+// identifier (path parser + cleanup); it never grants read access. Reads go
+// through ownership-checked proxy endpoints using the service role.
+export function privateObjectUrl(bucket, objectPath) {
+  const base = String(process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const cleanPath = String(objectPath).replace(/^\/+/, '');
+  return `${base}/storage/v1/object/${bucket}/${cleanPath}`;
+}
+
 export function isWithinTimeWindow(date1, date2, windowMinutes = 30) {
   const d1 = new Date(date1);
   const d2 = new Date(date2);

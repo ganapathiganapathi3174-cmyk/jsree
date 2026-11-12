@@ -4,9 +4,9 @@
  *
  *   engine.validatePayment()   screenshot layer (integrity -> OCR -> gates
  *                              -> decision engine)
- *   engine.verify()            full pipeline (+ provider verification +
+ *   engine.verify()            full pipeline (+ provider check + deterministic
  *                              approval policy) -> four-state outcome
- *   resolveApprovalOutcome()   provider + auto-approve policy alone
+ *   resolveApprovalOutcome()   provider + final approval policy alone
  *   decidePaymentVerification() pure flat-gate decision rule
  *   duplicate pre-check + atomic approved-UTR ledger
  *   audit/history writers

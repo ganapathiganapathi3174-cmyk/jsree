@@ -205,6 +205,11 @@ export async function adminLogin(email, password, ipAddress = null, userAgent = 
   if (existingUser && existingUser.role !== 'admin') {
     throw { message: 'Account is not an admin account', code: 'ADMIN_REQUIRED' };
   }
+  // Disabled/deleted admin rows must not receive sessions even when the
+  // env credentials still match (operator disables via users.status).
+  if (existingUser && existingUser.status !== 'active') {
+    throw { message: 'Admin account is disabled', code: 'ADMIN_DISABLED' };
+  }
 
   let adminUser = existingUser;
 

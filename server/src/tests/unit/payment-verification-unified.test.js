@@ -182,8 +182,7 @@ afterEach(() => {
 // 1. Four-state outcome contract + approval policy
 // ─────────────────────────────────────────────────────────────
 describe('outcome contract + approval policy', () => {
-  it('1. auto-approve ON + provider confirmed -> APPROVED (verificationResult ready to persist)', async () => {
-    process.env.PAYMENT_AUTO_APPROVE = 'true';
+  it('1. provider confirmed -> APPROVED (verificationResult ready to persist)', async () => {
     process.env.PAYMENT_PROVIDER_MODE = 'mock';
 
     const out = await verify(receipt());
@@ -202,32 +201,46 @@ describe('outcome contract + approval policy', () => {
     expect(out.provider).toMatchObject({ available: true, verified: true, provider: 'mock' });
   });
 
-  it('2. auto-approve OFF (production default) -> PENDING_VERIFICATION, never an approval', async () => {
+  it('2. no provider configured (production mode none) -> deterministic APPROVED', async () => {
+    // All mandatory screenshot gates pass and no live provider exists:
+    // the screenshot checks ARE the verification policy (documented
+    // limitation: no live bank/UPI confirmation is configured).
     const out = await verify(receipt());
 
-    expect(out.outcome).toBe('PENDING_VERIFICATION');
-    expect(out.approved).toBe(false);
-    expect(out.reason).toBe('EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED');
+    expect(out.outcome).toBe('APPROVED');
+    expect(out.approved).toBe(true);
+    expect(out.reason).toBe(null);
+    expect(out.provider).toMatchObject({ available: false, verified: false, provider: 'none' });
     expect(out.verificationResult).toMatchObject({
-      decision: 'manual_review',
-      ocrDecision: 'approved',
-      status: 'PENDING_VERIFICATION',
-      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+      decision: 'approved',
+      status: 'APPROVED',
+      reason: null,
     });
   });
 
-  it('3. auto-approve ON but no provider configured -> PENDING_PROVIDER_VERIFICATION (OCR alone can never approve)', async () => {
-    process.env.PAYMENT_AUTO_APPROVE = 'true';
+  it('3. configured provider with a DEFINITIVE negative -> REJECTED, never approved', async () => {
+    process.env.PAYMENT_PROVIDER_MODE = 'mock';
+    providerCtl.override = async () => ({
+      available: true,
+      verified: false,
+      status: 'NOT_FOUND',
+      provider: 'mock',
+      checkedAt: new Date().toISOString(),
+    });
 
     const out = await verify(receipt());
 
-    expect(out.outcome).toBe('PENDING_VERIFICATION');
-    expect(out.reason).toBe('PENDING_PROVIDER_VERIFICATION');
+    expect(out.outcome).toBe('REJECTED');
+    expect(out.reason).toBe('PROVIDER_TRANSACTION_NOT_FOUND');
     expect(out.approved).toBe(false);
+    expect(out.verificationResult).toMatchObject({
+      decision: 'rejected',
+      status: 'REJECTED',
+      reason: 'PROVIDER_TRANSACTION_NOT_FOUND',
+    });
   });
 
-  it('4. provider timeout fails safe to PENDING_PROVIDER_VERIFICATION, never approval', async () => {
-    process.env.PAYMENT_AUTO_APPROVE = 'true';
+  it('4. provider timeout fails safe to a retryable no-decision, never approval', async () => {
     process.env.PAYMENT_PROVIDER_MODE = 'mock';
     providerCtl.override = async () => ({
       available: true,
@@ -239,10 +252,14 @@ describe('outcome contract + approval policy', () => {
 
     const out = await verify(receipt());
 
+    // Technical failure: no decision, not fraud, not an approval. The row
+    // stays resubmittable (inconclusive) so the user can retry.
     expect(out.outcome).toBe('PENDING_VERIFICATION');
-    expect(out.reason).toBe('PENDING_PROVIDER_VERIFICATION');
+    expect(out.reason).toBe('PROVIDER_UNAVAILABLE');
     expect(out.approved).toBe(false);
+    expect(out.inconclusive).toBe(true);
     expect(out.provider).toMatchObject({ verified: false, status: 'TIMEOUT' });
+    expect(out.verificationResult.status).toBe('PENDING_VERIFICATION');
   });
 
   it('5. statusForOutcome maps every outcome onto the public four-state contract', () => {
@@ -252,11 +269,30 @@ describe('outcome contract + approval policy', () => {
     expect(statusForOutcome({ approved: false, inconclusive: false, review: false })).toBe('REJECTED');
   });
 
-  it('6. resolveApprovalOutcome never returns APPROVED without a confirmed provider response', async () => {
-    process.env.PAYMENT_AUTO_APPROVE = 'true'; // provider mode stays 'none'
-    const r = await resolveApprovalOutcome({ transactionId: 'T7GHD240824', matchedAmount: 120 });
-    expect(r.outcome).toBe('PENDING_VERIFICATION');
-    expect(r.reason).toBe('PENDING_PROVIDER_VERIFICATION');
+  it('6. resolveApprovalOutcome decision matrix (provider policy alone)', async () => {
+    // Mode none -> APPROVED (screenshot policy).
+    const none = await resolveApprovalOutcome({ transactionId: 'T7GHD240824', matchedAmount: 120 });
+    expect(none.outcome).toBe('APPROVED');
+    expect(none.provider).toMatchObject({ provider: 'none' });
+
+    // Configured provider + definitive negative -> REJECTED.
+    process.env.PAYMENT_PROVIDER_MODE = 'mock';
+    providerCtl.override = async () => ({
+      available: true, verified: false, status: 'NOT_FOUND', provider: 'mock',
+      checkedAt: new Date().toISOString(),
+    });
+    const negative = await resolveApprovalOutcome({ transactionId: 'T7GHD240824', matchedAmount: 120 });
+    expect(negative.outcome).toBe('REJECTED');
+    expect(negative.reason).toBe('PROVIDER_TRANSACTION_NOT_FOUND');
+
+    // Configured provider + technical failure -> retryable no-decision.
+    providerCtl.override = async () => ({
+      available: true, verified: false, status: 'PROVIDER_ERROR', provider: 'mock',
+      checkedAt: new Date().toISOString(),
+    });
+    const technical = await resolveApprovalOutcome({ transactionId: 'T7GHD240824', matchedAmount: 120 });
+    expect(technical.outcome).toBe('PENDING_VERIFICATION');
+    expect(technical.reason).toBe('PROVIDER_UNAVAILABLE');
   });
 });
 

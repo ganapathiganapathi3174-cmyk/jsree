@@ -1,33 +1,41 @@
 /**
- * Provider verification + approval policy (Phases 4 & 5 of the engine).
+ * Provider verification + FINAL approval policy (Phases 4 & 5 of the engine).
  *
- * A screenshot displaying "Completed" — even one that passed EVERY
- * screenshot check — is NOT evidence that money moved. Final APPROVAL
- * requires BOTH:
- *   1. all screenshot checks passed, AND
- *   2. trusted provider confirmation of the transaction (Phase 4), AND
- *   3. the auto-approval policy gate (Phase 5): straight-through approval
- *      stays DISABLED by default; with PAYMENT_AUTO_APPROVE unset the
- *      payment is parked for human confirmation even when a provider
- *      confirms it.
+ * Deterministic decision policy (production):
  *
- * Provider modes (see paymentProviderService):
- *   none  – default: nothing is simulated; approval is impossible without
- *           a configured provider, payments park as PENDING_VERIFICATION.
- *   mock  – tests/dev only; refused when NODE_ENV=production.
- *   live  – server-to-server call to the configured provider API; timeouts
- *           and errors fail safe to PENDING_VERIFICATION (never approval).
+ *   Screenshot gates all passed (integrity, OCR fields, UTR, exact amount,
+ *   receiver UPI, receiver name when configured, date window, transaction
+ *   status, confidence floor, duplicate pre-check) AND:
+ *
+ *   - NO provider configured (mode 'none', the production default)
+ *        -> APPROVED. The mandatory screenshot checks ARE the verification
+ *           policy. LIMITATION: a screenshot alone cannot conclusively prove
+ *           bank settlement — live UPI/bank verification is not configured,
+ *           so approval rests on screenshot evidence + the atomic approved-UTR
+ *           ledger, not on provider confirmation.
+ *   - provider configured + confirms the transaction   -> APPROVED
+ *   - provider configured + DEFINITIVE negative (transaction not found /
+ *     invalid)                                          -> REJECTED
+ *     (invalid transaction reference — a definite failure condition)
+ *   - provider configured + technical failure (timeout, error,
+ *     misconfiguration)                                 -> PENDING_VERIFICATION
+ *     with reason PROVIDER_UNAVAILABLE: a no-decision, retryable outcome.
+ *     Technical failures are NEVER fraud and NEVER an approval.
  *
  * Provider responses are ALWAYS fetched server-side. A browser-supplied
  * "verified" flag is never an input to this module.
  */
 import { verifyTransaction, getProviderMode } from '../paymentProviderService.js';
-import { isPaymentAutoApproveEnabled } from '../../config/paymentConfig.js';
+
+// Provider statuses that are a DEFINITIVE negative answer (the provider
+// looked the reference up and says it does not exist / is invalid), as
+// opposed to a technical failure where the provider could not answer.
+const DEFINITIVE_NEGATIVE_STATUSES = new Set(['NOT_FOUND', 'INVALID', 'MISMATCH', 'FAILED', 'NOT_COMPLETED']);
 
 /**
  * Runs the provider confirmation for a screenshot-approved transaction.
  * NEVER throws: an unavailable/timed-out/erroring provider returns
- * { verified:false } so the outcome fails safe to PENDING_VERIFICATION.
+ * { verified:false } so the outcome fails safe — never to an approval.
  */
 export async function verifyWithProvider({ transactionId, amount, receiverUpi = null, timeoutMs = null }) {
   const mode = getProviderMode();
@@ -57,20 +65,9 @@ export async function verifyWithProvider({ transactionId, amount, receiverUpi = 
 }
 
 /**
- * Resolves the FINAL outcome for a screenshot that passed every check.
- *
- * Decision table (auto-approve OFF is the production default):
- *   provider configured + not confirmed        -> PENDING_VERIFICATION
- *                                                  (PENDING_PROVIDER_VERIFICATION)
- *   auto-approve OFF (any provider state)      -> PENDING_VERIFICATION
- *                                                  (EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED)
- *   auto-approve ON  + provider confirmed      -> APPROVED
- *   auto-approve ON  + no provider / not conf. -> PENDING_VERIFICATION
- *                                                  (PENDING_PROVIDER_VERIFICATION)
- *
- * Returns { outcome, reason, provider } — outcome is one of the four
- * documented states; this function NEVER returns APPROVED without a
- * confirmed provider response.
+ * Resolves the FINAL outcome for a screenshot that passed every mandatory
+ * gate. See the module header for the decision table. NEVER returns APPROVED
+ * when a configured provider gave a definitive negative or could not answer.
  */
 export async function resolveApprovalOutcome({ transactionId, matchedAmount, receiverUpi = null }) {
   const provider = await verifyWithProvider({
@@ -79,30 +76,30 @@ export async function resolveApprovalOutcome({ transactionId, matchedAmount, rec
     receiverUpi,
   });
 
-  // A configured provider that did not confirm the transaction always wins:
-  // never fall through to auto-approval on an unconfirmed reference.
-  if (provider.available === true && provider.verified !== true) {
-    return { outcome: 'PENDING_VERIFICATION', reason: 'PENDING_PROVIDER_VERIFICATION', provider };
+  const mode = getProviderMode();
+
+  // No live provider integration is configured (mode 'none'): the mandatory
+  // screenshot checks are the verification policy — all gates passed means
+  // APPROVED. (Production limitation documented in the module header.)
+  if (mode === 'none') {
+    return { outcome: 'APPROVED', reason: null, provider };
   }
 
-  if (!isPaymentAutoApproveEnabled()) {
-    // Production default: even a provider-confirmed screenshot is parked for
-    // an authorized human until straight-through approval is explicitly
-    // enabled AND validated against a provider sandbox.
-    return {
-      outcome: 'PENDING_VERIFICATION',
-      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
-      provider,
-    };
+  if (provider.verified === true) {
+    return { outcome: 'APPROVED', reason: null, provider };
   }
 
-  if (provider.verified !== true) {
-    // Auto-approve requested but no trusted confirmation exists (mode
-    // 'none', timeout, error, not-found): OCR alone can never approve.
-    return { outcome: 'PENDING_VERIFICATION', reason: 'PENDING_PROVIDER_VERIFICATION', provider };
+  // A configured provider that DEFINITIVELY says the transaction is not
+  // found/invalid: a definite failure condition -> automatic rejection.
+  if (provider.available === true && DEFINITIVE_NEGATIVE_STATUSES.has(provider.status)) {
+    return { outcome: 'REJECTED', reason: 'PROVIDER_TRANSACTION_NOT_FOUND', provider };
   }
 
-  return { outcome: 'APPROVED', reason: null, provider };
+  // Everything else from a configured provider (timeout, HTTP error,
+  // misconfiguration, unknown status) is a TECHNICAL failure: no decision,
+  // never fraud, never an approval. The caller keeps the record
+  // resubmittable so the user can retry.
+  return { outcome: 'PENDING_VERIFICATION', reason: 'PROVIDER_UNAVAILABLE', provider };
 }
 
 export default { verifyWithProvider, resolveApprovalOutcome };

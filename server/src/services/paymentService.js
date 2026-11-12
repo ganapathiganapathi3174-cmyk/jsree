@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { supabase } from '../db/supabase.js';
-import { generateUniqueFilename, generateReferralCode } from '../utils/helpers.js';
+import { generateUniqueFilename, generateReferralCode, privateObjectUrl } from '../utils/helpers.js';
 import { logAction } from './auditService.js';
 import { checkAndDeactivateReferrer } from './referralService.js';
 import notificationService from './notificationService.js';
@@ -17,7 +17,7 @@ import {
 // verification and the four-state approval policy. This file owns only the
 // persistence and the atomic side effects (UTR reservation, activation).
 import { paymentVerificationEngine } from './paymentVerification/index.js';
-import { getPaymentConfig } from './configService.js';
+import { getPaymentConfig, resolveReceiverIdentity } from './configService.js';
 import {
   recordVerificationAttempt,
   listVerificationHistory,
@@ -323,8 +323,11 @@ export async function uploadScreenshot(paymentId, file, userId) {
   const { error: uploadError } = await supabase.storage.from('payments').upload(filePath, file.buffer, { contentType: file.mimetype, upsert: false });
   if (uploadError) throw { message: 'Failed to upload screenshot', code: 'UPLOAD_FAILED' };
 
-  const { data: urlData } = supabase.storage.from('payments').getPublicUrl(filePath);
-  const screenshotUrl = urlData.publicUrl;
+  // Private-bucket storage: store the OBJECT URL (no /public/ segment).
+  // The payments bucket is private; this URL intentionally does NOT grant
+  // read access — all reads go through the ownership-checked proxy
+  // (streamPaymentScreenshot) using the service role.
+  const screenshotUrl = privateObjectUrl('payments', filePath);
 
   const { error: updateError } = await supabase.from('payments').update({
     screenshot_url: screenshotUrl,
@@ -407,11 +410,11 @@ export async function verifyPayment(paymentId, imageBuffer) {
     };
   }
 
-  // Receiver identity comes from the server-side payment config (DB, then
-  // env fallback). An empty name makes the engine fail safe with
+  // Receiver identity from the SINGLE validated source (DB config, then
+  // env fallback). An empty name makes the engine disclose
   // RECEIVER_NAME_NOT_CONFIGURED — never a silent approve.
-  const paymentConfig = await getPaymentConfig();
-  const receiverName = paymentConfig.receiver_name || RECEIVER_NAME || '';
+  const receiverIdentity = await resolveReceiverIdentity();
+  const receiverName = receiverIdentity.receiverName;
 
   // Expected payer identity (Rule B): the registering user's own full name.
   // Used ONLY as a secondary advisory comparison against the payer name read
@@ -427,9 +430,14 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // re-verification / admin-triggered runs).
   let buffer = imageBuffer || null;
   if (!buffer && payment.screenshot_url) {
+    // Read via the storage API with the service role — never via the raw
+    // URL. The bucket is private, so a direct fetch would (correctly) fail.
     try {
-      const resp = await fetch(payment.screenshot_url);
-      if (resp.ok) buffer = Buffer.from(await resp.arrayBuffer());
+      const objectPath = storageObjectPathFromUrl(payment.screenshot_url);
+      if (objectPath) {
+        const { data: file, error: dlError } = await supabase.storage.from('payments').download(objectPath);
+        if (!dlError && file) buffer = Buffer.from(await file.arrayBuffer());
+      }
     } catch { /* handled below */ }
   }
   if (!buffer) throw { message: 'No screenshot data available', code: 'NO_SCREENSHOT' };
@@ -445,7 +453,7 @@ export async function verifyPayment(paymentId, imageBuffer) {
       paymentId: payment.id,
       userId: payment.user_id,
       receiverName,
-      receiverUpi: RECEIVER_UPI,
+      receiverUpi: receiverIdentity.receiverUpi || RECEIVER_UPI,
       expectedPayerName,
       senderPolicy: SENDER_NAME_POLICY,
     },
@@ -486,10 +494,14 @@ export async function verifyPayment(paymentId, imageBuffer) {
   let newStatus;
   let reason;
 
-  // Four-state outcome -> database status. PENDING_VERIFICATION (provider
-  // unconfirmed / auto-approve disabled) parks as manual_review with the
-  // PENDING_VERIFICATION status kept in verification_result — never a
-  // straight approval, no UTR reserved, row stays actionable.
+  // Four-state outcome -> database status. Deterministic policy: APPROVED
+  // (all mandatory gates passed) commits approval; REJECTED commits a
+  // explained rejection with a retry option (new payment request).
+  // MANUAL_REVIEW only appears when the operator explicitly opts into
+  // SENDER_NAME_POLICY=review. The PENDING_VERIFICATION branch is a
+  // defensive fallback (the engine surfaces provider/OCR technical failures
+  // as inconclusive above, which throws before this point) — it parks, it
+  // never approves.
   if (verification.outcome === 'APPROVED') {
     newStatus = 'approved';
     reason = null;
@@ -747,8 +759,25 @@ export async function rejectPayment(paymentId, adminId, reason) {
   if (fetchError || !payment) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
   if (!payment.status || !ACTABLE_STATUSES.includes(payment.status)) throw { message: 'Payment is not in an actionable status', code: 'PAYMENT_NOT_PENDING' };
 
-  const { error } = await supabase.from('payments').update({ status: 'rejected', rejected_at: new Date().toISOString(), rejection_reason: reason }).eq('id', paymentId);
+  // Guarded transition (same exactly-once pattern as the verification engine):
+  // only rows still in an actionable status can move to 'rejected', so a
+  // concurrent approval can never be overwritten by a late reject.
+  const { data: rejectedRows, error } = await supabase.from('payments')
+    .update({ status: 'rejected', rejected_at: new Date().toISOString(), rejection_reason: reason })
+    .eq('id', paymentId)
+    .in('status', ACTABLE_STATUSES)
+    .select('id');
   if (error) throw { message: 'Failed to reject payment', code: 'REJECT_FAILED' };
+  if (!rejectedRows || rejectedRows.length === 0) {
+    const { data: current } = await supabase.from('payments').select('id, status').eq('id', paymentId).single();
+    if (!current) throw { message: 'Payment not found', code: 'PAYMENT_NOT_FOUND' };
+    if (current.status !== 'rejected') {
+      throw { message: 'Concurrent modification detected', code: 'RACE_CONDITION' };
+    }
+    // A concurrent reject already completed this transition — idempotent
+    // success, skipping duplicate notification/audit side effects.
+    return { message: 'Payment rejected', paymentId };
+  }
 
   try {
     await notificationService.createNotification(

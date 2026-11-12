@@ -9,17 +9,28 @@ import { logAction } from './auditService.js';
 // public config (UPI ID, plans) via a public endpoint.
 // ─────────────────────────────────────────────────────────────
 
-const DEFAULT_CONFIG = {
-  receiver_upi: process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici',
-  receiver_name: process.env.ADMIN_RECEIVER_NAME || '',
-  payment_window_minutes: 30,
-  min_ocr_confidence: 55,
-  plans: { '120': 120, '500': 500, '1000': 1000 },
-};
+// Env-backed defaults, read LAZILY at call time so a later env change
+// (tests, rotation) is observed — never frozen at module load.
+function defaultConfig() {
+  return {
+    receiver_upi: process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici',
+    receiver_name: process.env.ADMIN_RECEIVER_NAME || '',
+    payment_window_minutes: 30,
+    min_ocr_confidence: 55,
+    plans: { '120': 120, '500': 500, '1000': 1000 },
+  };
+}
 
 let cachedConfig = null;
 let cacheTimestamp = 0;
 const CONFIG_CACHE_TTL = 60 * 1000; // 1 minute
+
+// Exported for tests and for any code path that must observe a config
+// change immediately (updatePaymentConfig already resets inline).
+export function resetPaymentConfigCache() {
+  cachedConfig = null;
+  cacheTimestamp = 0;
+}
 
 async function fetchConfigFromDb() {
   const { data, error } = await supabase.from('payment_config').select('key, value');
@@ -37,16 +48,17 @@ export async function getPaymentConfig() {
     return cachedConfig;
   }
   const dbConfig = await fetchConfigFromDb();
+  const defaults = defaultConfig();
   if (dbConfig) {
     cachedConfig = {
-      receiver_upi: dbConfig.receiver_upi || DEFAULT_CONFIG.receiver_upi,
-      receiver_name: dbConfig.receiver_name || DEFAULT_CONFIG.receiver_name,
-      payment_window_minutes: Number(dbConfig.payment_window_minutes) || DEFAULT_CONFIG.payment_window_minutes,
-      min_ocr_confidence: Number(dbConfig.min_ocr_confidence) || DEFAULT_CONFIG.min_ocr_confidence,
-      plans: dbConfig.plans || DEFAULT_CONFIG.plans,
+      receiver_upi: dbConfig.receiver_upi || defaults.receiver_upi,
+      receiver_name: dbConfig.receiver_name || defaults.receiver_name,
+      payment_window_minutes: Number(dbConfig.payment_window_minutes) || defaults.payment_window_minutes,
+      min_ocr_confidence: Number(dbConfig.min_ocr_confidence) || defaults.min_ocr_confidence,
+      plans: dbConfig.plans || defaults.plans,
     };
   } else {
-    cachedConfig = { ...DEFAULT_CONFIG };
+    cachedConfig = { ...defaults };
   }
   cacheTimestamp = now;
   return cachedConfig;
@@ -60,6 +72,28 @@ export async function getPublicConfig() {
     receiver_name: config.receiver_name,
     payment_window_minutes: config.payment_window_minutes,
     plans: config.plans,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// SINGLE validated source for the receiver identity used by payment
+// verification. Both flows (registration + top-up) MUST resolve the
+// receiver through this function — never through env-only constants —
+// so the DB-configured value (admin Payment Settings) always wins and
+// the env layer (ADMIN_UPI_ID / ADMIN_RECEIVER_NAME) acts only as the
+// documented fallback. `nameConfigured=false` means receiver-name
+// verification is DISABLED and must be disclosed as such (see
+// decisionEngine gate 7) — never reported as a pass.
+// ─────────────────────────────────────────────────────────────
+export async function resolveReceiverIdentity() {
+  const cfg = await getPaymentConfig();
+  const receiverName = String(cfg.receiver_name || '').trim().slice(0, 100);
+  const receiverUpi = String(cfg.receiver_upi || '').trim();
+  return {
+    receiverName,
+    receiverUpi,
+    nameConfigured: receiverName.length >= 2,
+    upiConfigured: receiverUpi.length > 0,
   };
 }
 
@@ -82,8 +116,9 @@ function validateConfigValue(key, value) {
     }
   }
   if (key === 'receiver_name') {
-    // Empty string is allowed and means "not configured" — verification then
-    // fails safe into manual review. A real name must not look like a UPI ID.
+    // Empty string is allowed and means "not configured" — the secondary
+    // receiver-name gate is then explicitly DISABLED and disclosed as such
+    // (RECEIVER_NAME_NOT_CONFIGURED, rendered N/A) — never a silent pass.
     if (typeof value !== 'string' || value.length > 100 || value.includes('@')) {
       throw { message: 'receiver_name must be a plain name string (max 100 chars, no "@")', code: 'INVALID_CONFIG_VALUE' };
     }

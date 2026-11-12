@@ -23,6 +23,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import pg from 'pg';
+import { detectMigrationState } from './migrationState.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, '..', '..', '..', 'supabase', 'migrations');
@@ -62,7 +63,6 @@ const sql = readFileSync(sqlPath, 'utf-8');
 console.log(`Target project ref : ${urlRef}`);
 console.log(`Migration          : ${migrationFile}`);
 console.log(`SQL bytes          : ${sql.length}`);
-console.log('Applying in a transaction with advisory lock...');
 
 const client = new pg.Client({
   connectionString: DATABASE_URL,
@@ -77,22 +77,37 @@ const redact = (s) => String(s).replace(/:[^:@/]+@/, ':***@');
     const info = await client.query('select current_database() as db, current_user as role');
     console.log(`Connected db/role  : ${info.rows[0].db} / ${info.rows[0].role}`);
 
+    // ── Phase 1: detect applied state from LIVE catalog (never assume) ──
+    const state = await detectMigrationState(client, migrationFile);
+    if (state.error) {
+      console.error(`REFUSED (unexpected database state): ${state.error}`);
+      process.exitCode = 1;
+      await client.end().catch(() => {});
+      return;
+    }
+    if (state.unknown) {
+      console.log('WARN: no applied-state probe for this file — applying blind (still transactional + verified below).');
+    } else if (state.applied) {
+      console.log('SKIP: post-conditions already hold (migration previously applied). Nothing to run.');
+      await client.end().catch(() => {});
+      return;
+    } else if (state.note) {
+      console.log(`NOTE: ${state.note}`);
+    }
+
+    // ── Phase 2: apply inside one transaction under an advisory lock ──
+    console.log('Applying in a transaction with advisory lock...');
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_lock(717017)');
-
-    // Idempotency marker: 017 is IF NOT EXISTS; record state before/after.
-    const before = await client.query(`select to_regclass('public.payment_verifications') as t`);
     await client.query(sql);
-    const after = await client.query(`select to_regclass('public.payment_verifications') as t`);
-    const rls = await client.query(
-      `select relrowsecurity from pg_class where oid = 'public.payment_verifications'::regclass`
-    );
-    await client.query('COMMIT');
 
-    console.log(`Table before/after : ${before.rows[0].t || '(absent)'} -> ${after.rows[0].t}`);
-    console.log(`RLS enabled        : ${rls.rows[0].relrowsecurity === true}`);
-    if (!after.rows[0].t) fail('Table still absent after apply - transaction rolled back?');
-    console.log('DONE: migration applied and committed.');
+    // ── Phase 3: re-run the SAME probe as post-condition verification ──
+    const post = await detectMigrationState(client, migrationFile);
+    if (post.error || !post.applied) {
+      throw new Error(`post-apply verification failed: ${post.error || 'post-conditions not met — transaction will roll back'}`);
+    }
+    await client.query('COMMIT');
+    console.log('DONE: applied, post-conditions verified, committed.');
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* ignore */ }
     console.error(`FAILED (rolled back): ${redact(err.message)}`);

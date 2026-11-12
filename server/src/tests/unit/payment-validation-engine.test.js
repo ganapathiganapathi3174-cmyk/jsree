@@ -416,12 +416,15 @@ describe('decision engine: inconclusive (insufficient evidence) never decides', 
     expect(noDate).toMatchObject({ approved: false, inconclusive: true, reason: 'PAYMENT_DATE_NOT_DETECTED' });
   });
 
-  it('missing receiver name is inconclusive; missing name config is inconclusive', async () => {
+  it('missing receiver name is inconclusive; missing name config skips the gate', async () => {
     const unreadable = await decideWith({ extraction: baseExtraction({ extractedReceiverNames: [] }) });
     expect(unreadable).toMatchObject({ approved: false, inconclusive: true, reason: 'RECEIVER_NAME_UNREADABLE' });
 
+    // No receiver name configured -> secondary gate skipped, all other
+    // mandatory gates still decide (approved here because they all pass).
     const unconfigured = await decideWith({ paymentRequest: basePaymentRequest({ receiverName: '' }) });
-    expect(unconfigured).toMatchObject({ approved: false, inconclusive: true, reason: 'RECEIVER_NAME_NOT_CONFIGURED' });
+    expect(unconfigured).toMatchObject({ approved: true, reason: null });
+    expect(unconfigured.inconclusive).toBeFalsy();
   });
 
   it('classification helpers agree with the contract', () => {

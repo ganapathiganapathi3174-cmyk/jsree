@@ -630,18 +630,20 @@ export async function runScreenshotVerification({
           : 'No transaction status detected in screenshot'),
     },
     receiverName: nameActive
-      ? {
-        confidence: !nameConfigured ? 'none' : nameMatch ? 'high' : (namePartial ? 'medium' : (nameFound ? 'low' : 'none')),
-        reason: !nameConfigured
-          ? 'No receiver name configured â€” manual review required'
-          : nameMatch
+      ? (!nameConfigured
+        // Not configured: the secondary gate is SKIPPED (production policy)
+        // — it neither blocks nor downgrades field confidence.
+        ? { confidence: 'high', reason: 'Receiver name not configured — secondary gate skipped' }
+        : {
+          confidence: nameMatch ? 'high' : (namePartial ? 'medium' : (nameFound ? 'low' : 'none')),
+          reason: nameMatch
             ? 'Detected receiver name matches configured payee'
             : (namePartial
-              ? `Detected ${detectedReceiverNames} is only part of the configured receiver name â€” manual review required`
+              ? `Detected ${detectedReceiverNames} is only part of the configured receiver name — manual review required`
               : (nameFound
                 ? `Detected ${detectedReceiverNames} does not match configured receiver name`
                 : 'No receiver name found in screenshot')),
-      }
+        })
       : { confidence: 'high', reason: 'Receiver name check not enabled' },
   };
 
@@ -685,8 +687,9 @@ export async function runScreenshotVerification({
     },
     receiverUpi: { passed: upiMatch, expected: receiverUpi, detected: detectedUpi },
     receiverName: {
-      passed: nameActive ? nameMatch : true,
-      enabled: nameActive,
+      // Not configured => gate skipped (never blocks, mirrors production).
+      passed: nameActive ? (nameConfigured ? nameMatch : true) : true,
+      enabled: nameActive && nameConfigured,
       expected: typeof receiverName === 'string' ? (receiverName || null) : null,
       detected: detectedReceiverNames,
       partial: namePartial,

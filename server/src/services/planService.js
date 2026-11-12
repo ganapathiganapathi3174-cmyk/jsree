@@ -35,10 +35,13 @@ export async function approvePlanChange(requestId, adminId) {
   if (fetchError || !request) throw { message: 'Plan change request not found', code: 'REQUEST_NOT_FOUND' };
   if (request.status !== 'pending') throw { message: 'Request is not in pending status', code: 'NOT_PENDING' };
 
-  const { error: updateError } = await supabase.from('plan_change_requests').update({
+  // Guarded transition: only a row still 'pending' can move, so concurrent
+  // approve/reject actions can never overwrite each other (exactly-once).
+  const { data: approvedRows, error: updateError } = await supabase.from('plan_change_requests').update({
     status: 'approved', processed_at: new Date().toISOString()
-  }).eq('id', requestId);
+  }).eq('id', requestId).eq('status', 'pending').select('id');
   if (updateError) throw { message: 'Failed to approve plan change', code: 'APPROVE_FAILED' };
+  if (!approvedRows || approvedRows.length === 0) throw { message: 'Request is not in pending status', code: 'NOT_PENDING' };
 
   const { error: userError } = await supabase.from('users').update({ current_plan: request.requested_plan }).eq('id', request.user_id);
   if (userError) throw { message: 'Failed to update user plan', code: 'USER_UPDATE_FAILED' };
@@ -52,10 +55,12 @@ export async function rejectPlanChange(requestId, adminId, reason) {
   if (fetchError || !request) throw { message: 'Plan change request not found', code: 'REQUEST_NOT_FOUND' };
   if (request.status !== 'pending') throw { message: 'Request is not in pending status', code: 'NOT_PENDING' };
 
-  const { error } = await supabase.from('plan_change_requests').update({
+  // Guarded transition (same exactly-once pattern as approvePlanChange).
+  const { data: rejectedRows, error } = await supabase.from('plan_change_requests').update({
     status: 'rejected', processed_at: new Date().toISOString(), admin_note: reason
-  }).eq('id', requestId);
+  }).eq('id', requestId).eq('status', 'pending').select('id');
   if (error) throw { message: 'Failed to reject plan change', code: 'REJECT_FAILED' };
+  if (!rejectedRows || rejectedRows.length === 0) throw { message: 'Request is not in pending status', code: 'NOT_PENDING' };
 
   await logAction(adminId, 'admin', 'reject_plan_change', requestId, 'plan_change', { userId: request.user_id, reason });
   return { message: 'Plan change rejected', requestId };

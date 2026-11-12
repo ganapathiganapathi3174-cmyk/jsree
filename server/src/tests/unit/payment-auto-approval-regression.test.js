@@ -4,10 +4,9 @@ const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecov
   if (!process.env.ADMIN_RECEIVER_NAME) {
     process.env.ADMIN_RECEIVER_NAME = 'Jayaraj';
   }
-  // These suites assert straight-through auto-approval: enable it explicitly.
-  // Production default (unset) is the secure external-confirmation fallback.
-  process.env.PAYMENT_AUTO_APPROVE = 'true';
-  // Straight-through approval requires provider confirmation (mock provider).
+  // These suites exercise the deterministic auto-decision policy with the
+  // mock provider (provider confirmation path). The legacy
+  // PAYMENT_AUTO_APPROVE switch has been removed.
   process.env.PAYMENT_PROVIDER_MODE = 'mock';
   return {
     runOCR: vi.fn(),
@@ -444,44 +443,37 @@ describe('manual registration approval evidence', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// 7. B1 CONFIG FLAG: PAYMENT_AUTO_APPROVE OFF (PRODUCTION DEFAULT)
-//    An OCR-approved screenshot must NOT finalize; it parks for human
-//    external confirmation (HEAD parity): decision 'manual_review',
-//    ocrDecision 'approved', no UTR reservation, no activation, no credit.
+// 7. DETERMINISTIC DEFAULT (production): no provider configured means the
+//    mandatory screenshot checks ARE the verification policy. A fully
+//    verified screenshot FINALIZES automatically — no flag, no parking:
+//    status approved, user activated, UTR reserved, single wallet credit.
+//    The legacy PAYMENT_AUTO_APPROVE switch has been removed.
 // ─────────────────────────────────────────────────────────────
-describe('S7 PAYMENT_AUTO_APPROVE off (secure default): external confirmation', () => {
-  beforeEach(() => {
-    delete process.env.PAYMENT_AUTO_APPROVE;
-  });
-
-  it('valid receipt -> manual_review, no activation, no UTR reservation', async () => {
+describe('S7 deterministic auto-decision (production default)', () => {
+  it('valid receipt -> approved + activated + UTR reserved (never parked)', async () => {
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
 
     expect(res.statusCode).toBe(200);
-    expect(PAY().status).toBe('manual_review');
-    expect(USR().status).toBe('pending');
+    expect(res.body.data.verification.status).toBe('approved');
+    expect(PAY().status).toBe('approved');
+    expect(USR().status).toBe('active');
+    expect(PAY().transaction_id).toBe('T7GHD240824');
+    expect(PAY().verified_at).toBeTruthy();
+    expect(PAY().approved_at).toBeTruthy();
+    expect(PAY().rejected_at).toBeFalsy();
     expect(PAY().verification_result).toMatchObject({
-      decision: 'manual_review',
-      ocrDecision: 'approved',
-      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
+      decision: 'approved',
+      status: 'APPROVED',
+      reason: null,
       engine: 'paymentVerificationEngine/v2',
     });
-    expect(PAY().verified_at).toBeTruthy();
-    expect(PAY().transaction_id).toBeNull();
-    expect(PAY().approved_at).toBeFalsy();
-    expect(PAY().rejected_at).toBeFalsy();
-    expect(db.state.store.approved_utrs).toHaveLength(0);
-    expect(db.state.store.wallet_transactions).toHaveLength(0);
-    expect(db.state.store.notifications).toHaveLength(0);
-    expect(paymentUpdates().some(u => u.status === 'approved')).toBe(false);
+    expect(db.state.store.approved_utrs).toHaveLength(1);
+    expect(paymentUpdates().some(u => u.status === 'approved')).toBe(true);
   });
 
-  it('manual_review row is re-uploadable and finalizes once the flag is enabled', async () => {
-    await uploadScreenshot(reqFor(), mockRes());
-    expect(PAY().status).toBe('manual_review');
-
-    process.env.PAYMENT_AUTO_APPROVE = 'true';
+  it('legacy PAYMENT_AUTO_APPROVE=false no longer parks a verified receipt', async () => {
+    process.env.PAYMENT_AUTO_APPROVE = 'false';
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
 
@@ -489,10 +481,9 @@ describe('S7 PAYMENT_AUTO_APPROVE off (secure default): external confirmation', 
     expect(PAY().status).toBe('approved');
     expect(USR().status).toBe('active');
     expect(PAY().transaction_id).toBe('T7GHD240824');
-    expect(db.state.store.approved_utrs).toHaveLength(1);
   });
 
-  it('flag off never swallows rejections: invalid receipt still rejects outright', async () => {
+  it('definite failure still rejects outright (never swallowed)', async () => {
     runOCR.mockResolvedValue({ text: VALID_RECEIPT.replace(RECEIVER_UPI, 'attacker@paytm'), confidence: 90 });
     const res = mockRes();
     await uploadScreenshot(reqFor(), res);
@@ -500,7 +491,7 @@ describe('S7 PAYMENT_AUTO_APPROVE off (secure default): external confirmation', 
     expect(PAY().verification_result.reason).toBe('UPI_MISMATCH');
   });
 
-  it('top-up proof parks manual_review with no wallet credit and no UTR', async () => {
+  it('top-up proof completes with a single wallet credit (never parked)', async () => {
     seed();
     db.state.store.topups.push({
       id: 'top-1',
@@ -521,18 +512,13 @@ describe('S7 PAYMENT_AUTO_APPROVE off (secure default): external confirmation', 
       'user-1'
     );
 
-    expect(TOP().status).toBe('manual_review');
-    expect(out).toMatchObject({
-      credited: false,
-      manualReview: true,
-      reason: 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED',
-    });
-    expect(out.message).toMatch(/manual review/i);
-    expect(walletCreditBatch).not.toHaveBeenCalled();
-    expect(db.state.store.approved_utrs).toHaveLength(0);
+    expect(TOP().status).toBe('completed');
+    expect(out.credited).toBe(true);
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
+    expect(db.state.store.approved_utrs).toHaveLength(1);
     expect(TOP().verification_result).toMatchObject({
-      decision: 'manual_review',
-      ocrDecision: 'approved',
+      decision: 'approved',
+      status: 'APPROVED',
     });
   });
 });
