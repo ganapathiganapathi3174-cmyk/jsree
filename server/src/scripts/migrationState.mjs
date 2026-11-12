@@ -91,10 +91,13 @@ export const MIGRATION_PROBES = {
     const b = await scalar(client, `SELECT public FROM storage.buckets WHERE id = 'payments'`);
     if (!b) return { error: 'storage bucket "payments" not found — create it before applying 021' };
     if (b.public === false) {
+      // Portable across storage schema versions: read the live pg catalog
+      // (storage.policies does not exist on every Supabase project).
       const p = await scalar(client,
-        `SELECT count(*) AS n FROM storage.policies
-          WHERE bucket_id = 'payments' AND command = 'SELECT'
-            AND (roles @> ARRAY['anon']::text[] OR roles @> ARRAY['authenticated']::text[])`);
+        `SELECT count(*) AS n FROM pg_policies
+          WHERE schemaname='storage' AND tablename='objects' AND cmd='SELECT'
+            AND ((roles::text[]) @> ARRAY['anon']::text[] OR (roles::text[]) @> ARRAY['authenticated']::text[])
+            AND (qual IS NULL OR qual LIKE '%payments%')`);
       if (Number(p?.n || 0) === 0) return { applied: true };
       return { applied: false, note: 'bucket private but read policies still exist — re-run removes them' };
     }

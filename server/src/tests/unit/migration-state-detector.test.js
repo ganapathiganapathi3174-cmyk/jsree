@@ -90,7 +90,7 @@ describe('migration state detection (guarded applier probes)', () => {
 
     expect((await detectMigrationState(fakeClient([
       ['FROM storage.buckets WHERE id', [{ public: false }]],
-      ['FROM storage.policies', [{ n: 0 }]],
+      ['FROM pg_policies', [{ n: 0 }]],
     ]), '021_private_payments_bucket.sql')).applied).toBe(true);
 
     const missing = await detectMigrationState(fakeClient([

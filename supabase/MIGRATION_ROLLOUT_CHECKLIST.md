@@ -70,9 +70,10 @@ SELECT pg_get_functiondef(p.oid) LIKE '%DELETE FROM approved_utrs%' AS has_utr_d
 
 -- 021 applied?  expect: is_public=false, remaining_read_policies=0
 SELECT public AS is_public FROM storage.buckets WHERE id='payments';
-SELECT count(*) FROM storage.policies
- WHERE bucket_id='payments' AND command='SELECT'
-   AND (roles @> ARRAY['anon']::text[] OR roles @> ARRAY['authenticated']::text[]);
+SELECT count(*) FROM pg_policies
+ WHERE schemaname='storage' AND tablename='objects' AND cmd='SELECT'
+   AND ((roles::text[]) @> ARRAY['anon']::text[] OR (roles::text[]) @> ARRAY['authenticated']::text[])
+   AND (qual IS NULL OR qual LIKE '%payments%');
 ```
 
 ## Recovery

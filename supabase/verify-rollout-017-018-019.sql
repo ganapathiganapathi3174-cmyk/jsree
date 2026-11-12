@@ -236,7 +236,8 @@ SELECT pg_get_functiondef(p.oid) LIKE '%DELETE FROM approved_utrs%' AS utr_delet
 -- J2: expect remaining_read_policies = 0.
 -- ───────────────────────────────────────────────────────────────────
 SELECT id, public AS is_public FROM storage.buckets WHERE id = 'payments';
-SELECT count(*) AS remaining_read_policies FROM storage.policies
- WHERE bucket_id = 'payments' AND command = 'SELECT'
-   AND (roles @> ARRAY['anon']::text[] OR roles @> ARRAY['authenticated']::text[]);
+SELECT count(*) AS remaining_read_policies FROM pg_policies
+ WHERE schemaname = 'storage' AND tablename = 'objects' AND cmd = 'SELECT'
+   AND ((roles::text[]) @> ARRAY['anon']::text[] OR (roles::text[]) @> ARRAY['authenticated']::text[])
+   AND (qual IS NULL OR qual LIKE '%payments%');
 -- ═══════════════════════════════════════════════════════════════════

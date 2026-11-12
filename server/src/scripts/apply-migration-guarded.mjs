@@ -96,9 +96,13 @@ const redact = (s) => String(s).replace(/:[^:@/]+@/, ':***@');
     }
 
     // ── Phase 2: apply inside one transaction under an advisory lock ──
+    // pg_advisory_xact_lock releases automatically at COMMIT/ROLLBACK: same
+    // serialization as a session advisory lock for this transaction, but
+    // safe through Supabase's transaction-mode pooler (no lock can outlive
+    // the transaction and leak onto a pooled backend).
     console.log('Applying in a transaction with advisory lock...');
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_lock(717017)');
+    await client.query('SELECT pg_advisory_xact_lock(717017)');
     await client.query(sql);
 
     // ── Phase 3: re-run the SAME probe as post-condition verification ──

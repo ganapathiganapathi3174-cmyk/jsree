@@ -27,6 +27,7 @@
 -- =============================================================
 
 DO $$
+DECLARE r record;
 BEGIN
   -- 1. Bucket must exist; refuse to guess.
   IF NOT EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'payments') THEN
@@ -39,17 +40,32 @@ BEGIN
   -- 3. Deny-by-default: drop any object-level SELECT policies that grant
   --    anon or authenticated direct reads of payments objects. The
   --    application never uses them (service-role proxy only). Scoped to
-  --    bucket_id='payments' so avatar policies are untouched.
-  DELETE FROM storage.policies
-   WHERE bucket_id = 'payments'
-     AND command = 'SELECT'
-     AND (roles @> ARRAY['anon']::text[] OR roles @> ARRAY['authenticated']::text[]);
+  --    payments so avatar policies are untouched.
+  --    storage schema versions differ across Supabase projects: use the
+  --    storage.policies catalog when present, and always reconcile from
+  --    pg_policies (available everywhere) so the outcome is identical.
+  IF to_regclass('storage.policies') IS NOT NULL THEN
+    DELETE FROM storage.policies
+     WHERE bucket_id = 'payments'
+       AND command = 'SELECT'
+       AND ((roles::text[]) @> ARRAY['anon']::text[] OR (roles::text[]) @> ARRAY['authenticated']::text[]);
+  END IF;
+
+  FOR r IN
+    SELECT policyname FROM pg_policies
+     WHERE schemaname = 'storage' AND tablename = 'objects' AND cmd = 'SELECT'
+       AND ((roles::text[]) @> ARRAY['anon']::text[] OR (roles::text[]) @> ARRAY['authenticated']::text[])
+       AND (qual IS NULL OR qual LIKE '%payments%')
+  LOOP
+    EXECUTE format('DROP POLICY %I ON storage.objects', r.policyname);
+  END LOOP;
 END $$;
 
 -- ── Post-apply verification (expect exactly these results) ──
 SELECT id, public AS is_public FROM storage.buckets WHERE id = 'payments';
 -- expect is_public = false
-SELECT count(*) AS remaining_read_policies FROM storage.policies
- WHERE bucket_id = 'payments' AND command = 'SELECT'
-   AND (roles @> ARRAY['anon']::text[] OR roles @> ARRAY['authenticated']::text[]);
+SELECT count(*) AS remaining_read_policies FROM pg_policies
+ WHERE schemaname = 'storage' AND tablename = 'objects' AND cmd = 'SELECT'
+   AND ((roles::text[]) @> ARRAY['anon']::text[] OR (roles::text[]) @> ARRAY['authenticated']::text[])
+   AND (qual IS NULL OR qual LIKE '%payments%');
 -- expect 0

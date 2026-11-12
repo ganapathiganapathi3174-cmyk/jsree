@@ -3,6 +3,7 @@
 **Date:** 11 November 2026 — Post-remediation final audit
 **Scope:** Full remediation of the Final Production Launch Readiness Audit findings.
 **Method:** Read-only live probes + code fixes + offline test suites + isolated-safe QA runs. No production migration was executed; no dashboard value is claimed verified.
+**Final update — 12 November 2026 (rollout executed):** Full pg_dump backup taken (458,672 B, SHA256 `65CC72B78B0DC9E4D8EA5A2B924E82B163F495CBAA0FD9512C5F1913854524A6`, 3 screenshot objects hash-verified). **Migrations 017 → 021 applied to production** via the guarded runner (each `applied, post-conditions verified, committed`; 021 first attempt rolled back cleanly on a `storage.policies` portability error, then repaired to `pg_policies` + `roles::text[]` casts and re-applied). Post-rollout live verification PASS: 17/17 core tables RLS ON with 0 policies, `admin_delete_user`/`admin_delete_topup` retain UTRs and preserve audit (detach only), archive table RLS + no PII columns, `approved_utrs` UNIQUE(U3) constraint, bucket `payments` **public=false with 0 read policies**, public object GET **denied (400, cache-busted)**, anon REST `200 []`, record counts preserved (users 7, payments 6, audits 318). Live screenshot proxy access-control matrix PASS (401/403/404 × 9 checks). Deployed frontend `https://jsree.vercel.app` 200, bundle API base = `https://jsree-backend.onrender.com/api`, backend health PASS, CORS preflight `204` with correct ACAO, admin anon `401`, unknown route `404`. Final test matrix: vitest **1706 passed / 5 skipped / 0 failed**, legacy **28/28**, client **20/20**, build **PASS**, API QA **95/95**, browser QA **41/41**.
 
 ---
 
@@ -56,10 +57,10 @@ No mock payment success introduced. No automatic approval switch introduced. No 
 
 | Area | Status | Evidence |
 |------|--------|----------|
-| **DB migration status** 017/018/019/020/021 | **BLOCKED** | Files repaired + guarded runner + checklist ready; **not executed** (operator approval + backup required). Live state: 017 no, 018 no, 019 partial, 020 unknown, 021 no |
+| **DB migration status** 017/018/019/020/021 | **PASS (APPLIED 12 Nov)** | Backup first (SHA256 above); guarded runner each `applied, post-conditions verified, committed`; live checks: pv table+RLS+3 idx+0 policies, archive RLS, delete-fn shapes correct, 17/17 RLS, counts preserved |
 | UTR retention (018/020 code) | **PASS** (code) | Migrations retain `approved_utrs`; static tests `admin-delete-migration`, `admin-delete-topup-retention` |
 | Financial history retention | **PASS** (code) | 018 archives payments/topups/wallet before delete; audit rows preserved (C1) |
-| **Storage security** | **PASS** (code) / live flip **BLOCKED** | 021 ready; proxy ownership checks tested; live bucket still public until 021 applied |
+| **Storage security** | **PASS (live 12 Nov)** | Bucket private, 0 read policies; public GET → 400 (cache-busted); proxy owner/denial tests PASS; service-role download OK |
 | Screenshot authorization | **PASS** | Owner/admin/other-user/missing/path tests (`private-screenshot-storage`, `screenshot-proxy-access`, cors-app) |
 | Payment verification policy | **PASS** | OCR+UTR+amount+date+duplicate gates preserved; no auto-approve switch; MANUAL_REVIEW preserved; limitations documented (checklist §D) |
 | Receiver-name single source | **PASS** | `resolveReceiverIdentity` tests; explicit N/A disclosure |
@@ -68,12 +69,12 @@ No mock payment success introduced. No automatic approval switch introduced. No 
 | Rate limiting | **PASS** | defaults unchanged; admin bucket 10/15m verified live (10×400 → 429); NAT/shared-store limitation documented |
 | Render configuration | **BLOCKED** (dashboard rows) | config-as-code + local health/CORS PASS; secrets/project-ref/receiver-name = operator checklist |
 | Vercel configuration | **BLOCKED** (`VITE_API_URL`) | root rewrites PASS; build-time env must be confirmed (checklist §B) |
-| Unit tests (vitest) | **PASS** | **1705 passed, 0 failed** (1 pre-existing flaky boundary test passes isolated; 5 skipped) |
-| Unit tests (node:test legacy) | **PASS** | cache/helpers/pagination → **28/28** via `node --test` |
-| Client tests | **PASS** | **20/20** |
-| Client production build | **PASS** | `vite build` → dist OK (489.87 kB JS) |
-| API regression (live, read-only) | **PASS** | **95/95** + 5 safety checks (zero mutations: users 7→7, payments 6→6) |
-| Browser regression (live) | **PASS** | **41/41 PASS**, 0×429 under raised QA limits, 17 evidence screenshots |
+| Unit tests (vitest) | **PASS** | **1706 passed, 5 skipped, 0 failed** (12 Nov; 6 pre-existing non-vitest files fail collection — unchanged baseline) |
+| Unit tests (node:test legacy) | **PASS** | cache/helpers/pagination → **28/28** via `node --test` (12 Nov) |
+| Client tests | **PASS** | **20/20** (12 Nov) |
+| Client production build | **PASS** | `vite build` → dist OK (rebuilt 12 Nov) |
+| API regression (live, read-only) | **PASS** | **95/95** + 5 safety checks (zero mutations: users 7→7, payments 6→6; rerun 12 Nov) |
+| Browser regression (live) | **PASS** | **41/41 PASS** + 1 informational observation (12 Nov rerun) |
 | Integration suites (isolated DB) | **NOT TESTED** | No isolated project credentials in workspace; never run against prod |
 | Live idempotency double-run | **NOT TESTED** | Would mutate prod (forbidden) |
 | Dashboard env values | **BLOCKED** | See `DEPLOYMENT_ENV_VERIFICATION_CHECKLIST.md` |
@@ -82,8 +83,8 @@ No mock payment success introduced. No automatic approval switch introduced. No 
 
 ## 5. Remaining manual actions (operator)
 
-1. Backup → execute 017 → 018 → 019 → 020 → 021 via `apply-migration-guarded.mjs` (see `supabase/MIGRATION_ROLLOUT_CHECKLIST.md`).
-2. Run `verify-rollout` Sections D/E/F/H/I/J + bucket URL probe (must 404).
+1. ~~Backup → execute 017 → 018 → 019 → 020 → 021~~ **DONE 12 Nov** (backup + all five applied + post-verified).
+2. ~~Run `verify-rollout` Sections D/E/F/H/I/J + bucket URL probe~~ **DONE 12 Nov** (all PASS; public probe now 400).
 3. Confirm Render dashboard: `SUPABASE_URL` ref, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`, `ADMIN_RECEIVER_NAME` decision.
 4. Confirm Vercel dashboard: `VITE_API_URL=https://<render>/api` (highest frontend risk), build command/output, no server secrets in `VITE_*`.
 5. Admin password login verification with operator-held password (or confirm `ADMIN_NOT_CONFIGURED` is expected).
@@ -94,14 +95,14 @@ No mock payment success introduced. No automatic approval switch introduced. No 
 
 | Risk | Level | Status |
 |------|-------|--------|
-| Public bucket + capability URLs (until 021 applied) | HIGH | Mitigated in code/migration; **live until operator applies 021** |
-| 009-era delete fns free UTRs / destroy audit (until 018/020 applied) | CRITICAL | Mitigated in code/migration; **live until operator applies** |
+| Public bucket + capability URLs | HIGH | **RESOLVED 12 Nov** — bucket private, public GET → 400 |
+| 009-era delete fns free UTRs / destroy audit | CRITICAL | **RESOLVED 12 Nov** — 018/020 applied and verified live |
 | No real settlement verification (mode `none`) | HIGH (accepted) | Documented; sign-off required |
 | Receiver-name gate off until env/DB configured | MEDIUM | Explicitly disclosed as N/A in every verification record |
 | Shared-NAT rate-limit lockout; in-memory store | MEDIUM | Documented; env-tunable; shared-store migration prepared (comment) |
 | 7-day stateless JWT, no revocation list | LOW | Pre-existing, documented |
-| Verification history writes fail until 017 applied | MEDIUM | Non-blocking by design; visible as console errors until rollout |
+| Verification history writes fail until 017 applied | MEDIUM | **RESOLVED 12 Nov** — 017 applied (`payment_verifications` live) |
 
-## 7. Final verdict: 🔴 NO-GO — BLOCKED (not FAIL)
+## 7. Final verdict: 🟡 CONDITIONAL GO — remaining blockers are operator-only
 
-All **code-level** remediations are complete and green (1705+28+20 offline tests, 95/95 API, 41/41 browser, build PASS). The remaining blockers are **production-operator actions only**: migrations must be applied with approval+backup, the storage bucket flipped, and dashboard environment values verified. Per the GO criteria, "migrations verified as applied" and "environment configuration verified" are not yet satisfiable from this workspace → **NO-GO until Sections 5.1–5.4 complete**, after which re-run `verify-rollout` + this report's test matrix for a GO re-assessment.
+All migration, storage, test, and external-verification gates are now **PASS** (12 Nov: migrations 017–021 applied + verified, bucket private, vitest 1706/0 failed, legacy 28/28, client 20/20, build PASS, API 95/95, browser 41/41, deployed frontend/backend/CORS/storage probes PASS). Still **BLOCKED** (missing access, independent of code): Render/Vercel dashboard env-value confirmation (checklist §B/§D), admin password login verification (operator-held plaintext/rotation), isolated-DB integration suites, and manual deploy triggering (auto-deploy on push not observable from this workspace). Deployment is safe from a code/data standpoint once the operator confirms those dashboard values; a DB password rotation is recommended after an accidental terminal echo of the database password during a CLI dry-run (value never written to disk or repo).
