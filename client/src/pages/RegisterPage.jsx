@@ -18,6 +18,10 @@ export default function RegisterPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [paymentData, setPaymentData] = useState(null);
+  // Explicit, user-initiated recovery only. Nothing in this block ever
+  // navigates on its own — the old code auto-redirected to /login and threw
+  // away the whole form (and the selected plan) on the first 409/401.
+  const [recovery, setRecovery] = useState(null);
   const [serverUpi, setServerUpi] = useState(ADMIN_UPI);
   const [form, setForm] = useState({
     name: '', email: '', mobile: '', password: '', confirmPassword: '',
@@ -116,6 +120,10 @@ export default function RegisterPage() {
   };
 
   const registeredRef = useRef(false);
+  // Synchronous re-entrancy guard. `loading` is React state and stays false
+  // until the next render, so a double-click in the same tick would otherwise
+  // fire two registrations / two payment requests.
+  const inFlightRef = useRef(false);
 
   const handleGoToPayment = async () => {
     debug('create-payment:called', { alreadyRegistered: registeredRef.current, step });
@@ -123,8 +131,10 @@ export default function RegisterPage() {
     // only run once, but the payment request itself must stay re-runnable so
     // "Create New Payment Request" and Back → Next keep working after a
     // failed or expired payment attempt.
-    if (loading) return;
+    if (loading || inFlightRef.current) return;
+    inFlightRef.current = true;
     setLoading(true);
+    setRecovery(null);
     try {
       if (!registeredRef.current) {
         const regPayload = {
@@ -138,35 +148,81 @@ export default function RegisterPage() {
 
         debug('create-payment:register-request');
         const regRes = await api.post('/auth/register', regPayload);
-        const token = regRes.data.data.token;
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(regRes.data.data.user));
+        // The account now exists. Flag it BEFORE touching the session so a
+        // missing/unusable token can never trigger a second registration.
         registeredRef.current = true;
+
+        const token = regRes.data?.data?.token;
+        if (!token) {
+          debug('create-payment:register-no-token');
+          setRecovery({
+            kind: 'session',
+            message: 'Your account was created, but no login session was returned. Please log in to continue — your selected plan is saved.',
+          });
+          toast.error('Your account was created, but payment setup could not start. Please log in to continue.');
+          return;
+        }
+        localStorage.setItem('token', token);
+        if (regRes.data.data.user) {
+          localStorage.setItem('user', JSON.stringify(regRes.data.data.user));
+        }
       }
 
       debug('create-payment:payment-request');
-      const payRes = await api.post('/payments', { plan: String(form.plan) });
+      // Read the token back at call time so the payment request always carries
+      // the session that registration just wrote, not a stale one.
+      const sessionToken = localStorage.getItem('token');
+      const payRes = await api.post(
+        '/payments',
+        { plan: String(form.plan) },
+        sessionToken ? { headers: { Authorization: `Bearer ${sessionToken}` } } : undefined
+      );
       setPaymentData(payRes.data.data);
       setStep(3);
       debug('create-payment:done', { paymentId: payRes.data.data?.id });
     } catch (err) {
       const code = err.response?.data?.code;
+      const serverMessage = err.response?.data?.message;
+      const requestedUrl = String(err.config?.url || '');
+
       if (code === 'EMAIL_EXISTS' || code === 'MOBILE_EXISTS') {
-        toast.error('An account with this email/mobile already exists. Please login.');
-        navigate('/login');
+        // Duplicate identity: the account is already there. Keep the form and
+        // the chosen plan on screen and let the user opt in to logging in.
+        setRecovery({ kind: 'duplicate', message: serverMessage || 'An account with this email/mobile already exists.' });
+        toast.error(serverMessage || 'An account with this email/mobile already exists. Please log in.');
       } else if (code === 'PENDING_EXISTS') {
-        // A live payment request already exists for this account — send the
-        // user to the payment-status page where they can act on THAT request
-        // instead of dead-ending on a generic error.
-        toast.error(err.response?.data?.message || 'You already have a pending payment. Please upload its screenshot below.');
-        navigate('/payment-status');
+        setRecovery({
+          kind: 'pending',
+          message: serverMessage || 'You already have a pending payment for this account. Continue it instead of creating another one.',
+        });
+        toast.error(serverMessage || 'You already have a pending payment. Please continue it below.');
       } else if (code === 'PAYMENT_EXISTS') {
-        toast.error('This account already has an approved payment. Please log in.');
-        navigate('/login');
+        setRecovery({ kind: 'duplicate', message: serverMessage || 'This account already has an approved payment. Please log in.' });
+        toast.error(serverMessage || 'This account already has an approved payment. Please log in.');
+      } else if (err.response?.status === 401 && requestedUrl.includes('/payments')) {
+        // Registration already succeeded (registeredRef is set): the account
+        // exists. Never re-register and never retry with the same bad token —
+        // drop the unusable session and offer login as the recovery path.
+        debug('create-payment:payment-401', { alreadyRegistered: registeredRef.current });
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setRecovery({
+          kind: 'session',
+          message: 'Your account was created, but payment setup could not start because your session is no longer valid. Please log in to continue — your selected plan is saved.',
+        });
+        toast.error('Your account was created, but payment setup needs you to log in. Your selected plan is saved.');
+      } else if (code === 'REQUEST_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT' || isTimeoutError(err)) {
+        setRecovery({ kind: 'none', message: serverMessage || 'The server took too long to respond. Please try again — your selected plan is saved.' });
+        toast.error(serverMessage || 'Registration timed out. Please try again.');
+      } else if (err.request && !err.response) {
+        setRecovery({ kind: 'none', message: 'We could not reach the server. Please check your connection and try again — your selected plan is saved.' });
+        toast.error('Network error. Please check your connection and try again.');
       } else {
-        toast.error(err.response?.data?.message || 'Registration failed');
+        setRecovery({ kind: 'none', message: serverMessage || 'Registration could not be completed. Please try again — your selected plan is saved.' });
+        toast.error(serverMessage || 'Registration failed');
       }
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   };
@@ -329,7 +385,7 @@ export default function RegisterPage() {
                     <button
                       key={p.id}
                       aria-pressed={active}
-                      onClick={() => { set('plan', p.id); if (paymentData) setPaymentData(null); }}
+                      onClick={() => { set('plan', p.id); if (paymentData) setPaymentData(null); setRecovery(null); }}
                       className={`w-full px-4 py-3.5 rounded-lg border text-left flex items-center justify-between transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${
                         active
                           ? 'border-primary-600 bg-primary-500/10'
@@ -348,6 +404,38 @@ export default function RegisterPage() {
                   );
                 })}
               </div>
+              {recovery && (
+                <div className="rounded-lg border border-line bg-surface-2 p-3 space-y-2" role="alert">
+                  <p className="text-sm text-ink">{recovery.message}</p>
+                  {recovery.kind === 'duplicate' && (
+                    <button
+                      type="button"
+                      className="btn btn-primary w-full"
+                      onClick={() => navigate('/login')}
+                    >
+                      Log in to continue
+                    </button>
+                  )}
+                  {recovery.kind === 'pending' && (
+                    <button
+                      type="button"
+                      className="btn btn-primary w-full"
+                      onClick={() => navigate('/payment-status')}
+                    >
+                      Continue existing payment
+                    </button>
+                  )}
+                  {recovery.kind === 'session' && (
+                    <button
+                      type="button"
+                      className="btn btn-primary w-full"
+                      onClick={() => navigate('/login')}
+                    >
+                      Log in to continue
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setStep(1)} className="btn btn-secondary flex-1">
                   <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
