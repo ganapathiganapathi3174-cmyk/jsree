@@ -47,7 +47,10 @@ describe('TopUps', () => {
     toastSuccess.mockReset();
     localStorage.clear();
     localStorage.setItem('user', JSON.stringify({ id: 'u1', current_plan: 120 }));
-    get.mockResolvedValue({ data: { data: [RECEIVED_TOPUP], summary: null } });
+    get.mockImplementation((url) => {
+      if (url === '/config/public') return Promise.resolve({ data: { data: {} } });
+      return Promise.resolve({ data: { data: [RECEIVED_TOPUP], summary: null, eligibleAmount: 120 } });
+    });
     post.mockResolvedValue(APPROVED);
     vi.stubGlobal('URL', Object.assign(URL, {
       createObjectURL: () => 'blob:test',

@@ -159,7 +159,7 @@ Indexes worth noting: `idx_payments_expires_at` (partial, `status='pending'`), `
 | 011 | + `payments.expires_at`, `receiver_upi`, `payment_request_created_at`, partial expiry index; + `payment_config` table (seeded, indexed, updated_at trigger) |
 | 012 | + `topups.expires_at/receiver_upi/screenshot_hash/payment_type`, `payments.payment_type='MEMBERSHIP'`, expiry + hash indexes, `idx_wallet_tx_idempotency` |
 
-Caution: 003 and 011/012 backfill a **hard-coded production UPI** `jayarajj126-3@okicici` (also the code fallback in `config/paymentConfig.js:16`).
+Caution: 003 and 011/012 backfill a **hard-coded production UPI** `<REDACTED>` (also the code fallback in `config/paymentConfig.js:16`).
 
 ---
 
@@ -185,7 +185,7 @@ Server (`server/.env`, loaded by `dotenv` in `db/supabase.js` chain; `.env*` git
 | `JWT_SECRET` | HS256 signing key | missing → `process.exit(1)` on first token use (`helpers.js:5-12`, lazy) |
 | `JWT_EXPIRES_IN` | token lifetime | `7d` |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` | admin credential pair (no DB row required; admin auto-created on first login) | `adminLogin` → 500 `ADMIN_NOT_CONFIGURED` if unset |
-| `ADMIN_UPI_ID` | receiver UPI shown on QR/config | `jayarajj126-3@okicici` |
+| `ADMIN_UPI_ID` | receiver UPI shown on QR/config | `<REDACTED>` |
 | `PORT`, `NODE_ENV` | runtime | Render injects `PORT` |
 | `CLIENT_URL` (+ `CLIENT_URLS`, `FRONTEND_URL` read by `cors.js`) | CORS allow-list | hard-coded `https://jsree.vercel.app`, `http://localhost:5173`, `http://localhost:3000` |
 | `DATABASE_URL` | offline migration scripts only | — |

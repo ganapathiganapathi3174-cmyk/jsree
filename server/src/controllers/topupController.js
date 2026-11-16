@@ -1,5 +1,6 @@
 import * as topupService from '../services/topupService.js';
 import { supabase } from '../db/supabase.js';
+import { resolvePlanAmount } from '../utils/paymentNormalize.js';
 
 export async function getTopups(req, res) {
   try {
@@ -8,7 +9,7 @@ export async function getTopups(req, res) {
     topups.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     const summary = await topupService.computeTopupSummary(result.received || [], req.user.id);
-    const { data: me } = await supabase.from('users').select('referred_by').eq('id', req.user.id).single();
+    const { data: me } = await supabase.from('users').select('referred_by, current_plan').eq('id', req.user.id).single();
     let sponsorName = null;
     if (me?.referred_by) {
       const { data: sponsor } = await supabase.from('users').select('full_name').eq('id', me.referred_by).single();
@@ -17,7 +18,8 @@ export async function getTopups(req, res) {
     summary.sponsorId = me?.referred_by || null;
     summary.sponsorName = sponsorName;
 
-    res.json({ success: true, data: topups, summary });
+    const eligibleAmount = resolvePlanAmount(me?.current_plan);
+    res.json({ success: true, data: topups, summary, eligibleAmount });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message || 'Failed to fetch topups', code: error.code || 'FETCH_FAILED' });
   }
@@ -125,7 +127,7 @@ export async function directTopup(req, res) {
       },
     });
   } catch (error) {
-    const status = error.code === 'INVALID_AMOUNT' || error.code === 'NO_SPONSOR' || error.code === 'RECEIVER_INACTIVE' || error.code === 'TOPUP_NOT_SUBMITTABLE'
+    const status = error.code === 'INVALID_AMOUNT' || error.code === 'PLAN_NOT_ELIGIBLE' || error.code === 'NO_SPONSOR' || error.code === 'RECEIVER_INACTIVE' || error.code === 'TOPUP_NOT_SUBMITTABLE'
       ? 400
       : error.code === 'RECEIVER_NOT_FOUND' || error.code === 'TOPUP_NOT_FOUND'
         ? 404

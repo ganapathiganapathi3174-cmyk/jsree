@@ -35,6 +35,55 @@ function fnDef(client, name) {
 }
 
 export const MIGRATION_PROBES = {
+  '015_atomic_wallet_credits.sql': async (client) => {
+    const d = await fnDef(client, 'credit_wallets_atomic');
+    if (!d.rows[0]) {
+      return { applied: false, note: 'credit_wallets_atomic absent — CREATE OR REPLACE will create it' };
+    }
+    const def = d.rows[0].def || '';
+    if (!/SECURITY DEFINER/i.test(def) || !def.includes('wallet_transactions')) {
+      return { error: 'credit_wallets_atomic exists but is not the 015 shape — inspect manually before applying 015' };
+    }
+    // 015 revokes EXECUTE from PUBLIC/anon/authenticated and grants service_role.
+    // If either role can still execute it, the file is idempotent and re-running
+    // re-applies the REVOKE.
+    const p = await scalar(client,
+      `SELECT has_function_privilege('anon', 'public.credit_wallets_atomic(jsonb)', 'EXECUTE') AS anon,
+              has_function_privilege('authenticated', 'public.credit_wallets_atomic(jsonb)', 'EXECUTE') AS auth`);
+    if (p && (p.anon === true || p.auth === true)) {
+      return { applied: false, note: 'function present but anon/authenticated still hold EXECUTE — idempotent re-run revokes it' };
+    }
+    return { applied: true };
+  },
+
+  '016_payment_validation_engine.sql': async (client) => {
+    // 016 is an intentional NO-OP: it creates no table, function, index or
+    // policy, so there is no persistent artifact to look for. Its entire body
+    // is a guard that RAISEs when three prerequisites are absent. The probe
+    // therefore evaluates exactly those three post-conditions - the same audit
+    // the file performs - which keeps the applier's post-apply verification
+    // (which requires `applied === true`) satisfiable instead of rolling back
+    // every run of a migration that leaves no trace behind.
+    const p = await scalar(client,
+      `SELECT
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_name = 'payments'   AND column_name = 'transaction_id') AS txn_col,
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_name = 'topups'     AND column_name = 'reference_id')   AS ref_col,
+         (SELECT count(*) FROM information_schema.tables
+           WHERE table_name = 'approved_utrs')                                  AS utr_table`);
+    const missing = [];
+    if (Number(p?.txn_col ?? 0) < 1) missing.push('payments.transaction_id');
+    if (Number(p?.ref_col ?? 0) < 1) missing.push('topups.reference_id');
+    if (Number(p?.utr_table ?? 0) < 1) missing.push('approved_utrs');
+    if (missing.length) {
+      // 016 itself would RAISE in this state, so the applier must REFUSE and
+      // surface the manual instruction rather than run a doomed transaction.
+      return { error: `016 prerequisites missing (${missing.join(', ')}) - run migrations 001-015 first; 016 raises if any is absent` };
+    }
+    return { applied: true };
+  },
+
   '017_payment_verification_history.sql': async (client) => {
     const t = await scalar(client, `SELECT to_regclass('public.payment_verifications') IS NOT NULL AS ok`);
     if (!t.ok) return { applied: false };

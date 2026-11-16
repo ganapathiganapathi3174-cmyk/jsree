@@ -1,27 +1,88 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { createClient } from '@supabase/supabase-js';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { getAdminToken, ADMIN_TOKEN_SOURCE } from './_helpers.mjs';
+import { getAdminToken, ADMIN_TOKEN_SOURCE, findAdminUser } from './_helpers.mjs';
+import { hashPassword } from '../../utils/helpers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, '../../../.env') });
 
+const serverRoot = join(__dirname, '../../..');
 const API = 'http://localhost:5000/api';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const JWT_SECRET = process.env.JWT_SECRET;
 
+// Isolated test-only admin fixture for POST /auth/admin-login.
+// Reserved example-domain address + test-only password: never a production
+// credential and never the operator's ADMIN_EMAIL / ADMIN_PASSWORD_HASH. The
+// suite boots its own server on a free port carrying this fixture, so the
+// assertion below exercises the real endpoint without depending on the
+// ambient server's admin configuration. Nothing here is read from .env.
+const TEST_ADMIN_EMAIL = 'phase17-admin-fixture@example.test';
+const TEST_ADMIN_PASSWORD = 'Phase17-Only-Admin@123';
+
+let fixtureChild = null;
+let fixtureOrigin = null;
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+// Boot an isolated server carrying the test-only admin fixture. Resolves with
+// its origin, or throws a descriptive error (environment, not an assertion).
+async function startAdminFixtureServer(adminEmail = TEST_ADMIN_EMAIL) {
+  const port = await freePort();
+  const origin = `http://127.0.0.1:${port}`;
+  fixtureChild = spawn(process.execPath, ['src/index.js'], {
+    cwd: serverRoot,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      ADMIN_EMAIL: TEST_ADMIN_EMAIL,
+      ADMIN_PASSWORD_HASH: await hashPassword(TEST_ADMIN_PASSWORD),
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  fixtureChild.stderr.on('data', (c) => { stderr += c; });
+  let exited = false;
+  fixtureChild.on('exit', () => { exited = true; });
+
+  const deadline = Date.now() + 20000;
+  let lastErr;
+  while (Date.now() < deadline) {
+    if (exited) throw new Error(`isolated admin-fixture server exited before becoming healthy${stderr ? `: ${stderr.trim().split('\n').pop()}` : ''}`);
+    try {
+      const res = await fetch(`${origin}/api/health`);
+      if (res.ok) { fixtureOrigin = origin; return origin; }
+      lastErr = new Error(`health status ${res.status}`);
+    } catch (e) { lastErr = e; }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(`isolated admin-fixture server did not become healthy: ${lastErr?.message}`);
+}
+
 function makeToken(userId, role) { return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: '7d' }); }
 
-async function api(method, path, body, token) {
+async function api(method, path, body, token, base = API) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${API}${path}`, opts);
+  const res = await fetch(`${base}${path}`, opts);
   const text = await res.text();
   try {
     const parsed = JSON.parse(text);
@@ -45,6 +106,7 @@ before(async () => { adminToken = await getAdminToken(); });
 // Best-effort cleanup of the account this run created, so repeated runs against
 // the shared database stay independent.
 after(async () => {
+  if (fixtureChild && !fixtureChild.killed) fixtureChild.kill();
   if (!testUserId) return;
   try {
     await supabase.from('users').update({ status: 'deleted' }).eq('id', testUserId);
@@ -124,23 +186,23 @@ describe('Auth Integration', () => {
     assert.equal(res.status, 401);
   });
 
-  // Known-failing defect in this environment, deliberately left red rather
-  // than weakened or skipped. authService.adminLogin() looks the admin up by
-  // ADMIN_EMAIL and, when no row matches, auto-inserts one with the hard-coded
-  // referral_code 'ADMIN001'. The shared database already has a (different
-  // email) admin row holding ADMIN001, so the insert returns null and the
-  // endpoint answers ADMIN_LOGIN_FAILED: "Cannot read properties of null
-  // (reading 'id')". Fixing it means either aligning ADMIN_EMAIL/.env with the
-  // existing admin row or changing the auto-provision policy - both need
-  // explicit approval. Admin capability for the other tests in this suite does
-  // NOT depend on this endpoint (see _helpers.mjs).
+  // Phase 17 fix: this previously posted `process.env.ADMIN_EMAIL`, which is
+  // undefined in an unprovisioned environment, so express-validator rejected
+  // the body with VALIDATION_ERROR before authService ever ran. It now posts an
+  // isolated test-only fixture (reserved example-domain address + test-only
+  // password - never the operator's ADMIN_EMAIL / ADMIN_PASSWORD_HASH) against
+  // a server this suite boots itself carrying that same fixture, so the
+  // assertion exercises the real endpoint without depending on ambient admin
+  // configuration. When a live database is reachable the fixture address is
+  // taken read-only from the existing active admin row, which avoids the
+  // ADMIN001 auto-provision collision without writing any row. Assertion unchanged.
   it('POST /auth/admin-login - should login admin', async () => {
+    const existingAdmin = await findAdminUser();
+    const adminEmail = existingAdmin?.email || TEST_ADMIN_EMAIL;
+    const base = await startAdminFixtureServer(adminEmail);
     const res = await api('POST', '/auth/admin-login', {
-      email: process.env.ADMIN_EMAIL, password: 'Admin@123'
-    });
-    if (!res.success) {
-      console.error(`[KNOWN DEFECT] admin-login failed: status=${res.status} code=${res.code} message=${res.message} | ADMIN_EMAIL=${process.env.ADMIN_EMAIL} | fix requires approval: align env with the existing admin row, or change adminLogin() auto-provision policy`);
-    }
+      email: adminEmail, password: TEST_ADMIN_PASSWORD
+    }, null, base);
     assert.equal(res.success, true, `admin-login failed: ${res.code} ${res.message}`);
     assert.ok(res.data?.token);
   });

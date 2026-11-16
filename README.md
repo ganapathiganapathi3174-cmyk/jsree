@@ -93,7 +93,7 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 JWT_SECRET=your-min-32-char-secret
 ADMIN_EMAIL=admin@gmail.com
 ADMIN_PASSWORD=your-secure-password
-ADMIN_UPI_ID=jayarajj126-3@okicici
+ADMIN_UPI_ID=your-receiver-upi@bank
 CLIENT_URL=http://localhost:5173
 ```
 

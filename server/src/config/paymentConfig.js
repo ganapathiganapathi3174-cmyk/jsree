@@ -62,7 +62,7 @@ export const NORMALIZE_UTRS_FOR_DUPLICATE = process.env.NORMALIZE_UTRS_FOR_DUPLI
 // ── Auto-approval policy ──
 // Straight-through approval is the DETERMINISTIC production policy: a
 // screenshot that passes every mandatory gate is APPROVED automatically
-// (no admin approval). See services/paymentVerification/providerVerification
+// (no admin approval). See services/paymentVerificationV2/paymentAuthenticity
 // for the full decision table, including the documented limitation that a
 // screenshot alone cannot prove bank settlement when no live provider is
 // configured. The legacy PAYMENT_AUTO_APPROVE park-everything switch has

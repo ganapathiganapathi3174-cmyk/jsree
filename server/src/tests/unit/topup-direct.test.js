@@ -22,11 +22,11 @@ const { supabaseMock, walletCreditBatch, runOCR, runAmountRecoveryOCR, runAdditi
 
 vi.mock('../../db/supabase.js', () => ({ supabase: supabaseMock }));
 vi.mock('../../services/walletService.js', () => ({ default: { creditBatch: walletCreditBatch } }));
-vi.mock('../../services/paymentVerification/index.js', async (importOriginal) => {
+vi.mock('../../services/paymentVerificationV2/index.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runScreenshotVerification: vi.fn() };
 });
-vi.mock('../../services/ocrService.js', async (importOriginal) => {
+vi.mock('../../services/paymentVerificationV2/ocrExtraction.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
 });
@@ -170,7 +170,7 @@ describe('createDirectTopup', () => {
   });
 
   it('D3: no sponsor (no referred_by) -> NO_SPONSOR error', async () => {
-    chains.users = makeUsersChain([{ data: { id: 'sender-1', referred_by: null }, error: null }]);
+    chains.users = makeUsersChain([{ data: { id: 'sender-1', referred_by: null, current_plan: 120 }, error: null }]);
     await expect(createDirectTopup({ senderId: 'sender-1', amount: 120 })).rejects.toMatchObject({ code: 'NO_SPONSOR' });
   });
 
@@ -217,6 +217,17 @@ describe('createDirectTopup', () => {
 
   it('D7: invalid amount -> INVALID_AMOUNT', async () => {
     await expect(createDirectTopup({ senderId: 'sender-1', amount: 999 })).rejects.toMatchObject({ code: 'INVALID_AMOUNT' });
+  });
+
+  it('D7b: plan not in {120,500,1000} -> PLAN_NOT_ELIGIBLE', async () => {
+    chains.users = makeUsersChain([{ data: { id: 'sender-1', referred_by: 'sponsor-1', current_plan: 0 }, error: null }]);
+    await expect(createDirectTopup({ senderId: 'sender-1', amount: 120 })).rejects.toMatchObject({ code: 'PLAN_NOT_ELIGIBLE' });
+
+    chains.users = makeUsersChain([{ data: { id: 'sender-1', referred_by: 'sponsor-1', current_plan: null }, error: null }]);
+    await expect(createDirectTopup({ senderId: 'sender-1', amount: 120 })).rejects.toMatchObject({ code: 'PLAN_NOT_ELIGIBLE' });
+
+    chains.users = makeUsersChain([{ data: { id: 'sender-1', referred_by: 'sponsor-1', current_plan: 999 }, error: null }]);
+    await expect(createDirectTopup({ senderId: 'sender-1', amount: 120 })).rejects.toMatchObject({ code: 'PLAN_NOT_ELIGIBLE' });
   });
 
   it('D8: receiver not found or inactive -> rejected', async () => {

@@ -35,7 +35,7 @@ vi.mock('../../services/configService.js', () => ({
     upiConfigured: true,
   })),
 }));
-vi.mock('../../services/paymentVerification/index.js', () => ({
+vi.mock('../../services/paymentVerificationV2/index.js', () => ({
   ENGINE_ID: 'paymentVerificationEngine/test',
   paymentVerificationEngine: { verify: vi.fn() },
   recordVerificationAttempt: vi.fn(async () => null),
@@ -47,7 +47,7 @@ vi.mock('../../services/paymentVerification/index.js', () => ({
 }));
 
 import { uploadScreenshot, streamPaymentScreenshot, verifyPayment } from '../../services/paymentService.js';
-import { paymentVerificationEngine } from '../../services/paymentVerification/index.js';
+import { paymentVerificationEngine } from '../../services/paymentVerificationV2/index.js';
 
 const PAYMENT_ID = 'pay-1';
 const USER_ID = 'user-1';

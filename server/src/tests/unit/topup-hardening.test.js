@@ -75,7 +75,7 @@ vi.mock('../../db/supabase.js', () => {
   return { supabase: c, supabaseAnon: {}, default: c };
 });
 vi.mock('../../services/auditService.js', () => ({ logAction: vi.fn(async () => ({})) }));
-vi.mock('../../services/paymentVerification/index.js', async (importOriginal) => {
+vi.mock('../../services/paymentVerificationV2/index.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runScreenshotVerification, reserveApprovedUtr };
 });
@@ -98,7 +98,7 @@ const { runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecov
     runDeepAmountRecovery: vi.fn(),
   };
 });
-vi.mock('../../services/ocrService.js', async (importOriginal) => {
+vi.mock('../../services/paymentVerificationV2/ocrExtraction.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, runOCR, runAmountRecoveryOCR, runAdditionalOCRPasses, runDeepAmountRecovery };
 });
@@ -218,7 +218,7 @@ describe('top-up pre-upload gates', () => {
     expect(db.state.topupRow.status).toBe('completed');
     expect(db.state.topupRow.verification_result).toMatchObject({
       decision: 'approved',
-      engine: 'paymentVerificationEngine/v2',
+      engine: 'paymentVerificationV2/1.0',
     });
     expect(creditMock).toHaveBeenCalledTimes(1);
   });

@@ -6,7 +6,7 @@ import * as chatService from '../services/chatService.js';
 import { supabase } from '../db/supabase.js';
 import { logAction } from '../services/auditService.js';
 import { hashPassword } from '../utils/helpers.js';
-import { listVerificationHistory, deriveOutcomeStatus } from '../services/paymentVerificationHistoryService.js';
+import { listVerificationHistory, deriveOutcomeStatus } from '../services/paymentVerificationV2/index.js';
 import { describeProvider } from '../services/paymentProviderService.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

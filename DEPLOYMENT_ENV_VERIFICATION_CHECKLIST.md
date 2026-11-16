@@ -61,3 +61,24 @@ and re-run of the provider regression suite.
 5. Disable an admin by setting the `users.status` row to `inactive` —
    login now refuses with `ADMIN_DISABLED` (hardened 11 Nov 2026).
 6. Never set `ADMIN_PASSWORD` (plaintext) — it is not read by the app.
+
+## F. Final production sign-off — three outstanding items (commit 57ae855, verdict CONDITIONAL GO)
+
+Production deployment is VERIFIED (Vercel production deployment created
+5 s after `57ae855` and aliased to `jsree.vercel.app`; Render backend health
+PASS). The verdict stays **CONDITIONAL GO** until all three rows below are
+PASS **with the listed evidence**. Never paste secrets, passwords, hashes or
+keys into this file or any commit — evidence is recorded as statements only.
+
+| # | Item | Exact operator action | Evidence required to mark PASS | Status |
+|---|------|----------------------|-------------------------------|--------|
+| F1 | Admin password verification or secure rotation | Follow §E: generate password in password manager → bcrypt-hash locally (cost ≥ 10) → Render → Environment → update `ADMIN_PASSWORD_HASH` → redeploy/restart → admin sign-in with the operator-typed password | (a) admin login returns HTTP 200 success with the operator-held password (record only "login succeeded"); (b) wrong password → 401 `INVALID_CREDENTIALS`; (c) dashboard confirmation that `ADMIN_PASSWORD_HASH` was updated on `<date>` (value never displayed). Config presence already verified 12 Nov: wrong-credential probe → 401 `INVALID_CREDENTIALS` (not `ADMIN_NOT_CONFIGURED`). | **OPEN** (verification or rotation pending operator) |
+| F2 | Isolated Supabase test DB + integration/idempotency tests | Provision/allocate an **isolated** Supabase project (never `<PROJECT_REF>`) → provide its project ref + test DB URL to the workspace as run-scoped env → run the integration suites (`api`, `business-rules`, `cache-stats-auth`) and the idempotency double-run **there only** → record results | Test output showing integration suites + idempotency double-run **PASS** on a project ref different from production, with row counts unchanged before/after the run; record the project ref (never keys). Production remains permanently out of scope for these suites. | **BLOCKED** — no isolated project credentials in workspace |
+| F3 | Supabase database password rotation (terminal-echo incident) | Supabase dashboard → Project Settings → Database → Reset database password (new random value → password manager) → update `DATABASE_URL` in Render Environment → confirm redeploy → verify health + one authenticated call | (a) operator confirms dashboard rotation date; (b) `GET /api/health` on `jsree-backend` → `success=true` after rotation; (c) one successful authenticated API call (e.g. QA login) post-rotation; (d) operator confirms old password no longer accepted. | **BLOCKED** — no Supabase dashboard/Management-API access from this workspace (`SUPABASE_ACCESS_TOKEN` absent) |
+
+**Rule:** when F1, F2 and F3 are all PASS with the evidence above, update
+`JSREE_FINAL_PRODUCTION_READINESS_REPORT.md` §7 to **GO** and set this table's
+statuses to PASS. Until then the verdict remains **CONDITIONAL GO**. Do not
+redeploy unless an actual code change is required — F1/F3 are dashboard-only
+changes (Render restarts the service itself when env vars change); this
+checklist update is documentation-only and needs no redeploy.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePaymentDate, isWithinTimeWindow, IST_TIMEZONE, IST_UTC_OFFSET_MS } from '../../services/ocrService.js';
+import { parsePaymentDate, isWithinTimeWindow, IST_TIMEZONE, IST_UTC_OFFSET_MS } from '../../services/paymentVerificationV2/ocrExtraction.js';
 
 // Deterministic fixed server clock: 2026-08-16 13:00 IST == 07:30 UTC.
 const SERVER_IST = '2026-08-16T13:00:00.000+05:30';

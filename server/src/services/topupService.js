@@ -12,7 +12,7 @@ import {
   recordVerificationAttempt,
   deriveOutcomeStatus,
   ENGINE_ID,
-} from './paymentVerification/index.js';
+} from './paymentVerificationV2/index.js';
 import { getPaymentConfig, resolveReceiverIdentity } from './configService.js';
 // Shared server-authoritative payment configuration and expiry helper —
 // the SAME values and the SAME fail-closed check the membership flow uses.
@@ -35,11 +35,15 @@ export async function createTopup(senderId, receiverId, amount) {
   const resolvedAmount = resolvePlanAmount(amount);
   if (resolvedAmount === null) throw { message: 'Invalid amount', code: 'INVALID_AMOUNT' };
 
-  // Enforce: top-up amount must match the sender's current active plan.
+  // Enforce: the sender's plan must be a configured top-up plan, and the
+  // requested amount must match it exactly.
   const { data: sender } = await supabase.from('users').select('current_plan').eq('id', senderId).single();
   if (!sender) throw { message: 'Sender not found', code: 'SENDER_NOT_FOUND' };
-  const senderPlan = Number(sender.current_plan);
-  if (senderPlan && resolvedAmount !== senderPlan) {
+  const senderPlanAmount = resolvePlanAmount(sender.current_plan);
+  if (senderPlanAmount === null) {
+    throw { message: 'Top-up is not available for your current plan', code: 'PLAN_NOT_ELIGIBLE' };
+  }
+  if (resolvedAmount !== senderPlanAmount) {
     throw { message: 'Top-up amount must match your current plan', code: 'INVALID_AMOUNT' };
   }
 
@@ -87,11 +91,15 @@ export async function createDirectTopup({ senderId, amount, receiverId, file }) 
   const resolvedAmount = resolvePlanAmount(amount);
   if (resolvedAmount === null) throw { message: 'Invalid amount', code: 'INVALID_AMOUNT' };
 
-  // Enforce: top-up amount must match the sender's current active plan.
+  // Enforce: the sender's plan must be a configured top-up plan, and the
+  // requested amount must match it exactly.
   const { data: sender } = await supabase.from('users').select('id, referred_by, current_plan').eq('id', senderId).single();
   if (!sender) throw { message: 'Sender not found', code: 'SENDER_NOT_FOUND' };
-  const senderPlan = Number(sender.current_plan);
-  if (senderPlan && resolvedAmount !== senderPlan) {
+  const senderPlanAmount = resolvePlanAmount(sender.current_plan);
+  if (senderPlanAmount === null) {
+    throw { message: 'Top-up is not available for your current plan', code: 'PLAN_NOT_ELIGIBLE' };
+  }
+  if (resolvedAmount !== senderPlanAmount) {
     throw { message: 'Top-up amount must match your current plan', code: 'INVALID_AMOUNT' };
   }
 

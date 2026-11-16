@@ -53,7 +53,9 @@ async function createStorageBucket() {
   }
   
   const { data, error } = await supabase.storage.createBucket('payments', {
-    public: true,
+    // Private, matching migration 021_private_payments_bucket.sql: payment
+    // screenshots are read only through the ownership-checked API proxy.
+    public: false,
     allowedMimeTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
     fileSizeLimit: 5242880
   });
@@ -83,7 +85,17 @@ async function main() {
     console.log(sql);
     console.log('─'.repeat(60));
     console.log('\n⚠️  Copy the SQL above and run it in Supabase Dashboard SQL Editor:');
-    console.log('   https://supabase.com/dashboard/project/vuwtxdtfkacndedsaroi/sql/new\n');
+    let projectRef = '';
+    try {
+      projectRef = new URL(supabaseUrl).hostname.split('.')[0];
+    } catch {
+      projectRef = '';
+    }
+    if (projectRef) {
+      console.log(`   https://supabase.com/dashboard/project/${projectRef}/sql/new\n`);
+    } else {
+      console.log('   https://supabase.com/dashboard/project/<PROJECT_REF>/sql/new\n');
+    }
     
     await verifyTables();
     await createStorageBucket();

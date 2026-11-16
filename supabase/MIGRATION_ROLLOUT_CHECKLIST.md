@@ -4,7 +4,7 @@
 **Rule:** NOTHING in this checklist runs automatically. Every step requires an
 explicit operator action on an explicitly named project. Take a backup first.
 
-## Current verified state (live project `vuwtxdtfkacndedsaroi`, probed read-only)
+## Current verified state (live project `<PROJECT_REF>`, probed read-only)
 
 | # | File | State | How we know |
 |---|------|-------|-------------|

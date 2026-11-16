@@ -9,12 +9,15 @@ import EmptyState from '../../components/EmptyState';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import QRPaymentSection from '../../components/QRPaymentSection';
 import PageHeader from '../../components/PageHeader';
-
-const PAY_AMOUNTS = [120, 500, 1000];
+import { ADMIN_UPI } from '../../utils/constants';
+import { PAYEE_NAME } from '../../utils/upi';
 
 export default function TopUps() {
   const [topups, setTopups] = useState([]);
   const [summary, setSummary] = useState(null);
+  const [eligibleAmount, setEligibleAmount] = useState(null);
+  const [serverUpi, setServerUpi] = useState(ADMIN_UPI);
+  const [serverReceiverName, setServerReceiverName] = useState(PAYEE_NAME);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('received');
   const [proofModal, setProofModal] = useState(null);
@@ -22,18 +25,24 @@ export default function TopUps() {
   const [screenshot, setScreenshot] = useState(null);
   const [refId, setRefId] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [payAmount, setPayAmount] = useState(120);
+  const [payAmount, setPayAmount] = useState(null);
   const [payTarget, setPayTarget] = useState(null);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
 
-  const userPlan = Number(user.current_plan);
-  const planAmounts = PAY_AMOUNTS.includes(userPlan) ? [userPlan] : PAY_AMOUNTS;
-
   useEffect(() => {
-    setPayAmount(PAY_AMOUNTS.includes(userPlan) ? userPlan : 120);
+    api.get('/config/public').then(res => {
+      if (res.data?.data?.receiver_upi) setServerUpi(res.data.data.receiver_upi);
+      if (res.data?.data?.receiver_name) setServerReceiverName(res.data.data.receiver_name);
+    }).catch(() => {});
   }, []);
 
-  const load = () => api.get('/topups').then(r => { setTopups(r.data.data || []); setSummary(r.data.summary || null); }).catch(() => toast.error('Failed to load top-ups')).finally(() => setLoading(false));
+  const load = () => api.get('/topups').then(r => {
+    setTopups(r.data.data || []);
+    setSummary(r.data.summary || null);
+    const amount = r.data.eligibleAmount ?? null;
+    setEligibleAmount(amount);
+    setPayAmount(amount);
+  }).catch(() => toast.error('Failed to load top-ups')).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
 
   const received = topups.filter(t => t.receiver_id === user.id);
@@ -129,9 +138,7 @@ export default function TopUps() {
   };
 
   const handlePayTargetChange = (value) => {
-    const target = eligibleForProof.find(t => t.id === value);
     setPayTarget(value);
-    if (target && PAY_AMOUNTS.includes(Number(target.amount))) setPayAmount(Number(target.amount));
   };
 
   if (loading) return <LoadingSpinner fullPage />;
@@ -170,7 +177,11 @@ export default function TopUps() {
           <h3 className="text-base font-semibold text-ink">Top-Up Payment</h3>
           <span className="badge badge-info">UPI</span>
         </div>
-        <p className="text-sm text-ink-muted mb-4">Select the amount, pay the JSREE UPI, then upload your payment screenshot for verification.</p>
+        <p className="text-sm text-ink-muted mb-4">
+          {eligibleAmount
+            ? `Pay ₹${eligibleAmount} using the JSREE UPI, then upload your payment screenshot for verification.`
+            : 'Top-up is not available for your current plan.'}
+        </p>
         {eligibleForProof.length > 0 && (
           <div className="mb-4">
             <label htmlFor="topup-pending-target" className="label">Attach screenshot to Pending Top-Up</label>
@@ -190,10 +201,12 @@ export default function TopUps() {
         )}
         <QRPaymentSection
           amount={payAmount}
-          onAmountChange={(amt) => { setPayAmount(amt); if (eligibleForProof.length > 0 && !payTarget) setPayTarget(eligibleForProof[0].id); }}
-          amountOptions={planAmounts}
+          amountOptions={eligibleAmount ? [eligibleAmount] : []}
+          upiId={serverUpi}
+          recipientName={serverReceiverName}
           verifyLabel="Verify Payment"
           verifySubmitting={submitting}
+          disabled={!eligibleAmount && eligibleForProof.length === 0}
           onVerify={handleTopupVerify}
         />
         {eligibleForProof.length === 0 && (

@@ -12,7 +12,7 @@
 |-------|-----------|----------|
 | Frontend | React 18 + Vite | `client/` |
 | Backend | Node.js + Express | `server/` |
-| Database | Supabase PostgreSQL | Live at `vuwtxdtfkacndedsaroi.supabase.co` |
+| Database | Supabase PostgreSQL | Live at `<PROJECT_REF>.supabase.co` |
 | Storage | Supabase Storage | Bucket: `payments` |
 | Auth | JWT (bcrypt + jsonwebtoken) | Server-side |
 | OCR | Tesseract.js + Sharp | Server-side |

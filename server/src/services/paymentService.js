@@ -10,20 +10,20 @@ import {
   decidePaymentVerification,
   reserveApprovedUtr,
   releaseApprovedUtr,
-} from './paymentVerification/index.js';
+} from './paymentVerificationV2/index.js';
 // Unified payment verification engine: the SINGLE decision path for
 // registration payments (this file) and top-ups (topupService). It owns
 // extraction, every mandatory rule, the duplicate pre-check, provider
 // verification and the four-state approval policy. This file owns only the
 // persistence and the atomic side effects (UTR reservation, activation).
-import { paymentVerificationEngine } from './paymentVerification/index.js';
+import { paymentVerificationEngine } from './paymentVerificationV2/index.js';
 import { getPaymentConfig, resolveReceiverIdentity } from './configService.js';
 import {
   recordVerificationAttempt,
   listVerificationHistory,
   deriveOutcomeStatus,
   ENGINE_ID,
-} from './paymentVerification/index.js';
+} from './paymentVerificationV2/index.js';
 import {
   RECEIVER_UPI,
   RECEIVER_NAME,
@@ -185,7 +185,15 @@ async function completeApproval(payment, actorId, actorType, logActionType) {
     if (referrerId) {
       await referralTierService.checkAndUpgradeTier(referrerId);
     }
-  } catch (e) { /* non-blocking */ }
+  } catch (e) {
+    console.error('[completeApproval] post-approval side effect failed (non-blocking)', {
+      paymentId: payment.id,
+      userId: payment.user_id,
+      referrerId,
+      code: e?.code,
+      message: e?.message,
+    });
+  }
 
   await logAction(actorId, actorType, logActionType, payment.id, 'payment', {
     userId: payment.user_id, amount: payment.expected_amount, plan: payment.selected_plan

@@ -14,14 +14,68 @@ function fakeClient(map) {
 }
 
 describe('migration state detection (guarded applier probes)', () => {
-  it('covers every rollout migration 017-021', () => {
+  it('covers every rollout migration 015-021', () => {
     expect(Object.keys(MIGRATION_PROBES).sort()).toEqual([
+      '015_atomic_wallet_credits.sql',
+      '016_payment_validation_engine.sql',
       '017_payment_verification_history.sql',
       '018_complete_user_deletion.sql',
       '019_enable_rls_core_tables.sql',
       '020_admin_delete_topup_retains_utrs.sql',
       '021_private_payments_bucket.sql',
     ]);
+  });
+
+  it('016: all three prerequisites present -> skip; any missing -> refuse (the file would RAISE)', async () => {
+    expect(await detectMigrationState(fakeClient([
+      ["column_name = 'transaction_id'", [{ txn_col: 1, ref_col: 1, utr_table: 1 }]],
+    ]), '016_payment_validation_engine.sql')).toEqual({ applied: true });
+
+    const missingUtr = await detectMigrationState(fakeClient([
+      ["column_name = 'transaction_id'", [{ txn_col: 1, ref_col: 1, utr_table: 0 }]],
+    ]), '016_payment_validation_engine.sql');
+    expect(missingUtr.error).toMatch(/approved_utrs/);
+    expect(missingUtr.error).toMatch(/001-015/);
+
+    const missingTxn = await detectMigrationState(fakeClient([
+      ["column_name = 'transaction_id'", [{ txn_col: 0, ref_col: 1, utr_table: 1 }]],
+    ]), '016_payment_validation_engine.sql');
+    expect(missingTxn.error).toMatch(/payments\.transaction_id/);
+
+    const missingRef = await detectMigrationState(fakeClient([
+      ["column_name = 'transaction_id'", [{ txn_col: 1, ref_col: 0, utr_table: 1 }]],
+    ]), '016_payment_validation_engine.sql');
+    expect(missingRef.error).toMatch(/topups\.reference_id/);
+
+    const noRow = await detectMigrationState(fakeClient([
+      ["column_name = 'transaction_id'", []],
+    ]), '016_payment_validation_engine.sql');
+    expect(noRow.error).toBeTruthy();
+  });
+
+  it('015: absent function -> apply; correct shape + locked down -> skip; broad EXECUTE -> re-run; wrong shape -> refuse', async () => {
+    const absent = await detectMigrationState(fakeClient([
+      ['pg_get_functiondef', []],
+    ]), '015_atomic_wallet_credits.sql');
+    expect(absent.applied).toBe(false);
+    expect(absent.note).toMatch(/absent/);
+
+    expect(await detectMigrationState(fakeClient([
+      ['pg_get_functiondef', [{ def: 'SECURITY DEFINER INSERT INTO wallet_transactions ...' }]],
+      ['has_function_privilege', [{ anon: false, auth: false }]],
+    ]), '015_atomic_wallet_credits.sql')).toEqual({ applied: true });
+
+    const broad = await detectMigrationState(fakeClient([
+      ['pg_get_functiondef', [{ def: 'SECURITY DEFINER ... wallet_transactions' }]],
+      ['has_function_privilege', [{ anon: true, auth: false }]],
+    ]), '015_atomic_wallet_credits.sql');
+    expect(broad.applied).toBe(false);
+    expect(broad.note).toMatch(/EXECUTE/);
+
+    const wrongShape = await detectMigrationState(fakeClient([
+      ['pg_get_functiondef', [{ def: 'CREATE FUNCTION ... IMMUTABLE' }]],
+    ]), '015_atomic_wallet_credits.sql');
+    expect(wrongShape.error).toBeTruthy();
   });
 
   it('017: absent table -> apply; fully applied -> skip; table without RLS -> re-run (idempotent completion)', async () => {
