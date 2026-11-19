@@ -26,20 +26,24 @@ export default function AdminUsers() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [resetting, setResetting] = useState(false);
 
-  const load = (p = 1) => {
+  const load = async (p = 1) => {
     setLoading(true);
-    api.get(`/admin/users?page=${p}&limit=20&search=${search}`).then(r => {
+    await api.get(`/admin/users?page=${p}&limit=20&search=${search}`).then(r => {
       setUsers(r.data.data?.users || r.data.data || []);
       setTotalPages(r.data.data?.totalPages || 1);
       setPage(p);
-    }).catch(() => toast.error('Failed to load users')).finally(() => setLoading(false));
+    }).catch(() => toast.error('Failed to load users'));
+    setLoading(false);
+  };
+
+  // Fetch plan change requests once on mount and cache them
+  useEffect(() => {
     api.get('/admin/plan-change-requests').then(r => {
       const map = {};
       (r.data?.data || []).forEach(x => { if (x.status === 'pending') map[x.user_id] = x.requested_plan; });
       setPendingPlanChanges(map);
     }).catch(() => {});
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
 
   const openUserDetail = async (u) => {
     setDetailUser(u);
