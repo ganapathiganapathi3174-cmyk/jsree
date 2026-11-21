@@ -1,5 +1,6 @@
 import { supabase } from '../db/supabase.js';
 import { hashPassword, comparePassword, generateToken, generateReferralCode } from '../utils/helpers.js';
+import { PLAN_AMOUNTS } from '../config/paymentConfig.js';
 import { logAction } from './auditService.js';
 import ipLogService from './ipLogService.js';
 import suspiciousActivityService from './suspiciousActivityService.js';
@@ -147,6 +148,16 @@ export async function login(email, password, ipAddress = null, userAgent = null)
     const paymentStatus = paymentError || !payment ? null : (payment.status === 'manual_review' ? 'pending' : payment.status);
     const rejected = paymentStatus === 'rejected';
 
+    // Display-only fallback: when no payment row exists yet (e.g. the
+    // payment request was never created), report the account's own plan so
+    // the payment-status screen can show the expected amount instead of N/A.
+    // The payment row ALWAYS takes precedence when present; this never
+    // creates, modifies, or approves any payment data.
+    const selectedPlan = payment?.selected_plan || user.current_plan || null;
+    const expectedAmount = payment?.expected_amount
+      || PLAN_AMOUNTS[String(user.current_plan)]
+      || null;
+
     throw {
       message: rejected
         ? 'Your payment was not approved. Please contact support.'
@@ -156,8 +167,8 @@ export async function login(email, password, ipAddress = null, userAgent = null)
         accountStatus: 'pending',
         paymentStatus,
         paymentId: payment?.id || null,
-        selectedPlan: payment?.selected_plan || null,
-        expectedAmount: payment?.expected_amount || null,
+        selectedPlan,
+        expectedAmount,
         submittedAt: payment?.submitted_at || null,
         rejectionReason: payment?.rejection_reason || null
       }
