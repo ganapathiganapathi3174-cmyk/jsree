@@ -4,6 +4,9 @@ import sharp from 'sharp';
 const { supabaseMock, ocrState } = vi.hoisted(() => ({
   supabaseMock: { from: vi.fn() },
   ocrState: { text: '', confidence: 90 },
+  // Approval requires provider confirmation — the mock provider confirms
+  // any transaction with a UTR reference (>= 6 chars).
+  _: (() => { process.env.PAYMENT_PROVIDER_MODE = 'mock'; delete process.env.PAYMENT_PROVIDER_MOCK_TIMEOUT; })(),
 }));
 
 vi.mock('../../db/supabase.js', () => ({ supabase: supabaseMock }));

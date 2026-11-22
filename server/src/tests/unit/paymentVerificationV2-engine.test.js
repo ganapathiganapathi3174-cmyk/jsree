@@ -4,6 +4,10 @@ const { supabaseMock, runOCR, runAdditionalOCRPasses, runAmountRecoveryOCR, runD
   process.env.ADMIN_RECEIVER_NAME = process.env.ADMIN_RECEIVER_NAME || 'Jayaraj';
   process.env.ADMIN_UPI_ID = process.env.ADMIN_UPI_ID || 'jayarajj126-3@okicici';
   process.env.SENDER_NAME_POLICY = process.env.SENDER_NAME_POLICY || 'off';
+  // Provider confirmation is mandatory for approval: the mock provider
+  // confirms any transaction carrying a UTR reference (>= 6 chars).
+  process.env.PAYMENT_PROVIDER_MODE = 'mock';
+  delete process.env.PAYMENT_PROVIDER_MOCK_TIMEOUT;
   return {
     supabaseMock: { from: vi.fn() },
     runOCR: vi.fn(),
@@ -52,8 +56,27 @@ function line(minutesAgo = 2, dayOffset = 0) {
   return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}, ${h}:${pad(d.getUTCMinutes())} ${ampm}`;
 }
 
-function receiptText({ amount = 120, upi = RECEIVER_UPI, utr = 'UTR123456', receiver = 'Jayaraj', status = 'success', date } = {}) {
-  const lines = ['Payment Successful', `Rs. ${amount}`, `To ${receiver}`, upi, `Date: ${date || line(2)}`, `UPI transaction ID: ${utr}`];
+// Today's IST calendar date as a wall-clock stamp at a GIVEN hour/minute —
+// used to prove time-of-day is never validated (early morning, late night,
+// even a future time within the current IST day).
+function todayIstStamp(hour, minute = 0) {
+  const ist = new Date(Date.now() + 5.5 * 3600000);
+  const pad = n => String(n).padStart(2, '0');
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const h12 = hour % 12 || 12;
+  return `${pad(ist.getUTCDate())}/${pad(ist.getUTCMonth() + 1)}/${ist.getUTCFullYear()}, ${h12}:${pad(minute)} ${ampm}`;
+}
+
+// Today's IST calendar date with NO time printed (date-only receipt).
+function todayIstDateOnly() {
+  const ist = new Date(Date.now() + 5.5 * 3600000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(ist.getUTCDate())}/${pad(ist.getUTCMonth() + 1)}/${ist.getUTCFullYear()}`;
+}
+
+function receiptText({ amount = 120, upi = RECEIVER_UPI, utr = 'UTR123456', receiver = 'Jayaraj', status = 'success', date, dateOnly = false } = {}) {
+  const dateLine = dateOnly ? `Date: ${todayIstDateOnly()}` : `Date: ${date || line(2)}`;
+  const lines = ['Payment Successful', `Rs. ${amount}`, `To ${receiver}`, upi, dateLine, `UPI transaction ID: ${utr}`];
   if (status === 'failed') lines[0] = 'Payment Failed';
   if (status === 'declined') lines[0] = 'Payment Declined';
   return lines.join('\n');
@@ -98,11 +121,11 @@ describe('paymentVerificationV2 engine', () => {
       })).toEqual({ decision: 'approved', reason: null });
     });
 
-    it('rejects on UPI mismatch', () => {
+    it('receiver UPI mismatch is informational — never rejects', () => {
       expect(decidePaymentVerification({
         upiMatch: false, amountMatch: true, dateValid: true, utrPresent: true,
         transactionStatusOk: true, ocrConfidence: 90, receiverName: 'Jayaraj', nameMatch: true, nameFound: true, nameConfigured: true,
-      })).toEqual({ decision: 'rejected', reason: 'UPI_MISMATCH' });
+      })).toEqual({ decision: 'approved', reason: null });
     });
 
     it('rejects amount mismatch (amount was read)', () => {
@@ -146,6 +169,24 @@ describe('paymentVerificationV2 engine', () => {
         transactionStatusOk: true, ocrConfidence: 20, receiverName: 'Jayaraj', nameMatch: true, nameFound: true, nameConfigured: true,
       })).toEqual({ decision: 'rejected', reason: 'LOW_OCR_CONFIDENCE' });
     });
+
+    it('receiver name mismatch is informational — never rejects', () => {
+      expect(decidePaymentVerification({
+        upiMatch: true, amountMatch: true, dateValid: true, utrPresent: true,
+        transactionStatusOk: true, ocrConfidence: 90, receiverName: 'Jayaraj', nameMatch: false, nameFound: true, nameConfigured: true,
+      })).toEqual({ decision: 'approved', reason: null });
+    });
+
+    it('unreadable/partial receiver name is informational — never parks', () => {
+      expect(decidePaymentVerification({
+        upiMatch: true, amountMatch: true, dateValid: true, utrPresent: true,
+        transactionStatusOk: true, ocrConfidence: 90, receiverName: 'Jayaraj', nameMatch: false, nameFound: false, namePartial: true, nameConfigured: true,
+      })).toEqual({ decision: 'approved', reason: null });
+      expect(decidePaymentVerification({
+        upiMatch: true, amountMatch: true, dateValid: true, utrPresent: true,
+        transactionStatusOk: true, ocrConfidence: 90, receiverName: 'Jayaraj', nameMatch: false, nameFound: false, nameConfigured: true,
+      })).toEqual({ decision: 'approved', reason: null });
+    });
   });
 
   describe('engine: APPROVED happy path', () => {
@@ -184,38 +225,120 @@ describe('paymentVerificationV2 engine', () => {
     });
   });
 
-  describe('engine: timestamp gates', () => {
-    it('rejects a future transaction timestamp', async () => {
-      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, date: line(2, 1) }), confidence: 90 });
-      const v = await verify({ amount: 120, serverTime: new Date(Date.now() + 3600000) });
-      expect(v.outcome).toBe('REJECTED');
-      expect(v.approved).toBe(false);
-      expect(v.details?.variant).toBe('INVALID_PAYMENT_DATE_FUTURE');
-    });
-
-    it('rejects a transaction older than the payment window', async () => {
-      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, date: line(45) }), confidence: 90 });
+  describe('engine: transaction date (IST day only — time never checked)', () => {
+    it('rejects a receipt dated on a previous IST day', async () => {
+      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, date: line(2, -1) }), confidence: 90 });
       const v = await verify({ amount: 120, serverTime: new Date() });
       expect(v.outcome).toBe('REJECTED');
       expect(v.approved).toBe(false);
-      expect(v.details?.variant).toBe('INVALID_PAYMENT_DATE_TOO_OLD');
+      expect(v.reason).toBe('INVALID_PAYMENT_DATE');
+      expect(v.details?.variant).toBe('INVALID_PAYMENT_DATE_NOT_TODAY');
+    });
+
+    it('rejects a receipt dated tomorrow (no future-date tolerance)', async () => {
+      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, date: line(2, 1) }), confidence: 90 });
+      const v = await verify({ amount: 120, serverTime: new Date() });
+      expect(v.outcome).toBe('REJECTED');
+      expect(v.approved).toBe(false);
+      expect(v.details?.variant).toBe('INVALID_PAYMENT_DATE_NOT_TODAY');
+    });
+
+    it('accepts an early-morning same-day receipt (time of day irrelevant)', async () => {
+      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, date: todayIstStamp(0, 5) }), confidence: 90 });
+      const v = await verify({ amount: 120, serverTime: new Date() });
+      expect(v.outcome).toBe('APPROVED');
+      expect(v.checks.transactionDate.passed).toBe(true);
+    });
+
+    it('accepts a same-day receipt with a FUTURE time-of-day (no clock-skew check)', async () => {
+      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, date: todayIstStamp(23, 55) }), confidence: 90 });
+      const v = await verify({ amount: 120, serverTime: new Date() });
+      expect(v.outcome).toBe('APPROVED');
+      expect(v.checks.transactionDate.passed).toBe(true);
+    });
+
+    it('accepts a date-only receipt (no printed time) for the current IST date', async () => {
+      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, dateOnly: true }), confidence: 90 });
+      const v = await verify({ amount: 120, serverTime: new Date() });
+      expect(v.outcome).toBe('APPROVED');
+      expect(v.checks.transactionDate.passed).toBe(true);
+      expect(v.reason).not.toBe('PAYMENT_TIME_NOT_DETECTED');
+      expect(v.reason).not.toBe('PAYMENT_DATE_NOT_DETECTED');
     });
   });
 
-  describe('engine: receiver / identity gates', () => {
-    it('rejects a wrong receiver name', async () => {
+  describe('engine: receiver UPI is informational (never a rejection gate)', () => {
+    it('does not reject on an OCR UPI mismatch — records an advisory check', async () => {
+      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, upi: 'attacker@paytm' }), confidence: 90 });
+      const v = await verify({ amount: 120 });
+      expect(v.outcome).toBe('APPROVED');
+      expect(v.approved).toBe(true);
+      expect(v.checks.receiverUpi.passed).toBe(false);
+      expect(v.checks.receiverUpi.advisory).toBe(true);
+      expect(v.checks.receiverUpi.reason).toBe('UPI_MISMATCH');
+      expect(v.checks.receiverUpi.expected).toBe(RECEIVER_UPI);
+      expect(v.checks.receiverUpi.detected).toBe('attacker@paytm');
+    });
+  });
+
+  describe('engine: receiver name is informational (never a gate)', () => {
+    it('does not reject a wrong receiver name — records it as advisory', async () => {
       runOCR.mockResolvedValue({ text: receiptText({ amount: 120, receiver: 'Someone Else' }), confidence: 90 });
       const v = await verify({ amount: 120 });
-      expect(v.outcome).toBe('REJECTED');
-      expect(v.reason).toBe('RECEIVER_NAME_MISMATCH');
+      expect(v.outcome).toBe('APPROVED');
+      expect(v.approved).toBe(true);
+      expect(v.checks.receiverName.passed).toBe(false);
+      expect(v.checks.receiverName.advisory).toBe(true);
+      expect(v.checks.receiverName.reason).toBe('RECEIVER_NAME_MISMATCH');
+      expect(v.checks.receiverName.expected).toBe('Jayaraj');
+      expect(v.checks.receiverName.detected).toBe('Someone Else');
     });
 
-    it('never approves when the receiver name is unreadable', async () => {
+    it('does not park when the receiver name is unreadable', async () => {
       runOCR.mockResolvedValue({ text: receiptText({ amount: 120, receiver: '' }), confidence: 90 });
       const v = await verify({ amount: 120 });
-      expect(v.approved).toBe(false);
-      expect(v.inconclusive).toBe(true);
-      expect(v.outcome).toBe('PENDING_VERIFICATION');
+      expect(v.approved).toBe(true);
+      expect(v.outcome).toBe('APPROVED');
+      expect(v.checks.receiverName.passed).toBe(false);
+      expect(v.checks.receiverName.advisory).toBe(true);
+      expect(v.checks.receiverName.reason).toBe('RECEIVER_NAME_UNREADABLE');
+    });
+
+    it('recognizes Jayaraj variants with additional names (advisory MATCH)', async () => {
+      runOCR.mockResolvedValue({ text: receiptText({ amount: 120, receiver: 'JAYA RAJ ALAGAR' }), confidence: 90 });
+      const v = await verify({ amount: 120 });
+      expect(v.outcome).toBe('APPROVED');
+      expect(v.checks.receiverName.passed).toBe(true);
+      expect(v.checks.receiverName.advisory).toBe(true);
+      expect(v.checks.receiverName.method).toBeTruthy();
+    });
+  });
+
+  describe('engine: provider gating (auto-approve requires provider confirmation)', () => {
+    it('parks as MANUAL_REVIEW when no payment provider is configured', async () => {
+      const prev = process.env.PAYMENT_PROVIDER_MODE;
+      process.env.PAYMENT_PROVIDER_MODE = 'none';
+      try {
+        runOCR.mockResolvedValue({ text: receiptText({ amount: 120 }), confidence: 90 });
+        const v = await verify({ amount: 120 });
+        expect(v.outcome).toBe('MANUAL_REVIEW');
+        expect(v.approved).toBe(false);
+        expect(v.inconclusive).toBe(false);
+        expect(v.reason).toBe('PROVIDER_NOT_CONFIGURED');
+        expect(v.verificationResult.decision).toBe('manual_review');
+        expect(v.verificationResult.status).toBe('MANUAL_REVIEW');
+      } finally {
+        if (prev === undefined) delete process.env.PAYMENT_PROVIDER_MODE;
+        else process.env.PAYMENT_PROVIDER_MODE = prev;
+      }
+    });
+
+    it('approves only when the provider confirms the transaction', async () => {
+      runOCR.mockResolvedValue({ text: receiptText({ amount: 120 }), confidence: 90 });
+      const v = await verify({ amount: 120 });
+      expect(v.outcome).toBe('APPROVED');
+      expect(v.provider?.verified).toBe(true);
+      expect(v.verificationResult.decision).toBe('approved');
     });
   });
 

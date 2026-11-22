@@ -1,14 +1,15 @@
 /**
- * Check B — RECEIVER (payee) NAME validation.
+ * Check B — RECEIVER (payee) NAME validation. INFORMATIONAL ONLY.
  *
  * The expected receiver name comes from SERVER-side configuration only
  * (payment_config.receiver_name, env ADMIN_RECEIVER_NAME fallback) — never
- * from the browser. Case, whitespace and harmless OCR formatting differences
- * are normalized by the shared matcher; only a carefully reviewed set of
- * legitimate variants (token-subset/compact forms of the SAME configured
- * name) can match. An unrelated payee is rejected even when the amount
- * matches. Missing/ambiguous evidence is inconclusive (manual review), never
- * an approval.
+ * from the browser. Case, whitespace, punctuation and harmless OCR spacing
+ * differences are normalized by the shared matcher (including split forms
+ * like "JAYA RAJ" for "Jayaraj" and additional names like "Jayaraj
+ * Alagar"). The result is recorded as an advisory check for the admin UI:
+ * a mismatch or unreadable name NEVER rejects, parks, or approves a
+ * payment on its own — approval requires the mandatory gates PLUS the
+ * payment-provider confirmation policy.
  */
 import { matchReceiverName } from './ocrExtraction.js';
 

@@ -503,13 +503,15 @@ export async function verifyPayment(paymentId, imageBuffer) {
   let reason;
 
   // Four-state outcome -> database status. Deterministic policy: APPROVED
-  // (all mandatory gates passed) commits approval; REJECTED commits a
-  // explained rejection with a retry option (new payment request).
-  // MANUAL_REVIEW only appears when the operator explicitly opts into
-  // SENDER_NAME_POLICY=review. The PENDING_VERIFICATION branch is a
-  // defensive fallback (the engine surfaces provider/OCR technical failures
-  // as inconclusive above, which throws before this point) — it parks, it
-  // never approves.
+  // (all mandatory gates passed AND the payment provider confirmed the
+  // transaction) commits approval; REJECTED commits an explained rejection
+  // with a retry option (new payment request). MANUAL_REVIEW appears when
+  // the operator opts into SENDER_NAME_POLICY=review OR when no trusted
+  // payment provider could confirm the transaction (PROVIDER_NOT_CONFIGURED
+  // / PROVIDER_UNAVAILABLE) — a screenshot alone never auto-approves. The
+  // PENDING_VERIFICATION branch is a defensive fallback (the engine
+  // surfaces provider/OCR technical failures as inconclusive above, which
+  // throws before this point) — it parks, it never approves.
   if (verification.outcome === 'APPROVED') {
     newStatus = 'approved';
     reason = null;
@@ -523,6 +525,12 @@ export async function verifyPayment(paymentId, imageBuffer) {
     newStatus = 'rejected';
     reason = verificationResult?.reason || 'REJECTED';
   }
+
+  // Provider-parked rows (no trusted provider confirmation available) get
+  // an extended review window so the 30-minute sweep cannot expire the row
+  // before an admin/provider decision. Never an approval, never a credit.
+  const providerPark = newStatus === 'manual_review' &&
+    (reason === 'PROVIDER_NOT_CONFIGURED' || reason === 'PROVIDER_UNAVAILABLE');
 
   // ── Approved-UTR duplicate gate (cross-flow) ──
   // reserveApprovedUtr is an atomic INSERT against approved_utrs (UNIQUE
@@ -549,7 +557,9 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // the authoritative value; this check runs against the current clock.
   // manual_review is re-checked here too: an externally-confirmed row whose
   // window elapsed during OCR becomes PAYMENT_EXPIRED, never a stale park.
-  if ((newStatus === 'approved' || newStatus === 'manual_review') && isPaymentExpired(payment)) {
+  // Provider-parked rows are EXCLUDED: their window is extended instead
+  // (below) so an admin/provider decision has time to happen.
+  if (!providerPark && (newStatus === 'approved' || newStatus === 'manual_review') && isPaymentExpired(payment)) {
     if (reservedUtr) await releaseApprovedUtr(reservedUtr, 'payment', paymentId);
     reservedUtr = null;
     newStatus = 'rejected';
@@ -565,6 +575,12 @@ export async function verifyPayment(paymentId, imageBuffer) {
     transaction_id: newStatus === 'approved' ? verification.transactionId : null,
     status: newStatus,
   };
+  // Provider-parked rows survive the sweep: extend the review window by 24h
+  // from now (manual_review rows are actionable by admins; the sweep only
+  // expires rows whose expires_at has passed).
+  if (providerPark && newStatus === 'manual_review') {
+    updateData.expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  }
   if (newStatus === 'approved') updateData.approved_at = verificationTime.toISOString();
   if (newStatus === 'rejected') {
     updateData.rejected_at = verificationTime.toISOString();

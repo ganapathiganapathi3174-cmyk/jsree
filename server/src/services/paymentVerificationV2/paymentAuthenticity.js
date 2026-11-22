@@ -8,11 +8,9 @@
  *   status, confidence floor, duplicate pre-check) AND:
  *
  *   - NO provider configured (mode 'none', the production default)
- *        -> APPROVED. The mandatory screenshot checks ARE the verification
- *           policy. LIMITATION: a screenshot alone cannot conclusively prove
- *           bank settlement — live UPI/bank verification is not configured,
- *           so approval rests on screenshot evidence + the atomic approved-UTR
- *           ledger, not on provider confirmation.
+ *        -> MANUAL_REVIEW (reason PROVIDER_NOT_CONFIGURED). A screenshot
+ *           alone can NEVER auto-approve: the row is parked for an
+ *           authorized payment-provider confirmation or an admin decision.
  *   - provider configured + confirms the transaction   -> APPROVED
  *   - provider configured + DEFINITIVE negative (transaction not found /
  *     invalid)                                          -> REJECTED
@@ -78,11 +76,12 @@ export async function resolveApprovalOutcome({ transactionId, matchedAmount, rec
 
   const mode = getProviderMode();
 
-  // No live provider integration is configured (mode 'none'): the mandatory
-  // screenshot checks are the verification policy — all gates passed means
-  // APPROVED. (Production limitation documented in the module header.)
+  // No live provider integration is configured (mode 'none'): a screenshot
+  // alone can never prove settlement — park for manual review instead of
+  // auto-approving. An authorized provider confirmation (or an explicit
+  // admin decision) is required before any approval.
   if (mode === 'none') {
-    return { outcome: 'APPROVED', reason: null, provider };
+    return { outcome: 'MANUAL_REVIEW', reason: 'PROVIDER_NOT_CONFIGURED', provider };
   }
 
   if (provider.verified === true) {

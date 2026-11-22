@@ -60,13 +60,9 @@ export default function RegisterPage() {
       case 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED':
         return 'Your screenshot passed automated checks and is awaiting confirmation. It is pending verification.';
       case 'INVALID_PAYMENT_DATE':
-      case 'TRANSACTION_TOO_OLD':
-      case 'FUTURE_TRANSACTION_TIMESTAMP':
-        return 'This screenshot is too old or its date could not be read. Please upload the screenshot from your current payment.';
+        return 'The transaction date on the screenshot is not today\'s date. Please upload the screenshot from your current payment.';
       case 'PAYMENT_DATE_NOT_DETECTED':
         return 'We could not read the payment date from your screenshot. Please upload a screenshot that shows the transaction date.';
-      case 'PAYMENT_TIME_NOT_DETECTED':
-        return 'We could not read the payment time from your screenshot. Please upload a screenshot that shows the date AND time of the transaction.';
       case 'TRANSACTION_FAILED':
         return 'The screenshot shows a failed or pending transaction. Only completed payments can be verified.';
       case 'MISSING_UTR':

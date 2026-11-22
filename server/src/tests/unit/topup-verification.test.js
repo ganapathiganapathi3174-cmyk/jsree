@@ -49,9 +49,11 @@ const time = new Date('2026-08-18T12:00:00.000Z');
 
 // ─────────────────────────────────────────────────────────────
 // TOP-UP DECISION MATRIX (same shared engine as registration payments)
-//   Final rule: approved = upiMatch && dateValid (+ OCR confidence gate)
-//   Amount is not part of the decision (amountMatch is ignored).
-//   UTR has ZERO influence; it is never an input.
+//   Final rule: approved = dateValid (current IST day) && amount match &&
+//   status success && UTR present (+ OCR confidence gate).
+//   Receiver UPI OCR and receiver name are INFORMATIONAL only — they never
+//   reject. Transaction time is never validated.
+//   UTR has ZERO influence on the OCR decision; it is never an input.
 // ─────────────────────────────────────────────────────────────
 describe('Top-up verification decision engine', () => {
   it('T1: all conditions pass -> APPROVED', () => {
@@ -63,13 +65,13 @@ describe('Top-up verification decision engine', () => {
     expect(reason).toBeNull();
   });
 
-  it('T2: wrong UPI -> REJECTED (UPI_MISMATCH)', () => {
+  it('T2: wrong UPI is informational -> still APPROVED (UPI never rejects)', () => {
     const { decision, reason } = sharedDecide({
       upiMatch: false, amountMatch: true, dateValid: true,
       utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,
     });
-    expect(decision).toBe('rejected');
-    expect(reason).toBe('UPI_MISMATCH');
+    expect(decision).toBe('approved');
+    expect(reason).toBeNull();
   });
 
   it('T3: wrong amount -> REJECTED (AMOUNT_MISMATCH)', () => {
@@ -81,7 +83,7 @@ describe('Top-up verification decision engine', () => {
     expect(reason).toBe('AMOUNT_MISMATCH');
   });
 
-  it('T4: invalid date/time -> REJECTED (INVALID_PAYMENT_DATE)', () => {
+  it('T4: wrong transaction date (not current IST day) -> REJECTED (INVALID_PAYMENT_DATE)', () => {
     const { decision, reason } = sharedDecide({
       upiMatch: true, amountMatch: true, dateValid: false,
       utrPresent: true, transactionStatusOk: true, ocrConfidence: 90,

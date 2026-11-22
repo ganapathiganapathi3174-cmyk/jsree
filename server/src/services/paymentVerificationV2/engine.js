@@ -364,6 +364,36 @@ export class PaymentVerificationEngine {
       };
     }
 
+    // MANUAL_REVIEW from the approval policy: no trusted payment provider
+    // could confirm the transaction (mode 'none' / provider not configured).
+    // The screenshot passed every mandatory gate, but a screenshot alone is
+    // never an approval — park for provider confirmation or an admin
+    // decision. NOT inconclusive: the row is a deliberate, explainable park.
+    if (resolution.outcome === 'MANUAL_REVIEW') {
+      const reason = resolution.reason || 'PROVIDER_NOT_CONFIGURED';
+      const verificationResult = {
+        ...screenshot,
+        decision: 'manual_review',
+        status: 'MANUAL_REVIEW',
+        reason,
+        utr: screenshot.transactionId || null,
+        provider: resolution.provider,
+        engine: ENGINE_ID,
+      };
+      return {
+        ...screenshot,
+        approved: false,
+        inconclusive: false,
+        review: true,
+        outcome: 'MANUAL_REVIEW',
+        reason,
+        code: reason,
+        message: userMessageFor(reason),
+        provider: resolution.provider,
+        verificationResult,
+      };
+    }
+
     // PENDING_VERIFICATION from the resolution stage is always a TECHNICAL
     // failure (configured provider timed out / errored / misconfigured).
     // Surface it as INCONCLUSIVE: the caller records a no-decision attempt,

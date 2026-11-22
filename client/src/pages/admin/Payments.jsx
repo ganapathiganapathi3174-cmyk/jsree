@@ -32,9 +32,7 @@ function friendlyReason(code) {
     RECEIVER_NAME_INCOMPLETE: 'Recipient name only partially visible',
     RECEIVER_NAME_UNREADABLE: 'Recipient name could not be read',
     RECEIVER_NAME_NOT_CONFIGURED: 'Receiver name not configured — manual review required',
-    INVALID_PAYMENT_DATE: 'Transaction date/time outside the allowed window',
-    TRANSACTION_TOO_OLD: 'Transaction date/time outside the allowed window',
-    FUTURE_TRANSACTION_TIMESTAMP: 'Transaction timestamp is in the future',
+    INVALID_PAYMENT_DATE: 'Transaction date is not today\'s date',
     PAYMENT_EXPIRED: 'Payment window expired',
     TRANSACTION_FAILED: 'Transaction not marked completed',
     MISSING_UTR: 'No transaction reference found',
@@ -49,16 +47,27 @@ function friendlyReason(code) {
 
 function CheckRow({ label, check }) {
   if (!check) return null;
+  const advisory = check.advisory === true;
   const passed = check.passed === true;
   const indeterminate = check.passed === null || check.passed === undefined;
-  const color = passed ? 'text-success-600' : indeterminate ? 'text-warning-600' : 'text-error-600';
-  const mark = passed ? 'PASS' : indeterminate ? 'N/A' : 'FAIL';
+  // Advisory rows (e.g. receiver name) are informational — they never fail
+  // a payment, so they render as INFO/MATCH instead of PASS/FAIL.
+  const mark = advisory
+    ? (passed ? 'MATCH' : indeterminate ? 'N/A' : 'INFO')
+    : (passed ? 'PASS' : indeterminate ? 'N/A' : 'FAIL');
+  const color = advisory
+    ? (passed ? 'text-success-600' : 'text-warning-600')
+    : (passed ? 'text-success-600' : indeterminate ? 'text-warning-600' : 'text-error-600');
+  const detected = typeof check.detected === 'string' && check.detected ? check.detected : null;
   return (
     <div className="flex items-start justify-between gap-3 py-1.5 border-b border-line last:border-0">
       <span className="text-sm text-ink-muted">{label}</span>
       <span className="text-xs font-semibold shrink-0">
         <span className={color}>{mark}</span>
-        {check.reason && !passed && <span className="ml-2 text-ink-faint font-normal">{check.reason}</span>}
+        {check.reason && !passed && (
+          <span className="ml-2 text-ink-faint font-normal">{check.reason}{advisory ? ' (informational)' : ''}</span>
+        )}
+        {detected && <span className="ml-2 text-ink-faint font-normal">“{detected}”</span>}
         {check.method && passed && <span className="ml-2 text-ink-faint font-normal">{check.method}</span>}
       </span>
     </div>
@@ -318,11 +327,11 @@ export default function AdminPayments() {
                 <p className="text-xs text-ink-muted mb-2">Each row compares one field read from the screenshot with the expected value. A passed check is not, by itself, an approved payment.</p>
                 <CheckRow label="Receiver UPI match" check={checks.receiverUpi} />
                 <CheckRow label="Amount match" check={checks.amount} />
-                <CheckRow label="Transaction date/time" check={checks.transactionDate} />
+                <CheckRow label="Transaction date" check={checks.transactionDate} />
                 <CheckRow label="Transaction status" check={checks.transactionStatus} />
                 <CheckRow label="Transaction ID (UTR)" check={checks.utr} />
                 <CheckRow label="OCR confidence" check={checks.ocrConfidence} />
-                <CheckRow label="Receiver name" check={checks.receiverName} />
+                <CheckRow label="Receiver name (informational)" check={checks.receiverName} />
                 <CheckRow label="Sender (payer) name" check={checks.senderName} />
               </div>
             )}

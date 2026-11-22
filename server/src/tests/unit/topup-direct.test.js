@@ -174,20 +174,20 @@ describe('createDirectTopup', () => {
     await expect(createDirectTopup({ senderId: 'sender-1', amount: 120 })).rejects.toMatchObject({ code: 'NO_SPONSOR' });
   });
 
-  it('D4: engine UPI mismatch -> record rejected, NO credit, NO completed count', async () => {
+  it('D4: engine UPI mismatch is informational — pending request still credited (mock provider confirms)', async () => {
     chains.users = makeUsersChain([SENDER, RECEIVER, SENDER]);
-    chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP] });
+    chains.topups = makeTopupsChain({ singles: [PENDING_TOPUP], approvalSelect: { data: [{ id: 'pending-1', status: 'completed' }], error: null } });
     chains.wallet_transactions = makeWalletChain();
     chains.audit_logs = { insert: vi.fn().mockReturnValue({}) };
     runOCR.mockResolvedValue({ text: receiptText(120, 'attacker@paytm', 'TBADUPI001'), confidence: 90 });
 
     const result = await createDirectTopup({ senderId: 'sender-1', amount: 120, file: fakeFile });
 
-    expect(result.credited).toBe(false);
-    expect(walletCreditBatch).not.toHaveBeenCalled();
-    expect(result.reason).toBe('UPI_MISMATCH');
-    expect(result.message).toBe('Topup rejected: the screenshot shows a different recipient');
-    expect(chains.topups.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'rejected', rejection_reason: 'UPI_MISMATCH' }));
+    expect(result.credited).toBe(true);
+    expect(result.manualReview).toBe(false);
+    expect(result.topupId).toBe('pending-1');
+    expect(walletCreditBatch).toHaveBeenCalledTimes(1);
+    expect(chains.topups.update).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'rejected' }));
   });
 
   it('D5: no screenshot -> creates a pending record (credit later via proof flow)', async () => {

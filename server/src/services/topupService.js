@@ -289,8 +289,10 @@ async function uploadAndVerifyTopupProof(topup, file, userId) {
     //
     //   - decision 'approved'   -> completed (+ single idempotent credit)
     //   - decision 'rejected'   -> rejected with reason (definite failure)
-    //   - decision 'manual_review' -> parked ONLY under the explicit
-    //     SENDER_NAME_POLICY=review opt-in (never the default policy)
+    //   - decision 'manual_review' -> parked for an operator/provider
+    //     decision: SENDER_NAME_POLICY=review opt-in, or no trusted payment
+    //     provider could confirm the transaction (PROVIDER_NOT_CONFIGURED /
+    //     PROVIDER_UNAVAILABLE). A screenshot alone never completes a top-up.
     const verificationResult = verification.verificationResult;
     const providerResult = verification.provider || null;
     outcome = await applyTopupVerification(topup, verificationResult, new Date());
@@ -380,11 +382,9 @@ function topupRejectionMessage(reason) {
     case 'DUPLICATE_UTR':
       return 'this transaction reference has already been used';
     case 'INVALID_PAYMENT_DATE':
-      return 'the screenshot is too old or its date could not be read';
+      return 'the transaction date on the screenshot is not today\'s date';
     case 'PAYMENT_DATE_NOT_DETECTED':
       return 'we could not read the payment date from your screenshot';
-    case 'PAYMENT_TIME_NOT_DETECTED':
-      return 'we could not read the payment time from your screenshot';
     case 'TRANSACTION_FAILED':
       return 'the screenshot shows a failed or pending transaction';
     case 'MISSING_UTR':
@@ -606,9 +606,15 @@ export async function applyTopupVerification(topup, verificationResult, verifica
   }
 
   if (decision === 'manual_review') {
+    // Provider-parked rows (no trusted provider confirmation available)
+    // get an extended review window so the 30-minute sweep cannot expire
+    // the row before an admin/provider decision. Never a credit.
+    const providerPark = reason === 'PROVIDER_NOT_CONFIGURED' || reason === 'PROVIDER_UNAVAILABLE';
+
     // Expiry is authoritative: an expired request must never be parked for
-    // review. Fail closed to a rejection instead.
-    if (isPaymentExpired(topup)) {
+    // review. Fail closed to a rejection instead — except provider parks,
+    // whose window is extended (below) rather than expired.
+    if (!providerPark && isPaymentExpired(topup)) {
       await supabase
         .from('topups')
         .update({
@@ -625,14 +631,18 @@ export async function applyTopupVerification(topup, verificationResult, verifica
     // Non-terminal outcome: the row is flagged for a human. No wallet credit,
     // no terminal 'rejected', and the status stays resubmittable/actionable by
     // an admin (topups.admin verify accepts 'manual_review').
+    const parkUpdate = {
+      status: 'manual_review',
+      rejection_reason: reason || 'MANUAL_REVIEW',
+      verified_at: verificationTime.toISOString(),
+      verification_result: verificationResult,
+    };
+    if (providerPark) {
+      parkUpdate.expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    }
     const { error } = await supabase
       .from('topups')
-      .update({
-        status: 'manual_review',
-        rejection_reason: reason || 'MANUAL_REVIEW',
-        verified_at: verificationTime.toISOString(),
-        verification_result: verificationResult,
-      })
+      .update(parkUpdate)
       .eq('id', topup.id)
       .in('status', SUBMITTABLE_STATUSES);
     if (error) throw { message: 'Failed to flag topup for review', code: 'REVIEW_FAILED' };
@@ -643,7 +653,6 @@ export async function applyTopupVerification(topup, verificationResult, verifica
     const INCONCLUSIVE_REASONS = new Set([
       'AMOUNT_NOT_DETECTED',
       'PAYMENT_DATE_NOT_DETECTED',
-      'PAYMENT_TIME_NOT_DETECTED',
       'RECEIVER_NAME_UNREADABLE',
       'RECEIVER_NAME_INCOMPLETE',
       'RECEIVER_NAME_NOT_CONFIGURED',

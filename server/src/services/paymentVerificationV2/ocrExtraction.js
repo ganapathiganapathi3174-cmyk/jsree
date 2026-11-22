@@ -827,20 +827,29 @@ function nameTokens(normalized) {
 //   exact_compact  – identical after normalization AND ignoring spaces
 //                    inside words (OCR splits "JAYARAJ ALAGAR" as
 //                    "JAYA RAJ ALAGAR")
+//   token_run      – a CONTIGUOUS run of the candidate's words joined
+//                    together equals the configured name compacted
+//                    (handles OCR splitting the expected name across
+//                    words: "JAYA RAJ ALAGAR" for "JAYARAJ", and the
+//                    reverse when the config itself is multi-word:
+//                    "Jayaraj Alagar" for "Jaya Raj"). Word boundaries
+//                    are respected, so "VIJAYARAJ" never matches
+//                    "JAYARAJ".
 //   token_subset   – the receipt shows AT LEAST the configured name
 //                    (extra middle/last names are tolerated)
 //   partial        – the receipt shows only PART of the configured name
 //                    (e.g. "JAYARAJ" for "JAYARAJ ALAGAR"). Incomplete
-//                    evidence: never auto-approved.
+//                    evidence — now ADVISORY ONLY (never a rejection).
 //   mismatch       – a complete but different payee name
 //   no_config      – no receiver name is configured
 //   not_found      – no candidate name could be read at all
 //
 // The subset direction matters: a receipt that reads FEWER tokens than the
-// configured name is INCOMPLETE evidence, not proof of identity. Accepting
-// it would let "JAYARAJ" alone satisfy the configured "JAYARAJ ALAGAR",
-// which is exactly the "contains the name" shortcut that must not approve.
-export function matchReceiverName(extractedNames, receiverName) {
+// configured name is INCOMPLETE evidence, not proof of identity.
+//
+// NOTE: the RECEIVER name result is consumed as an INFORMATIONAL check by
+// the decision engine — a mismatch never blocks a payment by itself.
+function matchNameImpl(extractedNames, receiverName, { tokenRun = false } = {}) {
   const expected = normalizeName(receiverName);
   const candidates = (extractedNames || []).map(normalizeName).filter(Boolean);
   const base = { match: false, method: 'none', expected, candidates, matched: null, partial: false };
@@ -862,6 +871,27 @@ export function matchReceiverName(extractedNames, receiverName) {
     }
   }
 
+  // 2b. Contiguous token-run match (receiver only): some contiguous run of
+  //     the candidate's words, space-stripped, equals the expected name
+  //     space-stripped. Covers OCR spacing splits in either direction while
+  //     staying word-boundary safe ("vijayaraj" cannot produce the run
+  //     "jayaraj").
+  if (tokenRun) {
+    for (const c of candidates) {
+      const cTokens = c.split(' ').filter(Boolean);
+      for (let i = 0; i < cTokens.length; i++) {
+        let run = '';
+        for (let j = i; j < cTokens.length; j++) {
+          run += cTokens[j];
+          if (run === expectedCompact) {
+            return { ...base, match: true, method: 'token_run', matched: c };
+          }
+          if (run.length >= expectedCompact.length) break;
+        }
+      }
+    }
+  }
+
   // 3. Token-subset match — ONLY in the direction "the receipt shows AT
   //    LEAST the configured name". The configured name must never be a
   //    strict subset of what the receipt shows.
@@ -875,9 +905,9 @@ export function matchReceiverName(extractedNames, receiverName) {
 
   // 4. Partial / truncated / ambiguous read — the receipt shares AT LEAST ONE
   //    significant token with the configured name but does not cover it
-  //    completely ("JAYARAJ" for "JAYARAJ ALAGAR"). Uncertain evidence:
-  //    routed to manual review, never approved. A candidate with no
-  //    significant token at all is equally uncertain (a truncated read).
+  //    completely ("JAYARAJ" for "JAYARAJ ALAGAR"). Uncertain evidence
+  //    (advisory for the receiver gate). A candidate with no significant
+  //    token at all is equally uncertain (a truncated read).
   for (const c of candidates) {
     const cTokens = nameTokens(c);
     if (cTokens.length === 0) {
@@ -893,13 +923,23 @@ export function matchReceiverName(extractedNames, receiverName) {
   return { ...base, method: 'mismatch' };
 }
 
-// Sender-name matching uses the exact same normalized comparison rules
-// (case / whitespace / punctuation / honorific-insensitive, token-subset in
-// the "receipt shows at least the expected name" direction only). The
-// caller (stageValidation.validateSender) interprets `partial`/`not_found`
-// as advisory UNREADABLE evidence and `mismatch` as a policy-driven
-// review/reject — a sender match is NEVER sufficient to approve alone.
-export const matchSenderName = matchReceiverName;
+// Receiver-name matching (informational gate): normalized + compact +
+// contiguous-token-run + token-subset tolerant of OCR spacing/case
+// variations and additional names after "Jayaraj".
+export function matchReceiverName(extractedNames, receiverName) {
+  return matchNameImpl(extractedNames, receiverName, { tokenRun: true });
+}
+
+// Sender-name matching keeps the original comparison rules (case /
+// whitespace / punctuation / honorific-insensitive, token-subset in the
+// "receipt shows at least the expected name" direction only) — the sender
+// rule is a separate, policy-driven gate and is intentionally unchanged.
+// The caller (validateSender) interprets `partial`/`not_found` as advisory
+// UNREADABLE evidence and `mismatch` as a policy-driven review/reject — a
+// sender match is NEVER sufficient to approve alone.
+export function matchSenderName(extractedNames, receiverName) {
+  return matchNameImpl(extractedNames, receiverName, { tokenRun: false });
+}
 
 export async function runOCR(imageBuffer, opts = {}) {
   const processed = await preprocessImage(imageBuffer);

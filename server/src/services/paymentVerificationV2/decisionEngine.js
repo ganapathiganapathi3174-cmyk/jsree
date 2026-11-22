@@ -5,9 +5,11 @@
  *   APPROVED            — every mandatory screenshot gate passed (the FINAL
  *                         approval decision additionally runs the provider
  *                         policy — see providerVerification.js)
- *   MANUAL_REVIEW       — ONLY when the operator explicitly opts into
- *                         SENDER_NAME_POLICY=review; never produced by the
- *                         default policy
+ *   MANUAL_REVIEW       — when the operator explicitly opts into
+ *                         SENDER_NAME_POLICY=review, or when the final
+ *                         approval policy parks a screenshot because no
+ *                         trusted payment provider could confirm it
+ *                         (see paymentAuthenticity.js)
  *   PENDING_VERIFICATION— evidence was INSUFFICIENT to decide (OCR could not
  *                         read a field, config missing, budget exhausted).
  *                         Never an approval, never a rejection, never
@@ -16,9 +18,10 @@
  *                         (wrong amount/payee, stale/future transaction,
  *                         duplicate reference, corrupt image, failed status)
  *
- * Gate order: integrity -> extraction -> demo -> UPI -> amount -> date/time
- * -> transaction status -> transaction id -> OCR confidence -> receiver
- * name (skipped when not configured) -> sender name (advisory) ->
+ * Gate order: integrity -> extraction -> demo -> UPI (informational) ->
+ * amount -> date (current IST day only; time never checked) ->
+ * transaction status -> transaction id -> OCR confidence -> receiver
+ * name (INFORMATIONAL, never rejects) -> sender name (advisory) ->
  * duplicate pre-check.
  *
  * `decidePaymentVerification()` is the same rule set expressed over flat
@@ -33,7 +36,6 @@ const INCONCLUSIVE_REASONS = new Set([
   'AMOUNT_NOT_DETECTED',
   'MISSING_EXPECTED_AMOUNT',
   'PAYMENT_DATE_NOT_DETECTED',
-  'PAYMENT_TIME_NOT_DETECTED',
   'RECEIVER_NAME_UNREADABLE',
   'RECEIVER_NAME_INCOMPLETE',
   'RECEIVER_NAME_NOT_CONFIGURED',
@@ -55,8 +57,6 @@ export function userMessageFor(reason) {
       return 'We could not read the amount from your screenshot. Please upload a clearer image of the payment receipt.';
     case 'PAYMENT_DATE_NOT_DETECTED':
       return 'We could not read the transaction date from your screenshot. Please upload a clearer image.';
-    case 'PAYMENT_TIME_NOT_DETECTED':
-      return 'We could not read the transaction time from your screenshot. Please upload a clearer image.';
     case 'RECEIVER_NAME_UNREADABLE':
     case 'RECEIVER_NAME_INCOMPLETE':
       return 'We could not read the receiver name from your screenshot. Please upload a clearer image.';
@@ -73,8 +73,6 @@ export function userMessageFor(reason) {
       return 'Screenshot verification could not be completed. Please try again.';
     case 'OCR_TIMEOUT':
       return 'Screenshot verification took too long. Please try again.';
-    case 'UPI_MISMATCH':
-      return 'The receiver UPI ID on the screenshot does not match the expected payment recipient. Please make sure you paid the correct UPI ID.';
     case 'AMOUNT_MISMATCH':
     case 'CONFLICTING_AMOUNTS':
       return 'The amount on the screenshot does not match the expected payment amount.';
@@ -84,7 +82,7 @@ export function userMessageFor(reason) {
     case 'INVALID_PAYMENT_DATE_NOT_TODAY':
     case 'TRANSACTION_TOO_OLD':
     case 'FUTURE_TRANSACTION_TIMESTAMP':
-      return 'The transaction date/time on the screenshot is outside the allowed payment window. Please create a new payment and try again.';
+      return 'The transaction date on the screenshot is not today\'s date. Please upload the screenshot from your current payment.';
     case 'TRANSACTION_FAILED':
       return 'The transaction shown on the screenshot is not marked as completed.';
     case 'MISSING_UTR':
@@ -101,6 +99,8 @@ export function userMessageFor(reason) {
       return 'We could not read the payer name from your screenshot. Please upload a clearer image.';
     case 'PROVIDER_TRANSACTION_NOT_FOUND':
       return 'This transaction reference could not be confirmed by the payment provider. The payment is invalid — please check the transaction and try again.';
+    case 'PROVIDER_NOT_CONFIGURED':
+      return 'Your screenshot passed automated checks and is awaiting payment confirmation. It is pending verification.';
     case 'PROVIDER_UNAVAILABLE':
       return 'We could not confirm this transaction with the payment provider right now. Nothing was charged — please try again in a few minutes.';
     case 'PENDING_PROVIDER_VERIFICATION':
@@ -123,7 +123,7 @@ export function codeForInconclusive(reason) {
   if (reason === 'OCR_TIMEOUT') return 'OCR_TIMEOUT';
   if (reason === 'OCR_UNREADABLE') return 'OCR_UNREADABLE';
   if (reason === 'AMOUNT_NOT_DETECTED' || reason === 'PAYMENT_DATE_NOT_DETECTED' ||
-      reason === 'PAYMENT_TIME_NOT_DETECTED' || reason === 'RECEIVER_NAME_UNREADABLE' ||
+      reason === 'RECEIVER_NAME_UNREADABLE' ||
       reason === 'RECEIVER_NAME_INCOMPLETE') return 'OCR_UNREADABLE';
   if (reason === 'OCR_EXTRACTION_FAILED') return 'OCR_FAILED';
   return reason; // config / engine / db reasons pass through verbatim
@@ -171,11 +171,13 @@ export function decidePaymentVerification({
   // manual_review (never an approval).
   amountDetected,
   dateDetected,
-  timeDetected,
   namePartial,
 }) {
-  // Gate 1: UPI must match
-  if (upiMatch !== true) return { decision: 'rejected', reason: 'UPI_MISMATCH' };
+  // Gate 1: receiver UPI — INFORMATIONAL ONLY. The OCR UPI read is
+  // evidence for the admin UI, never a rejection gate: a mismatch (OCR
+  // noise, masked digits, O/0 confusion) does not affect the decision.
+  // (upiMatch is accepted for signature compatibility and intentionally
+  // unused here; the class-based engine records it as an advisory check.)
 
   // Gate 2 (Check A): amount must match the server-resolved expected amount.
   if (amountMatch !== true) {
@@ -186,10 +188,11 @@ export function decidePaymentVerification({
     return { decision: 'rejected', reason: 'AMOUNT_MISMATCH' };
   }
 
-  // Gate 3 (Check C): timestamp inside the freshness window, Asia/Kolkata.
+  // Gate 3 (Check C): transaction DATE must be the current India calendar
+  // day (Asia/Kolkata). Transaction time is never validated — no
+  // hour/minute/second checks, no freshness window, no future-tolerance.
   if (dateValid !== true) {
     if (dateDetected === false) return { decision: 'manual_review', reason: 'PAYMENT_DATE_NOT_DETECTED' };
-    if (timeDetected === false) return { decision: 'manual_review', reason: 'PAYMENT_TIME_NOT_DETECTED' };
     return { decision: 'rejected', reason: 'INVALID_PAYMENT_DATE' };
   }
 
@@ -204,25 +207,12 @@ export function decidePaymentVerification({
   const confident = ocrConfidence !== undefined && ocrConfidence >= MIN_OCR_CONFIDENCE_APPROVE;
   if (!confident) return { decision: 'rejected', reason: 'LOW_OCR_CONFIDENCE' };
 
-  // Gate 7 (Check B): receiver name. Only evaluated when a receiver name
-  // is supplied AND configured. Undefined => disabled (direct callers /
-  // legacy tests). Not configured => the secondary gate is unavailable and
-  // is skipped (every other mandatory gate still applies).
-  if (receiverName !== undefined && nameConfigured === true) {
-    if (nameMatch !== true) {
-      if (namePartial === true) {
-        // The payee name was read only partially ("JAYARAJ" for
-        // "JAYARAJ ALAGAR") — incomplete evidence, needs a human.
-        return { decision: 'manual_review', reason: 'RECEIVER_NAME_INCOMPLETE' };
-      }
-      if (nameFound === true) {
-        // A payee name was read and it is a DIFFERENT person — hard reject.
-        return { decision: 'rejected', reason: 'RECEIVER_NAME_MISMATCH' };
-      }
-      // No name could be read from the screenshot — needs human review.
-      return { decision: 'manual_review', reason: 'RECEIVER_NAME_UNREADABLE' };
-    }
-  }
+  // Gate 7 (Check B): receiver name — INFORMATIONAL ONLY. The name flags
+  // (receiverName / nameMatch / nameFound / namePartial / nameConfigured)
+  // are accepted for signature compatibility and intentionally do NOT
+  // affect the decision: a mismatch or unreadable name never rejects and
+  // never parks a payment on its own. The class-based engine records the
+  // name result as an advisory check for the admin UI and audit trail.
 
   // All gates passed — approve.
   return { decision: 'approved', reason: null };
@@ -368,8 +358,12 @@ export class ValidationDecisionEngine {
 
     const checks = {};
 
-    // Gate 1: UPI must match the server-configured receiver UPI
-    // (masked-suffix / truncation recovery included).
+    // Gate 1: receiver UPI — INFORMATIONAL ONLY (OCR evidence for the
+    // admin UI and audit trail). A mismatch never rejects and never parks:
+    // OCR noise, masked digits and O/0 confusion are expected, and the
+    // authoritative receiver check happens in the payment provider
+    // confirmation (which receives the server-configured receiverUpi).
+    // Missing SERVER-side configuration is still disclosed fail-safe.
     if (!receiverUpi) {
       return this._result({
         approved: false,
@@ -383,9 +377,13 @@ export class ValidationDecisionEngine {
     const upiValidation = matchUPIWithRecovery(extraction.extractedUPIs || [], receiverUpi);
     checks.receiverUpi = {
       passed: upiValidation.match === true,
+      advisory: true,
+      reason: upiValidation.match ? null : 'UPI_MISMATCH',
       method: upiValidation.method,
       expected: receiverUpi,
-      detected: upiValidation.candidate,
+      detected: upiValidation.candidate ||
+        (upiValidation.originalCandidates && upiValidation.originalCandidates[0]) ||
+        null,
     };
     const upiDiagnostics = {
       originalCandidates: upiValidation.originalCandidates || [],
@@ -396,14 +394,9 @@ export class ValidationDecisionEngine {
       expectedUpi: receiverUpi,
     };
     if (!upiValidation.match) {
-      return this._result({
-        approved: false,
-        reason: 'UPI_MISMATCH',
-        checks,
-        upiDiagnostics,
-        details: { expected: receiverUpi, candidates: upiValidation.allCandidates },
-        auditLog: this.auditLog,
-        timings: this.timings,
+      this.log('receiverUpi', 'OCR UPI mismatch — advisory only, never blocks', {
+        expected: receiverUpi,
+        candidates: upiValidation.allCandidates,
       });
     }
 
@@ -427,8 +420,10 @@ export class ValidationDecisionEngine {
       });
     }
 
-    // Gate 3 (Check C): transaction timestamp inside the freshness window
-    // and on the current India calendar date (Asia/Kolkata).
+    // Gate 3 (Check C): transaction DATE must be the current India
+    // calendar date (Asia/Kolkata). Transaction TIME is never validated —
+    // no hour/minute/second checks, no freshness window, no future-time
+    // tolerance. A date-only receipt (no printed time) is acceptable.
     checks.transactionDate = {
       passed: dateTimeValidation?.valid === true,
       reason: dateTimeValidation?.reason || null,
@@ -436,9 +431,7 @@ export class ValidationDecisionEngine {
       detected: dateTimeValidation?.transactionDate
         ? dateTimeValidation.transactionDate.toISOString()
         : null,
-      diffMinutes: dateTimeValidation?.diffMinutes ?? null,
       timezone: dateTimeValidation?.timezone || null,
-      windowMinutes: dateTimeValidation?.windowMinutes ?? null,
     };
     if (!dateTimeValidation?.valid) {
       const rawDateReason = dateTimeValidation?.reason || 'INVALID_PAYMENT_DATE';
@@ -519,57 +512,72 @@ export class ValidationDecisionEngine {
       });
     }
 
-    // Gate 7 (Check B, SECONDARY): receiver name — evaluated whenever a
-    // name is configured/expected. Missing config fails safe to inconclusive.
+    // Gate 7 (Check B, SECONDARY): receiver name — INFORMATIONAL ONLY.
+    // The extracted name, expected name and match method are recorded for
+    // the admin verification UI and the audit trail, but a mismatch or an
+    // unreadable name NEVER rejects, NEVER parks, and NEVER approves a
+    // payment on its own (approval still requires every mandatory gate
+    // PLUS the provider policy).
     let nameDiagnostics = null;
     if (receiverName !== undefined) {
-      checks.receiverName = {
-        passed: receiverValidation?.valid === true,
-        reason: receiverValidation?.reason || null,
-        expected: receiverName || null,
-        detected: receiverValidation?.matched ||
-          (receiverValidation?.detected ? receiverValidation.detected[0] : null),
-      };
-      nameDiagnostics = {
-        enabled: true,
-        expected: receiverName || null,
-        candidates: receiverValidation?.detected || [],
-        matchMethod: receiverValidation?.method || null,
-        matched: receiverValidation?.matchedName || null,
-        partial: receiverValidation?.reason === 'RECEIVER_NAME_INCOMPLETE',
-      };
-      if (!receiverValidation?.valid) {
-        // No receiver name configured (server-side): the secondary name gate
-        // is simply unavailable — requirement: "receiver name matches WHEN
-        // reliable receiver-name evidence is available". Skip the gate and
-        // keep enforcing every other mandatory check (receiver UPI, amount,
-        // date, status, UTR, integrity, duplicates). Never reject a payment
-        // because of missing server configuration, and never park it.
-        if (receiverValidation?.reason === 'RECEIVER_NAME_NOT_CONFIGURED') {
-          this.log('receiverName', 'not configured — secondary name gate skipped', {});
-          // EXPLICIT disclosure (never silent): the row records that the
-          // gate was disabled server-side. passed=null renders as N/A —
-          // it can NEVER be read as a pass or a fail.
-          checks.receiverName = {
-            passed: null,
-            skipped: true,
-            reason: 'RECEIVER_NAME_NOT_CONFIGURED',
-            expected: null,
-            detected: receiverValidation?.detected || [],
-          };
-          nameDiagnostics = { enabled: false, skipped: 'RECEIVER_NAME_NOT_CONFIGURED' };
-        } else {
-          return this._result({
-            approved: false,
-            reason: receiverValidation?.reason || 'RECEIVER_NAME_MISMATCH',
-            checks,
-            upiDiagnostics,
-            nameDiagnostics,
-            details: { configured: receiverName, detected: receiverValidation?.detected },
-            auditLog: this.auditLog,
-            timings: this.timings,
-          });
-        }
+      const notConfigured = receiverValidation?.reason === 'RECEIVER_NAME_NOT_CONFIGURED';
+      if (notConfigured) {
+        // EXPLICIT disclosure (never silent): the row records that no
+        // receiver name is configured server-side. passed=null renders as
+        // N/A — it can NEVER be read as a pass or a fail.
+        checks.receiverName = {
+          passed: null,
+          skipped: true,
+          advisory: true,
+          reason: 'RECEIVER_NAME_NOT_CONFIGURED',
+          expected: null,
+          detected: receiverValidation?.detected || [],
+        };
+        nameDiagnostics = { enabled: false, skipped: 'RECEIVER_NAME_NOT_CONFIGURED', advisory: true };
+        this.log('receiverName', 'not configured — informational only', {});
+      } else if (receiverValidation?.valid === true) {
+        checks.receiverName = {
+          passed: true,
+          advisory: true,
+          reason: null,
+          expected: receiverName || null,
+          detected: receiverValidation?.matched ||
+            (receiverValidation?.detected ? receiverValidation.detected[0] : null),
+          method: receiverValidation?.method || null,
+        };
+        nameDiagnostics = {
+          enabled: true,
+          advisory: true,
+          expected: receiverName || null,
+          candidates: receiverValidation?.detected || [],
+          matchMethod: receiverValidation?.method || null,
+          matched: receiverValidation?.matchedName || null,
+        };
+        this.log('receiverName', 'match (informational)', { method: receiverValidation?.method });
+      } else {
+        // Mismatch / incomplete / unreadable — advisory only. Recorded,
+        // displayed to the admin, and never used as a rejection gate.
+        checks.receiverName = {
+          passed: false,
+          advisory: true,
+          reason: receiverValidation?.reason || 'RECEIVER_NAME_MISMATCH',
+          expected: receiverName || null,
+          detected: receiverValidation?.matched ||
+            (receiverValidation?.detected && receiverValidation.detected.length > 0
+              ? receiverValidation.detected[0]
+              : null),
+        };
+        nameDiagnostics = {
+          enabled: true,
+          advisory: true,
+          expected: receiverName || null,
+          candidates: receiverValidation?.detected || [],
+          matchMethod: receiverValidation?.method || null,
+          matched: receiverValidation?.matchedName || null,
+        };
+        this.log('receiverName', 'mismatch/unreadable — advisory only, never blocks', {
+          reason: receiverValidation?.reason,
+        });
       }
     }
 
