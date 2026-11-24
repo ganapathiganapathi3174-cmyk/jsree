@@ -513,8 +513,16 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // surfaces provider/OCR technical failures as inconclusive above, which
   // throws before this point) — it parks, it never approves.
   if (verification.outcome === 'APPROVED') {
-    newStatus = 'approved';
-    reason = null;
+    if (verificationResult._demo) {
+      // Demo mode: screenshot passed all gates but is a test/sample receipt.
+      // Persist as manual_review to avoid activating real accounts, crediting
+      // wallets, issuing referral rewards, or sending production notifications.
+      newStatus = 'manual_review';
+      reason = 'DEMO_APPROVAL';
+    } else {
+      newStatus = 'approved';
+      reason = null;
+    }
   } else if (verification.outcome === 'MANUAL_REVIEW') {
     newStatus = 'manual_review';
     reason = verificationResult?.reason || 'MANUAL_REVIEW';

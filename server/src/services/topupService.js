@@ -458,6 +458,30 @@ async function awaitTopupUtrSafety(utr, topupId) {
 export async function applyTopupVerification(topup, verificationResult, verificationTime) {
   const { decision, reason } = verificationResult;
 
+  // Demo mode: never credit wallets or complete top-ups. Park as
+  // manual_review with a clear demo reason so the record is resubmittable
+  // and auditable without real side effects.
+  if (verificationResult._demo) {
+    const { error } = await supabase
+      .from('topups')
+      .update({
+        status: 'manual_review',
+        rejection_reason: 'DEMO_APPROVAL',
+        verified_at: verificationTime.toISOString(),
+        verification_result: verificationResult,
+      })
+      .eq('id', topup.id)
+      .eq('status', SUBMITTABLE_STATUSES);
+    if (error) throw { message: 'Failed to flag top-up for demo review', code: 'TOPUP.DEMO_REVIEW_FAILED' };
+    return {
+      credited: false,
+      alreadyProcessed: true,
+      manualReview: true,
+      inconclusive: false,
+      reason: 'DEMO_APPROVAL',
+    };
+  }
+
   if (decision === 'approved') {
     // IMMEDIATE COMPLETION: payment verified → completed (matching registration
     // payment pattern). Both sender and receiver wallets are credited in a
