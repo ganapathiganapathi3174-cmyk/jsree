@@ -458,27 +458,71 @@ async function awaitTopupUtrSafety(utr, topupId) {
 export async function applyTopupVerification(topup, verificationResult, verificationTime) {
   const { decision, reason } = verificationResult;
 
-  // Demo mode: never credit wallets or complete top-ups. Park as
-  // manual_review with a clear demo reason so the record is resubmittable
-  // and auditable without real side effects.
+  // Demo mode: two-state finalization — APPROVED becomes COMPLETED with a
+  // single idempotent wallet credit; REJECTED becomes rejected with zero
+  // credit. The atomic status flip (WHERE status IN submittable) is the
+  // duplicate guard: a concurrent/repeat request loses the flip and never
+  // credits twice. Runs only in the isolated test/demo environment (engine
+  // sets _demo solely when PAYMENT_DEMO_MODE is enabled).
   if (verificationResult._demo) {
-    const { error } = await supabase
+    const demoApproved = decision !== 'rejected';
+    const finalStatus = demoApproved ? 'completed' : 'rejected';
+    const { data: updated, error } = await supabase
       .from('topups')
       .update({
-        status: 'manual_review',
-        rejection_reason: 'DEMO_APPROVAL',
+        status: finalStatus,
+        ...(demoApproved
+          ? { completed_at: verificationTime.toISOString() }
+          : { rejection_reason: reason || 'DEMO_REJECTION' }),
         verified_at: verificationTime.toISOString(),
         verification_result: verificationResult,
       })
       .eq('id', topup.id)
-      .eq('status', SUBMITTABLE_STATUSES);
-    if (error) throw { message: 'Failed to flag top-up for demo review', code: 'TOPUP.DEMO_REVIEW_FAILED' };
+      .eq('status', SUBMITTABLE_STATUSES)
+      .select('id, status');
+    if (error) throw { message: 'Failed to persist demo top-up status', code: 'TOPUP.DEMO_STATUS_FAILED' };
+    if (!updated || updated.length === 0) {
+      // Lost the guarded flip — a concurrent/duplicate request already
+      // finalized this top-up. Never credit twice.
+      return {
+        credited: false,
+        alreadyProcessed: true,
+        manualReview: false,
+        inconclusive: false,
+        reason: reason || 'DEMO_APPROVAL',
+        completed: demoApproved,
+      };
+    }
+    if (!demoApproved) {
+      // Genuine test-validation failure: rejected, zero credit.
+      return {
+        credited: false,
+        alreadyProcessed: false,
+        manualReview: false,
+        inconclusive: false,
+        reason: reason || 'DEMO_REJECTION',
+        completed: false,
+      };
+    }
+    // Credit demo wallet (isolated test/demo environment only). If the
+    // credit fails, roll the topup back to submittable so there is never a
+    // partial update (completed topup with no wallet credit).
+    try {
+      await walletService.credit(topup.user_id, topup.expected_amount, 'DEMO_APPROVAL', topup.id, 'topup');
+    } catch (creditErr) {
+      await supabase.from('topups')
+        .update({ status: 'payment_pending', completed_at: null })
+        .eq('id', topup.id)
+        .eq('status', 'completed');
+      throw { message: 'Failed to credit demo wallet', code: 'TOPUP.DEMO_CREDIT_FAILED' };
+    }
     return {
-      credited: false,
-      alreadyProcessed: true,
-      manualReview: true,
+      credited: true,
+      alreadyProcessed: false,
+      manualReview: false,
       inconclusive: false,
       reason: 'DEMO_APPROVAL',
+      completed: true,
     };
   }
 

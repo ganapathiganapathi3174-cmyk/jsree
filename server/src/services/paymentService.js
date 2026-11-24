@@ -512,23 +512,32 @@ export async function verifyPayment(paymentId, imageBuffer) {
   // PENDING_VERIFICATION branch is a defensive fallback (the engine
   // surfaces provider/OCR technical failures as inconclusive above, which
   // throws before this point) — it parks, it never approves.
+  //
+  // Two-state demo policy: a completed demo validation finalizes as
+  // approved or rejected ONLY — never manual_review. Technical failures
+  // (PENDING_VERIFICATION) are not rejections; they stay retryable as
+  // pending so the UI never shows a processing error as a rejection.
+  const isDemoFlow = verificationResult?._demo === true || process.env.PAYMENT_DEMO_MODE === 'true';
   if (verification.outcome === 'APPROVED') {
-    if (verificationResult._demo) {
-      // Demo mode: screenshot passed all gates but is a test/sample receipt.
-      // Persist as manual_review to avoid activating real accounts, crediting
-      // wallets, issuing referral rewards, or sending production notifications.
-      newStatus = 'manual_review';
-      reason = 'DEMO_APPROVAL';
-    } else {
-      newStatus = 'approved';
-      reason = null;
-    }
+    newStatus = 'approved';
+    reason = null;
   } else if (verification.outcome === 'MANUAL_REVIEW') {
-    newStatus = 'manual_review';
-    reason = verificationResult?.reason || 'MANUAL_REVIEW';
+    if (isDemoFlow) {
+      newStatus = 'rejected';
+      reason = verificationResult?.reason || 'DEMO_REJECTION';
+    } else {
+      newStatus = 'manual_review';
+      reason = verificationResult?.reason || 'MANUAL_REVIEW';
+    }
   } else if (verification.outcome === 'PENDING_VERIFICATION') {
-    newStatus = 'manual_review';
-    reason = verificationResult?.reason || 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED';
+    if (isDemoFlow) {
+      // Technical no-decision in demo: retryable, never a rejection.
+      newStatus = 'pending';
+      reason = verificationResult?.reason || 'VERIFICATION_RETRY_REQUIRED';
+    } else {
+      newStatus = 'manual_review';
+      reason = verificationResult?.reason || 'EXTERNAL_PAYMENT_CONFIRMATION_REQUIRED';
+    }
   } else {
     newStatus = 'rejected';
     reason = verificationResult?.reason || 'REJECTED';
@@ -611,11 +620,28 @@ export async function verifyPayment(paymentId, imageBuffer) {
 
   if (newStatus === 'approved') {
     try {
-      // Atomic activation: payment approved -> user active -> referral link,
-      // with rollback of both if activation fails. Side effects (referral
-      // bonus, tier upgrade) are non-blocking and idempotent.
-      await completeApproval(payment, payment.user_id, 'system', 'verify_payment');
+      if (verificationResult._demo) {
+        // Demo mode: payment status was already persisted as 'approved'
+        // by the guarded UPDATE above. Activate the demo account (isolated
+        // test/demo environment only) so the registration reaches its final
+        // ACTIVE state instead of staying stuck in PENDING. The guarded
+        // transition (WHERE status IN pending/manual_review) makes this
+        // idempotent — a concurrent retry affects 0 rows, never activates
+        // twice. If the DB update fails, throw so the catch block rolls the
+        // payment back to 'pending' (never report APPROVED on a failed DB
+        // write).
+        const { error: activateErr } = await supabase.from('users')
+          .update({ status: 'active' })
+          .eq('id', payment.user_id)
+          .in('status', ['pending', 'manual_review']);
+        if (activateErr) throw { message: 'Failed to activate demo account', code: 'DEMO_ACTIVATION_FAILED' };
+      } else {
+        // Real mode: atomic activation via completeApproval.
+        await completeApproval(payment, payment.user_id, 'system', 'verify_payment');
+      }
     } catch (approvalErr) {
+      // Roll back the payment to 'pending' on any activation failure so the
+      // row stays retryable (guarded transition keeps this exactly-once).
       await supabase.from('payments')
         .update({ status: 'pending', approved_at: null })
         .eq('id', paymentId);

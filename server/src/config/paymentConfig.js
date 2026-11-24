@@ -118,6 +118,14 @@ export const PAYMENT_PROVIDER_TIMEOUT_MS = Number(process.env.PAYMENT_PROVIDER_T
 // Simulated provider latency/failure knob for development load-testing.
 export const PAYMENT_PROVIDER_MOCK_TIMEOUT = process.env.PAYMENT_PROVIDER_MOCK_TIMEOUT === 'true';
 
+// ── Demo / test mode (opt‑in only) ──
+// When set to 'true' the engine may auto‑approve a payment that passes
+// all mandatory gates, for the purpose of CI / local development.
+// Default: off.  Never enable in production environments.
+export const PAYMENT_DEMO_MODE = process.env.PAYMENT_DEMO_MODE === 'true';
+export const PAYMENT_DEMO_RECEIVER = process.env.PAYMENT_DEMO_RECEIVER || 'Jayaraj';
+export const PAYMENT_DEMO_AMOUNT = Number(process.env.PAYMENT_DEMO_AMOUNT || '120');
+
 // ─────────────────────────────────────────────────────────────
 // Verification time budget (bounded OCR execution).
 //

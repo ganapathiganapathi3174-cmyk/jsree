@@ -297,7 +297,12 @@ export class PaymentVerificationEngine {
 
     // Definitive rejection or ambiguous (manual review) from the gates.
     if (!screenshot.approved) {
-      const outcome = screenshot.review === true ? 'MANUAL_REVIEW' : 'REJECTED';
+      // Two-state demo policy: a completed demo validation that failed a
+      // gate finalizes as REJECTED — never MANUAL_REVIEW (there is no admin
+      // review in the isolated demo environment). Real payments keep the
+      // review path so SENDER_NAME_POLICY=review still parks for an operator.
+      const demoRejected = process.env.PAYMENT_DEMO_MODE === 'true';
+      const outcome = (!demoRejected && screenshot.review === true) ? 'MANUAL_REVIEW' : 'REJECTED';
       // Top-ups present DUPLICATE_TRANSACTION as the UTR-specific reason.
       const reason = outcome === 'REJECTED' && purpose === 'topup' && screenshot.reason === 'DUPLICATE_TRANSACTION'
         ? 'DUPLICATE_UTR'
@@ -309,8 +314,36 @@ export class PaymentVerificationEngine {
         reason,
         utr: screenshot.transactionId || null,
         engine: ENGINE_ID,
+        ...(demoRejected ? { _demo: true } : {}),
       };
       return { ...screenshot, reason, outcome, verificationResult };
+    }
+
+    // Demo auto-approval: when PAYMENT_DEMO_MODE is true and the screenshot
+    // passed every mandatory gate (already validated above), approve without
+    // provider confirmation. The caller (paymentService / topupService) will
+    // activate the demo account / credit the demo wallet exactly once via the
+    // _demo flag, while skipping UTR reservation and all real-provider side
+    // effects. Never runs unless PAYMENT_DEMO_MODE is explicitly enabled.
+    if (process.env.PAYMENT_DEMO_MODE === 'true') {
+      const verificationResult = {
+        ...screenshot,
+        decision: 'demo_approved',
+        status: 'APPROVED',
+        reason: 'DEMO_APPROVAL',
+        _demo: true,
+        utr: null, // UTR reservation skipped in demo mode
+        transactionId: null, // UTR ID cleared in demo mode
+        provider: null,
+        engine: ENGINE_ID,
+      };
+      return {
+        ...screenshot,
+        outcome: 'APPROVED',
+        approved: true,
+        provider: null,
+        verificationResult,
+      };
     }
 
     // Screenshot passed every gate — provider confirmation (when a provider
