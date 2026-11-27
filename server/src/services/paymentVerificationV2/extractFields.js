@@ -33,6 +33,28 @@ import {
   OCR_RECOVERY_STAGE_BUDGET_MS,
 } from '../../config/paymentConfig.js';
 
+// Soft (stage) deadline for a recovery stage.
+//
+// The stage may never outlive EITHER the attempt's hard deadline or its own
+// configured budget — whichever comes first. `budgetStop()` checks the hard
+// deadline first, so passing the capped value is always safe.
+//
+// This used to be dead config: the recovery stages were only ever handed the
+// hard deadline, so `OCR_AMOUNT_RECOVERY_BUDGET_MS` / `OCR_RECOVERY_STAGE_BUDGET_MS`
+// were reported in the result metadata but never enforced, and a single
+// pathological screenshot could spend the entire attempt budget inside the
+// amount-recovery chain (up to ~106 serial OCR jobs measured) and surface as
+// OCR_TIMEOUT.
+function stageDeadline(startedAt, attemptDeadline, budgetMs) {
+  const byBudget = startedAt + Math.max(1, budgetMs);
+  if (attemptDeadline == null) return byBudget;
+  return Math.min(attemptDeadline, byBudget);
+}
+
+function pastSoft(softDeadline) {
+  return softDeadline != null && Date.now() >= softDeadline;
+}
+
 function unionInto(target, incoming, keyFn) {
   const seen = new Set(target.map(keyFn));
   for (const item of incoming || []) {
@@ -73,25 +95,37 @@ export async function extractPaymentFields(buffer, options = {}) {
       extracted.amounts.some(a => Math.abs(a - expectedAmount) < 0.01);
 
     if (expectedAmount != null && !amountMatches) {
+      // Whole-recovery budget: the probe + deep stages together may not
+      // outlive it, so a pathological image can never burn the attempt's
+      // hard deadline inside the recovery chain.
+      const recoveryDeadline = stageDeadline(startedAt, deadline, OCR_AMOUNT_RECOVERY_BUDGET_MS);
       let recovered = [];
       const probeStart = Date.now();
       try {
-        recovered = await runAmountRecoveryProbe(buffer, expectedAmount, { deadline });
+        recovered = await runAmountRecoveryProbe(buffer, expectedAmount, {
+          deadline,
+          softDeadline: stageDeadline(probeStart, recoveryDeadline, OCR_RECOVERY_STAGE_BUDGET_MS),
+        });
         recoveryStages.push({ stage: 'probe', durationMs: Date.now() - probeStart, candidates: recovered.length });
       } catch (e) {
-        if (e?.code === 'OCR_TIMEOUT') throw e;
+        if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e;
         recoveryStages.push({ stage: 'probe', error: e?.code || 'stage_error' });
       }
+      if (pastSoft(recoveryDeadline)) recoveryBudgetExhausted = true;
       if (!recovered.some(a => Math.abs(a - expectedAmount) < 0.01)) {
         const deepStart = Date.now();
         try {
-          const deepRecovered = await runAmountRecoveryDeep(buffer, expectedAmount, { deadline });
+          const deepRecovered = await runAmountRecoveryDeep(buffer, expectedAmount, {
+            deadline,
+            softDeadline: stageDeadline(deepStart, recoveryDeadline, OCR_RECOVERY_STAGE_BUDGET_MS),
+          });
           recoveryStages.push({ stage: 'deep', durationMs: Date.now() - deepStart, candidates: deepRecovered.length });
           if (deepRecovered && deepRecovered.length > 0) recovered = [...new Set([...recovered, ...deepRecovered])];
         } catch (e) {
-          if (e?.code === 'OCR_TIMEOUT') throw e;
+          if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e;
           recoveryStages.push({ stage: 'deep', error: e?.code || 'stage_error' });
         }
+        if (pastSoft(recoveryDeadline)) recoveryBudgetExhausted = true;
       }
       if (recovered.length > 0) {
         const before = extracted.amounts.length;
@@ -124,7 +158,7 @@ export async function extractPaymentFields(buffer, options = {}) {
       try {
         passes = await runOcrAdditionalPasses(buffer, { deadline });
       } catch (e) {
-        if (e?.code === 'OCR_TIMEOUT') throw e;
+        if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e;
       }
       ocrPassInfo.additionalPassesRun = passes.length;
       ocrPassInfo.additionalPassConfidences = passes.map(p => p?.confidence || 0);

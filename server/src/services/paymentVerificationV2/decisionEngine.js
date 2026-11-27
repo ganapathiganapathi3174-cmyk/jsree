@@ -43,6 +43,7 @@ const INCONCLUSIVE_REASONS = new Set([
   'OCR_UNREADABLE',
   'OCR_EXTRACTION_FAILED',
   'OCR_FAILED',
+  'OCR_WORKER_UNAVAILABLE',
   'PROVIDER_UNAVAILABLE',
 ]);
 
@@ -68,10 +69,12 @@ export function userMessageFor(reason) {
       return 'We could not read your screenshot clearly enough to verify it. Please upload a clearer image.';
     case 'OCR_UNREADABLE':
       return 'Your screenshot could not be read. Please upload a clearer image of the payment receipt.';
-    case 'OCR_EXTRACTION_FAILED':
-    case 'OCR_FAILED':
-      return 'Screenshot verification could not be completed. Please try again.';
-    case 'OCR_TIMEOUT':
+case 'OCR_EXTRACTION_FAILED':
+case 'OCR_FAILED':
+  return 'Screenshot verification could not be completed. Please try again.';
+case 'OCR_WORKER_UNAVAILABLE':
+  return 'Screenshot verification was interrupted by a temporary system error. Please try again — no payment was approved or rejected.';
+case 'OCR_TIMEOUT':
       return 'Screenshot verification took too long. Please try again.';
     case 'AMOUNT_MISMATCH':
     case 'CONFLICTING_AMOUNTS':
@@ -121,6 +124,7 @@ export function userMessageFor(reason) {
 // else falls through to the controller's default error handling.
 export function codeForInconclusive(reason) {
   if (reason === 'OCR_TIMEOUT') return 'OCR_TIMEOUT';
+  if (reason === 'OCR_WORKER_UNAVAILABLE') return 'OCR_WORKER_UNAVAILABLE';
   if (reason === 'OCR_UNREADABLE') return 'OCR_UNREADABLE';
   if (reason === 'AMOUNT_NOT_DETECTED' || reason === 'PAYMENT_DATE_NOT_DETECTED' ||
       reason === 'RECEIVER_NAME_UNREADABLE' ||

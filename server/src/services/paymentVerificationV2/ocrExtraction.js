@@ -6,7 +6,7 @@ import {
   buildIstDate,
   monthNumber,
 } from '../../utils/paymentNormalize.js';
-import { TIMEZONE as _TIMEZONE, IST_UTC_OFFSET_MS } from '../../config/paymentConfig.js';
+import { TIMEZONE as _TIMEZONE, IST_UTC_OFFSET_MS, OCR_JOB_TIMEOUT_MS, OCR_INIT_TIMEOUT_MS } from '../../config/paymentConfig.js';
 
 export const IST_TIMEZONE = _TIMEZONE;
 
@@ -29,15 +29,38 @@ sharp.concurrency(1);
 sharp.cache(false);
 
 // ─────────────────────────────────────────────────────────────
-// Shared Tesseract scheduler (resource hardening ONLY).
+// Shared Tesseract scheduler — worker lifecycle, watchdog and admission.
 //
 // Same engine, same language ('eng'), same default job options, same
 // input buffers, same result order — only the execution is bounded:
-// every recognize call in this module queues through ONE reused
-// worker instead of spawning (and CDN-loading) a fresh worker per
-// call and running up to 12 of them concurrently. This caps OCR
-// peak memory on small instances without changing any OCR output,
-// extraction, threshold, or verification semantics.
+// every recognize call in this module queues through ONE reused worker
+// instead of spawning (and CDN-loading) a fresh worker per call.
+//
+// WHY THE WATCHDOG AND THE DISPATCH CHAIN EXIST (production root cause)
+//
+// tesseract.js's scheduler has no job timeout. `queue()` marks the worker
+// busy until the job promise settles and will not dequeue anything else
+// until then. Proven behaviour (see __ocrprobe3.mjs): once the worker
+// thread dies — worker-thread OOM on the 512 MB instance is the documented
+// trigger — `scheduler.addJob()` NEVER settles, the queue jams, and every
+// later job waits forever. Combined with the caller's deadline race that
+// turns into a permanent storm of OCR_TIMEOUT for every payment until the
+// process is restarted, with no recovery path in the old code
+// (`closeOCRWorkers()` only ran on SIGTERM/SIGINT).
+//
+// Fixes, without changing any OCR output:
+//   1. DISPATCH CHAIN — at most ONE job is ever handed to the scheduler,
+//      so tesseract's queue can never grow and an abandoned (timed-out)
+//      job can never pile up in front of the next request's jobs.
+//   2. ADMISSION — a job is only dispatched while the caller still has
+//      budget left; a caller whose deadline already passed never enqueues.
+//   3. WATCHDOG — a job that outlives OCR_JOB_TIMEOUT_MS means the worker
+//      is dead/hung: the scheduler is terminated and recreated on the spot
+//      (bounded recovery) and the caller gets OCR_WORKER_UNAVAILABLE, an
+//      inconclusive technical failure that is retried, never a decision.
+//   4. INIT BOUND — `createWorker('eng')` is raced against
+//      OCR_INIT_TIMEOUT_MS because tesseract.js swallows init failures
+//      with `.catch(() => {})`, which would otherwise hang forever.
 //
 // Workers are created lazily on first use and released deterministically
 // via closeOCRWorkers() / process exit hooks below.
@@ -46,13 +69,51 @@ let __ocrScheduler = null;
 let __ocrSchedulerPromise = null;
 let __ocrExitHooksInstalled = false;
 
+// Serializes dispatch onto the single shared worker (see fix 1 above).
+let __ocrDispatchChain = Promise.resolve();
+
+// Diagnostics surfaced to the admin retry workflow / tests.
+const __ocrHealth = {
+  created: 0,
+  recycled: 0,
+  watchdogTriggers: 0,
+  jobsDispatched: 0,
+  jobsSucceeded: 0,
+  lastRecycleAt: null,
+  lastError: null,
+};
+
+function ocrWorkerUnavailableError(message) {
+  const err = new Error(message || 'OCR worker is unavailable; verification will be retried');
+  err.code = 'OCR_WORKER_UNAVAILABLE';
+  return err;
+}
+
+async function destroyScheduler(sched) {
+  if (!sched) return;
+  try { await sched.terminate(); } catch { /* best-effort */ }
+}
+
 export async function closeOCRWorkers() {
   const sched = __ocrScheduler;
+  const p = __ocrSchedulerPromise;
   __ocrScheduler = null;
   __ocrSchedulerPromise = null;
-  if (sched) {
-    try { await sched.terminate(); } catch { /* best-effort */ }
-  }
+  await Promise.allSettled([destroyScheduler(sched), p && typeof p.then === 'function' ? p.catch(() => {}) : null]);
+}
+
+// Bounded recovery: drop the current (possibly dead) scheduler and let the
+// next call build a fresh one. Safe to call at any time; concurrent callers
+// share one chain so two recycles can never interleave.
+export async function recycleOCRWorkers(reason = 'watchdog') {
+  __ocrHealth.recycled += 1;
+  __ocrHealth.lastRecycleAt = Date.now();
+  __ocrHealth.lastError = reason;
+  await closeOCRWorkers();
+}
+
+export function getOCRHealth() {
+  return { ...__ocrHealth, queueDepth: 0, healthy: __ocrScheduler != null };
 }
 
 function installOCRExitHooks() {
@@ -65,21 +126,43 @@ function installOCRExitHooks() {
   }
 }
 
+async function createSchedulerBounded() {
+  const { default: Tesseract } = await import('tesseract.js');
+  const scheduler = Tesseract.createScheduler();
+  // Race the init: tesseract.js's createWorker swallows a failed
+  // loadLanguage/initialize with `.catch(() => {})`, leaving the returned
+  // promise pending forever. Without this bound a single bad init would
+  // hang every future verification.
+  const worker = await Promise.race([
+    Tesseract.createWorker('eng'),
+    new Promise((_, reject) => {
+      const t = setTimeout(() => reject(ocrWorkerUnavailableError(
+        `OCR worker initialization exceeded ${OCR_INIT_TIMEOUT_MS} ms`,
+      )), OCR_INIT_TIMEOUT_MS);
+      if (typeof t.unref === 'function') t.unref();
+    }),
+  ]);
+  scheduler.addWorker(worker);
+  return scheduler;
+}
+
 async function getOCRScheduler() {
   if (__ocrScheduler) return __ocrScheduler;
   if (!__ocrSchedulerPromise) {
     installOCRExitHooks();
-    __ocrSchedulerPromise = (async () => {
-      const { default: Tesseract } = await import('tesseract.js');
-      const scheduler = Tesseract.createScheduler();
-      const worker = await Tesseract.createWorker('eng');
-      scheduler.addWorker(worker);
-      __ocrScheduler = scheduler;
-      return scheduler;
-    })().catch((err) => {
-      __ocrSchedulerPromise = null;
-      throw err;
-    });
+    __ocrSchedulerPromise = createSchedulerBounded()
+      .then((scheduler) => {
+        __ocrScheduler = scheduler;
+        __ocrHealth.created += 1;
+        return scheduler;
+      })
+      .catch((err) => {
+        // Always allow the NEXT request to retry a failed init instead of
+        // latching onto a permanently rejected/hung promise.
+        __ocrSchedulerPromise = null;
+        __ocrHealth.lastError = err?.message || 'worker init failed';
+        throw err;
+      });
   }
   return __ocrSchedulerPromise;
 }
@@ -89,9 +172,7 @@ async function getOCRScheduler() {
 //
 // Optional `deadline` (epoch ms) bounds execution: a job that would start
 // after — or run past — the deadline rejects with code OCR_TIMEOUT instead
-// of hanging the request. The in-flight tesseract job still settles in the
-// worker (its result is simply discarded), which is safe because the shared
-// scheduler serializes jobs anyway.
+// of hanging the request.
 function ocrTimeoutError() {
   const err = new Error('Screenshot verification exceeded its OCR time budget');
   err.code = 'OCR_TIMEOUT';
@@ -121,27 +202,77 @@ function budgetStop(deadline, softDeadline) {
   return null;
 }
 
+// Runs ONE job against the shared scheduler with:
+//   - admission control (deadline already gone -> never enqueue),
+//   - single-flight dispatch (tesseract's queue stays at depth <= 1),
+//   - the caller's deadline race, and
+//   - the per-job watchdog that recycles a dead worker.
+async function dispatchRecognize(buffer, deadline) {
+  // Admission: a caller that has already run out of budget must not add
+  // work to the shared queue — that is how abandoned jobs used to pile up
+  // in front of every later request.
+  if (pastDeadline(deadline)) throw ocrTimeoutError();
+
+  const run = __ocrDispatchChain.then(async () => {
+    if (pastDeadline(deadline)) throw ocrTimeoutError();
+
+    const scheduler = await getOCRScheduler();
+    if (pastDeadline(deadline)) throw ocrTimeoutError();
+
+    const _t0 = Date.now();
+    __ocrHealth.jobsDispatched += 1;
+
+    let timer = null;
+    let watchdogTimer = null;
+    let watchdogFired = false;
+    let recyclePromise = null;
+    const job = scheduler.addJob('recognize', buffer, {});
+
+    // Per-job watchdog: the caller settles even if the worker never
+    // answers, and the scheduler is recycled so the queue cannot stay
+    // jammed for every later request.
+    watchdogTimer = setTimeout(() => {
+      watchdogFired = true;
+      __ocrHealth.watchdogTriggers += 1;
+      recyclePromise = recycleOCRWorkers('job_watchdog').catch(() => {});
+    }, OCR_JOB_TIMEOUT_MS);
+    if (typeof watchdogTimer.unref === 'function') watchdogTimer.unref();
+
+    try {
+      const race = [job];
+      if (deadline != null) {
+        race.push(new Promise((_, reject) => {
+          timer = setTimeout(() => reject(ocrTimeoutError()), Math.max(1, deadline - Date.now()));
+        }));
+      }
+      const result = await Promise.race(race);
+      __ocrHealth.jobsSucceeded += 1;
+      (globalThis.__OCRSTATS ||= []).push(Date.now() - _t0);
+      return { text: result.data.text || '', confidence: result.data.confidence || 0 };
+    } catch (err) {
+      if (watchdogFired) {
+        // Finish the recycle BEFORE releasing the dispatch chain, so the
+        // next caller can never be handed the dead scheduler.
+        if (recyclePromise) await recyclePromise;
+        __ocrHealth.lastError = 'OCR worker stopped responding and was recycled';
+        const e = ocrWorkerUnavailableError('OCR worker stopped responding and was recycled');
+        e.cause = err?.message || String(err);
+        throw e;
+      }
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+    }
+  });
+
+  // The chain must always advance, whatever the job did.
+  __ocrDispatchChain = run.then(() => {}, () => {});
+  return run;
+}
+
 async function recognizeWithSharedWorker(buffer, deadline) {
-  if (pastDeadline(deadline)) throw ocrTimeoutError();
-  const _t0 = Date.now();
-  const scheduler = await getOCRScheduler();
-  if (pastDeadline(deadline)) throw ocrTimeoutError();
-  const job = scheduler.addJob('recognize', buffer, {});
-  let timer = null;
-  try {
-    const result = deadline != null
-      ? await Promise.race([
-          job,
-          new Promise((_, reject) => {
-            timer = setTimeout(() => reject(ocrTimeoutError()), Math.max(1, deadline - Date.now()));
-          }),
-        ])
-      : await job;
-    (globalThis.__OCRSTATS ||= []).push(Date.now() - _t0);
-    return { text: result.data.text || '', confidence: result.data.confidence || 0 };
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  return dispatchRecognize(buffer, deadline);
 }
 
 // Preprocessing is deterministic for identical input bytes, and every stage
@@ -1101,7 +1232,7 @@ export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null, o
           if (r.text) recovered.push(r.text);
           if (hitExpected()) return extractAmountsFromStrips(recovered.join('\n'));
         }
-      } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
+      } catch (e) { if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e; /* best-effort */ }
     }
   }
 
@@ -1131,21 +1262,21 @@ export async function runAmountRecoveryOCR(imageBuffer, expectedAmount = null, o
       const thresholdBuf = await sharp(strip).threshold(145).png().toBuffer();
       const r2 = await recognizeWithSharedWorker(thresholdBuf, deadline);
       if (r2.text) recovered.push(r2.text);
-    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e; /* best-effort */ }
     if (hitExpected()) break scan;
 
     try {
       const thresholdBuf = await sharp(strip).threshold(100).png().toBuffer();
       const r3 = await recognizeWithSharedWorker(thresholdBuf, deadline);
       if (r3.text) recovered.push(r3.text);
-    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e; /* best-effort */ }
     if (hitExpected()) break scan;
 
     try {
       const invertedBuf = await sharp(strip).negate().normalize().png().toBuffer();
       const r4 = await recognizeWithSharedWorker(invertedBuf, deadline);
       if (r4.text) recovered.push(r4.text);
-    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e; /* best-effort */ }
     if (hitExpected()) break scan;
   }
   return extractAmountsFromStrips(recovered.join('\n'));
@@ -1210,7 +1341,7 @@ export async function runDeepAmountRecovery(imageBuffer, expectedAmount = null, 
       if (r.text) candidates.push(r.text);
       if (expectedFound()) break;
     }
-  } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
+  } catch (e) { if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e; /* best-effort */ }
 
   const STRIP_H = 180;
   const OVERLAP = 90;
@@ -1247,7 +1378,7 @@ export async function runDeepAmountRecovery(imageBuffer, expectedAmount = null, 
         if (expectedFound()) break;
       }
       if (expectedFound()) break;
-    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e; /* best-effort */ }
   }
 
   return extractAmountsFromStrips(candidates.join('\n'));
@@ -1412,7 +1543,7 @@ export async function verifyAmountWithCurrencyRecovery(imageBuffer, expectedAmou
           };
         }
       }
-    } catch (e) { if (e?.code === 'OCR_TIMEOUT') throw e; /* best-effort */ }
+    } catch (e) { if (e?.code === 'OCR_TIMEOUT' || e?.code === 'OCR_WORKER_UNAVAILABLE') throw e; /* best-effort */ }
   }
 
   return { verified: false, method: 'no_evidence', evidence: '' };

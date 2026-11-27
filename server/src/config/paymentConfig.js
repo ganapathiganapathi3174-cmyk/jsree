@@ -173,3 +173,46 @@ export const OCR_VERIFICATION_BUDGET_MS = Number(process.env.OCR_VERIFICATION_BU
 // ─────────────────────────────────────────────────────────────
 export const OCR_AMOUNT_RECOVERY_BUDGET_MS = Number(process.env.OCR_AMOUNT_RECOVERY_BUDGET_MS || 60000);
 export const OCR_RECOVERY_STAGE_BUDGET_MS = Number(process.env.OCR_RECOVERY_STAGE_BUDGET_MS || 25000);
+
+// ─────────────────────────────────────────────────────────────
+// OCR worker health (root cause of the production OCR_TIMEOUT storm).
+//
+// tesseract.js's scheduler has NO job timeout: a job stays "running"
+// until the worker answers, and the scheduler will not dequeue anything
+// else for that worker in the meantime. When the worker thread dies
+// (worker-thread OOM on the 512 MB instance is the documented trigger),
+// `scheduler.addJob()` therefore never settles and every later job sits
+// in the queue forever — so every verification ends in OCR_TIMEOUT until
+// the process restarts.
+//
+//   OCR_JOB_TIMEOUT_MS    — watchdog for ONE recognize job. A healthy
+//                           worker never needs this long (measured
+//                           0.01-1.7 s/job); exceeding it means the
+//                           worker is dead/hung. The scheduler is then
+//                           terminated and recreated so the next attempt
+//                           starts from a clean, working worker.
+//   OCR_INIT_TIMEOUT_MS   — bounds `createWorker('eng')`. tesseract.js
+//                           swallows init failures with `.catch(() => {})`,
+//                           so a failed/slow language download would
+//                           otherwise hang forever with no way to recover.
+//   OCR_AUTO_RETRY_MAX_ELAPSED_MS — a technical failure that happened this
+//                           fast was infrastructure, not budget
+//                           exhaustion, and may be retried once in-process.
+// ─────────────────────────────────────────────────────────────
+export const OCR_JOB_TIMEOUT_MS = Number(process.env.OCR_JOB_TIMEOUT_MS || 20000);
+export const OCR_INIT_TIMEOUT_MS = Number(process.env.OCR_INIT_TIMEOUT_MS || 60000);
+export const OCR_AUTO_RETRY_MAX_ELAPSED_MS = Number(process.env.OCR_AUTO_RETRY_MAX_ELAPSED_MS || 40000);
+export const OCR_AUTO_RETRY_BACKOFF_MS = Number(process.env.OCR_AUTO_RETRY_BACKOFF_MS || 750);
+
+// Technical (never a payment decision) failure codes. OCR_TIMEOUT and
+// OCR_WORKER_UNAVAILABLE are infrastructure outcomes: they must never
+// approve, never reject and never park a payment as fraud.
+export const TECHNICAL_VERIFICATION_CODES = new Set([
+  'OCR_TIMEOUT',
+  'OCR_FAILED',
+  'OCR_UNREADABLE',
+  'OCR_EXTRACTION_FAILED',
+  'OCR_WORKER_UNAVAILABLE',
+  'PREPROCESSING_FAILED',
+  'ENGINE_ERROR',
+]);

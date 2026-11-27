@@ -147,6 +147,14 @@ export class PaymentVerificationEngine {
         if (ocrErr?.code === 'OCR_TIMEOUT') {
           return inconclusiveResult('OCR_TIMEOUT', [ocrErr.message], { ...timings, stage3_extraction: Date.now() - stage3Start });
         }
+        if (ocrErr?.code === 'OCR_WORKER_UNAVAILABLE') {
+          // Infrastructure, not evidence: the OCR worker died/was recycled.
+          // Inconclusive + retryable, never a decision about the payment.
+          return inconclusiveResult('OCR_WORKER_UNAVAILABLE', [ocrErr.message], {
+            ...timings,
+            stage3_extraction: Date.now() - stage3Start,
+          });
+        }
         return inconclusiveResult('OCR_FAILED', [ocrErr?.message || 'OCR failed'], {
           ...timings,
           stage3_extraction: Date.now() - stage3Start,
@@ -256,6 +264,9 @@ export class PaymentVerificationEngine {
       console.error('[PaymentVerificationEngine] Error:', error);
       if (error?.code === 'OCR_TIMEOUT') {
         return inconclusiveResult('OCR_TIMEOUT', [error.message], timingsFinal);
+      }
+      if (error?.code === 'OCR_WORKER_UNAVAILABLE') {
+        return inconclusiveResult('OCR_WORKER_UNAVAILABLE', [error.message], timingsFinal);
       }
       return inconclusiveResult('ENGINE_ERROR', [error.message || 'Internal validation error'], timingsFinal);
     }

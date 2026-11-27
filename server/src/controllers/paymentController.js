@@ -146,13 +146,15 @@ export async function verifyPaymentManual(req, res) {
                    error.code === 'UNAUTHORIZED' ? 403 :
                    error.code === 'PAYMENT_NOT_PENDING' ? 400 :
                    error.code === 'PAYMENT_EXPIRED' ? 410 :
-                   error.code === 'OCR_TIMEOUT' ? 504 :
+                   error.code === 'OCR_TIMEOUT' || error.code === 'OCR_WORKER_UNAVAILABLE' ? 504 :
                    error.code === 'OCR_FAILED' || error.code === 'OCR_UNREADABLE' ? 422 : 500;
     res.status(status).json({
       success: false,
       message: error.code === 'OCR_TIMEOUT'
         ? 'Screenshot verification took too long to complete. The payment is still pending — please upload the screenshot again.'
-        : (error.message || 'Verification failed'),
+        : error.code === 'OCR_WORKER_UNAVAILABLE'
+          ? 'Screenshot verification was interrupted by a temporary system error. The payment is still pending — please try again.'
+          : (error.message || 'Verification failed'),
       code: error.code || 'VERIFY_FAILED'
     });
   }

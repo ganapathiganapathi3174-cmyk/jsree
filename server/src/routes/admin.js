@@ -24,6 +24,7 @@ router.get('/payments/:paymentId/screenshot', adminController.getPaymentScreensh
 router.put('/payments/:paymentId/approve', adminController.approvePayment);
 router.put('/payments/:paymentId/reject', adminController.rejectPayment);
 router.post('/payments/:paymentId/review', adminController.reviewPayment);
+router.post('/payments/:paymentId/retry', adminController.retryVerification);
 router.delete('/payments/:paymentId', adminController.deletePayment);
 
 router.put('/payments/bulk-approve', async (req, res) => {
